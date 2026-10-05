@@ -14,12 +14,14 @@ function priceTag(e){return element('span',priceLabel(e),'tag');}
 function updatePricePreview(){
   const value=Number($('stars-price').value);
   const method=$('stars-enabled').checked ? $('payment-method').value : 'free';
+  $('payment-terms').required=method!=='free' && !compactPicker;
+  $('payment-terms').setCustomValidity($('payment-terms').required && !$('payment-terms').value.trim() ? 'Enter payment and refund terms for this paid event.' : '');
   $('manual-price-fields').hidden=method==='stars' || method==='free';$('stars-price-fields').hidden=method!=='stars';$('payment-link-fields').hidden=method!=='link';
   const e={paymentMethod:method,displayPrice:$('display-price').value || 'Set a price',starPrice:method==='stars' && Number.isFinite(value) && value>0?value:0,starPricing:$('stars-pricing').value};
   $('event-price-tag').textContent=priceLabel(e);
   const currency=state.preference.currency || state.localCurrency,rate=state.pricing?.rates?.[currency];
-  $('event-price-estimate').textContent=e.starPrice && rate ? '≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code'}).format(e.starPrice*rate)+' '+(e.starPricing==='person'?'per person':'per group') : currency ? currency+' estimate unavailable' : 'Select a display currency';
-  $('stars-rate-note').textContent=rate ? 'Reference: 1 Star ≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code',maximumFractionDigits:6}).format(rate)+'. Owner-set estimate; actual Telegram purchase prices vary.' : currency ? 'Add a '+currency+' reference rate under Admin → Owner fee settings to see the local equivalent.' : 'Choose your price display currency in Timezone settings to see a local equivalent.';
+  $('event-price-estimate').textContent=e.starPrice && rate ? '≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code'}).format(e.starPrice*rate)+' '+(e.starPricing==='person'?'per person':'per group') : currency ? 'No '+currency+' reference rate set' : 'Select a display currency';
+  $('stars-rate-note').textContent=rate ? 'Reference: 1 Star ≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code',maximumFractionDigits:6}).format(rate)+'. Owner-set estimate; actual Telegram purchase prices vary.' : currency ? (state.user?.isSuperAdmin ? 'Set the cost of one Star in '+currency+' under Admin → Owner fee settings. ' : 'The bot owner has not configured a '+currency+' reference rate. ')+'Telegram purchase prices vary; this is an estimate, not a live exchange rate.' : 'Choose your price display currency in Timezone settings to see a local equivalent.';
 }
 let listFilter = 'all';
 let adminData = null, adminMode = 'events';
@@ -320,6 +322,7 @@ $('deadline-enabled').onchange = updateDeadline;
 $('allow-link-uploads').onchange=()=>{if($('allow-link-uploads').checked)$('allow-upload-media').checked=true;};
 $('allow-upload-media').onchange=()=>{if(!$('allow-upload-media').checked)$('allow-link-uploads').checked=false;};
 $('stars-enabled').onchange = () => { $('stars-fields').hidden = !$('stars-enabled').checked; updatePricePreview(); };
+$('payment-terms').oninput = () => updatePricePreview();
 $('payment-method').onchange=updatePricePreview;$('display-price').oninput=updatePricePreview;
 $('stars-price').oninput=updatePricePreview; $('stars-pricing').onchange=updatePricePreview;
 $('require-approval').onchange = () => { if ($('require-approval').checked) $('hide-location').checked = true; $('hide-location').disabled = $('require-approval').checked; };

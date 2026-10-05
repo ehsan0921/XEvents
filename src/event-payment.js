@@ -11,7 +11,9 @@ export function parseEventPayment(input,event={},starsAllowed=false){
   if(!['free','stars','bank','link'].includes(method))throw new InputError('Choose Free, bank transfer, payment link or Telegram Stars.');
   const result={paymentMethod:method,starPrice:0,starPricing:'group',displayPrice:'',paymentInstructions:'',paymentUrl:'',paymentTerms:''};
   if(method==='free')return result;
-  result.paymentTerms=text(input.paymentTerms ?? event.paymentTerms ?? '', 'Payment and refund terms',1000,true);
+  const terms=input.paymentTerms ?? event.paymentTerms ?? '';
+  if(typeof terms!=='string' || !terms.trim())throw new InputError('Enter payment and refund terms for this paid event, or turn off Paid event to make it free.');
+  result.paymentTerms=text(terms, 'Payment and refund terms',1000);
   if(method==='stars'){
     if(!starsAllowed)throw new InputError('Stars collection is not enabled for your account on this bot.');
     if(!Number.isSafeInteger(input.starPrice) || input.starPrice<1 || input.starPrice>100000)throw new InputError('Stars price must be a whole number from 1 to 100,000.');

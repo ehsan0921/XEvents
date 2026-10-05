@@ -1,0 +1,14 @@
+.env
+data/
+node_modules/
+*.log
+.wrangler/
+.dev.vars
+.dev.vars.*
+secrets*.json
+worker-configuration.d.ts
+wrangler.production.jsonc
+*.pem
+*.key
+.env.*
+!.env.example

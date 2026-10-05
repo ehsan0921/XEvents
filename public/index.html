@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#126b5b">
+  <title>XEvents · Your plans, together</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main>
+    <header class="brand"><a href="/app" aria-label="XEvents home"><span class="logo">X</span><span>XEvents<span class="wordmark-note">MAKE TIME FOR YOUR PEOPLE</span></span></a><span class="pill">PLANNER</span></header>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <section id="events-view" class="view">
+      <div class="hero"><span class="eyebrow" id="greeting">GOOD TIMES START HERE</span><h1>Your plans.<br>Your people.</h1><p>A little less organising.<br>A lot more getting together.</p><button class="primary" id="hero-create">＋ Plan something</button><span class="hero-mark" aria-hidden="true">✳</span></div>
+      <div class="section-heading"><h2>Your events</h2><button class="text-button" id="refresh">Refresh</button></div>
+      <p id="zone-note" class="muted"></p>
+      <div id="event-list" aria-live="polite"><div class="empty">Loading your plans…</div></div>
+    </section>
+    <section id="create-view" class="view" hidden>
+      <span class="eyebrow">BRING EVERYONE TOGETHER</span><h1 id="form-title">Make a plan.</h1><p class="muted" id="form-description">Pick a date. Share an invite. Let the good times follow.</p>
+      <form id="event-form">
+        <div id="event-details" class="panel">
+          <label for="title">Event name</label><input id="title" name="title" placeholder="Dinner, a birthday, a weekend adventure…" maxlength="100" required>
+          <label for="location">Where are we meeting?</label><input id="location" name="location" placeholder="Address, meeting point, or online link" maxlength="300" required>
+        </div>
+        <div class="panel schedule-panel"><div class="panel-heading"><span class="calendar-icon" aria-hidden="true">▦</span><div><h2>A time that works.</h2><p class="muted">The timezone belongs to this event.</p></div></div>
+          <div class="date-row"><div><label for="date">Date</label><input type="date" id="date" required min="2020-01-01" max="2100-12-31"></div><div><label for="time">Time</label><input type="time" id="time" required></div></div>
+          <label for="event-zone">Event timezone</label><input id="event-zone-search" type="search" placeholder="Find a city or timezone" aria-label="Filter event timezones" autocomplete="off"><select id="event-zone" required aria-label="Event timezone"></select>
+          <p class="time-preview" id="time-preview" aria-live="polite">Choose a date and time to see the preview.</p>
+          <p class="small muted">Guests see this time in their saved local timezone. Daylight saving is handled automatically.</p>
+        </div>
+        <div id="ending-panel" class="panel"><label for="end-mode">When does it finish? <span>optional</span></label><select id="end-mode"><option value="none">No finish time</option><option value="duration">Set a duration</option><option value="finish">Set a finish date & time</option></select><div id="duration-fields" class="date-row" hidden><div><label for="duration-hours">Hours</label><input id="duration-hours" type="number" min="0" max="8760" step="1" value="2"></div><div><label for="duration-minutes">Minutes</label><input id="duration-minutes" type="number" min="0" max="59" step="1" value="0"></div></div><div id="finish-fields" class="date-row" hidden><div><label for="finish-date">Finish date</label><input type="date" id="finish-date" min="2020-01-01" max="2100-12-31"></div><div><label for="finish-time">Finish time</label><input type="time" id="finish-time"></div></div><p class="small muted">Use either a duration or a finish time. Finish times use the event timezone; duration measures elapsed time.</p></div>
+        <div id="banner-panel" class="panel"><label for="banner">Event banner <span>optional</span></label><input type="file" id="banner" accept="image/jpeg,image/png,image/webp"><p class="small muted">JPG, PNG, or WebP, up to 5 MB. Your banner appears above the invitation.</p><img id="banner-preview" class="event-banner" alt="Event banner preview" hidden></div>
+        <div id="optional-details" class="panel"><label for="description">A little more about the plan <span>optional</span></label><textarea id="description" rows="3" maxlength="1500" placeholder="What should everyone know?"></textarea>
+          <label for="questions">Questions for your guests <span>optional</span></label><textarea id="questions" rows="3" maxlength="2200" placeholder="Any dietary requirements?&#10;What will you bring?"></textarea><p class="small muted">One question per line, up to 10. Answers stay private to you.</p>
+        </div>
+        <div id="visibility-panel" class="panel"><label for="event-visibility">Event visibility</label><select id="event-visibility"><option value="private">Private — invitation link only</option><option value="public">Public — discoverable in Explore</option></select><p class="small muted">Public events appear in Explore for people using the event’s timezone. Private events are available through invitation links.</p></div>
+        <fieldset id="guest-permissions" class="panel"><legend>Guest options</legend><p class="small muted">Guests always get Accept, Decline, Tentative, and Later. Enable any extras you want them to use.</p>
+          <label class="check-option"><input type="checkbox" id="allow-guest-list"><span>See other guests<span class="check-note">Show guest names, RSVP comments, and response counts.</span></span></label>
+          <label class="check-option"><input type="checkbox" id="allow-upload-media"><span>Send photos, videos & files<span class="check-note">Let guests contribute to the event collection.</span></span></label>
+          <label class="check-option"><input type="checkbox" id="allow-view-media"><span>See shared media<span class="check-note">Let guests browse the event collection.</span></span></label>
+          <label class="check-option"><input type="checkbox" id="allow-link-uploads"><span>Anyone with the upload link can send files<span class="check-note">Requires file uploads to be enabled. Get a shareable upload link and QR code after creating the event. Uploaders don’t need to RSVP and can’t browse private event details.</span></span></label>
+          <p class="small muted">Unchecked extras stay hidden. As organiser, you always have access and don’t need to RSVP.</p>
+          <label class="check-option"><input type="checkbox" id="require-approval"><span>Approve acceptance requests<span class="check-note">Guests wait for your approval before receiving their location and invitation ticket.</span></span></label>
+          <label class="check-option"><input type="checkbox" id="hide-location"><span>Location only after acceptance<span class="check-note">When approval is required, only approved guests see the location.</span></span></label>
+          <label for="ticket-info">Invitation details <span>optional</span></label><textarea id="ticket-info" rows="3" maxlength="1000" placeholder="Entry instructions or details to include on confirmed guests’ tickets."></textarea>
+        </fieldset>
+        <div id="default-reminder-panel" class="panel"><label for="default-reminder">Default reminder for accepted guests</label><select id="default-reminder"><option value="0">Off</option><option value="15">15 minutes before</option><option value="60">1 hour before</option><option value="120">2 hours before</option><option value="180">3 hours before</option><option value="240">4 hours before</option><option value="1440">1 day before</option></select><p class="small muted">Applied when a guest accepts, if the reminder time hasn’t passed. Guests can change or turn it off. Changes apply to new acceptances.</p></div>
+        <fieldset id="response-deadline" class="panel"><legend>Response deadline</legend><label class="check-option"><input type="checkbox" id="deadline-enabled"><span>Close responses at a set time<span class="check-note">Guests can’t RSVP after this deadline. Existing confirmations and organiser approvals remain available.</span></span></label>
+          <div class="date-row"><div><label for="deadline-date">Deadline date</label><input type="date" id="deadline-date" min="2020-01-01" max="2100-12-31" disabled></div><div><label for="deadline-time">Deadline time</label><input type="time" id="deadline-time" disabled></div></div><p class="small muted">Uses the event timezone. Must be at or before the event starts.</p>
+        </fieldset>
+        <button class="secondary wide" type="button" id="clear-draft-deadline" hidden>Remove response deadline</button>
+        <p id="form-error" class="error" role="alert" hidden></p><button class="primary wide" type="submit" id="save-event">Create event & get invite</button><button class="secondary wide" type="button" id="cancel-edit" hidden>Back to events</button>
+      </form>
+      <div id="success" class="panel success" hidden><span class="eyebrow">IT’S A DATE</span><h2 id="success-title">Your event is ready.</h2><p id="success-time"></p><button class="primary wide" id="share-event">Invite your people ↗</button><button class="secondary wide" id="open-chat">Open event in chat</button><button class="text-button wide" id="another-event">Back to my events</button></div>
+    </section>
+    <section id="admin-view" class="view" hidden><span class="eyebrow">SUPER ADMIN</span><h1>All plans.<br>All people.</h1><p class="muted">Browse every event and everyone who has used XEvents.</p><div id="admin-summary" class="counts"></div><div class="panel"><label for="admin-search">Search events or users</label><input type="search" id="admin-search" placeholder="Event name, person, username, or Telegram ID"><div class="event-actions"><button type="button" class="primary" id="admin-events">Events</button><button type="button" class="secondary" id="admin-users">Users</button><button type="button" class="text-button" id="admin-refresh">Refresh</button></div></div><p id="admin-error" class="error" role="alert" hidden></p><div id="admin-list" aria-live="polite"></div></section>
+    <section id="settings-view" class="view" hidden><span class="eyebrow">ON YOUR TIME</span><h1>Your corner<br>of the world.</h1><p class="muted">Pick your local timezone. Your events will show the time where you are.</p>
+      <form id="timezone-form" class="panel"><label for="local-zone">My timezone</label><input id="local-zone-search" type="search" placeholder="Find a city or timezone" aria-label="Filter local timezones" autocomplete="off"><select id="local-zone" required></select><button class="secondary wide" type="button" id="detect-zone">Use my device timezone</button><p id="device-zone" class="small muted"></p><button class="primary wide" type="submit" id="save-zone">Save timezone</button><p class="small muted">Saved to your Telegram account. Changing this won’t move an event’s actual start time.</p></form>
+      <div class="panel"><h2>Everything stays together.</h2><p class="muted">Respond to invitations in the bot chat. Guest lists and media options depend on the organiser’s settings. Confirmed guests can find their invitation ticket here and in chat.</p><a class="text-button" href="https://t.me/XEvents_bot">Open XEvents in Telegram ↗</a></div>
+    </section>
+    <section id="gallery-view" class="view" hidden><span class="eyebrow">SHARED MEDIA</span><h1 id="gallery-title">Shared moments.</h1><p id="gallery-summary" class="muted"></p><div class="event-actions"><button id="gallery-back" class="secondary">My events</button><button id="gallery-refresh" class="secondary">Refresh shared media</button><button id="gallery-upload" class="primary" hidden>Add files in Telegram</button></div><p id="gallery-error" class="error" role="alert" hidden></p><div id="gallery-list" class="gallery-grid"></div></section>
+    <section id="explore-view" class="view" hidden><span class="eyebrow">MEET YOUR PEOPLE</span><h1>Explore events.</h1><p id="explore-zone" class="muted"></p><button id="explore-refresh" class="secondary">Refresh</button><p id="explore-error" class="error" role="alert" hidden></p><div id="explore-list"></div></section>
+  </main>
+  <dialog id="photo-dialog" aria-label="Shared media"><div class="event-actions"><button class="secondary" id="photo-close">Close</button><button class="secondary" id="media-save">Save</button><button class="primary" id="media-send">Send to my Telegram</button></div><p id="media-popup-status" role="status"></p><img id="photo-full" alt="Shared photo"><video id="video-full" controls playsinline hidden></video></dialog>
+  <nav class="bottom-nav" aria-label="Planner navigation"><button data-tab="events" aria-current="page"><span aria-hidden="true">▦</span>My events</button><button data-tab="pending"><span aria-hidden="true">◷</span>Pending</button><button data-tab="explore"><span aria-hidden="true">⌕</span>Explore</button><button data-tab="create"><span aria-hidden="true">＋</span>Create</button><button data-tab="settings"><span aria-hidden="true">◎</span>Timezone</button><button data-tab="admin" id="admin-tab" hidden><span aria-hidden="true">⚙</span>Admin</button></nav>
+  <dialog id="qr-dialog" aria-labelledby="qr-title"><h2 id="qr-title">Upload link & QR code</h2><p id="qr-description">Scan to send event files in Telegram.</p><img id="upload-qr" alt="QR code for event uploads"><div class="event-actions"><button id="qr-share" class="primary">Share upload link</button><button id="qr-download" class="secondary">Download QR code</button><button id="qr-close" class="secondary">Close</button></div></dialog>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message"><h2 id="confirm-title">Confirm action</h2><p id="confirm-message"></p><div class="event-actions"><button type="button" class="secondary" id="confirm-back">Keep event</button><button type="button" class="primary" id="confirm-proceed">Confirm</button></div></dialog>
+</body>
+</html>

@@ -1,0 +1,29 @@
+{
+  "name": "xevents-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/main.js",
+    "test": "node --test",
+    "deploy": "wrangler deploy",
+    "test:worker": "wrangler deploy --dry-run --outdir .wrangler/build && node scripts/check-worker.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261005.1",
+    "wrangler": "^4.147.0"
+  },
+  "dependencies": {
+    "@js-temporal/polyfill": "^0.5.1",
+    "qrcode-generator": "^2.0.4"
+  },
+  "license": "MIT",
+  "description": "Free open source Telegram event management, RSVP invitations and shared event media.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ehsan0921/XEvents.git"
+  }
+}

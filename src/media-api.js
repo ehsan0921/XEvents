@@ -1,0 +1,45 @@
+import qrcode from 'qrcode-generator';
+import { can, shareUploadLink, uploadLink } from './permissions.js';
+import { mutateState } from './worker-store.js';
+
+
+export async function mediaApi(request, env, user) {
+  const url = new URL(request.url);
+  const match = url.pathname.match(/^\/api\/events\/([a-f0-9]{16})\/(gallery|upload-qr|media\/([a-f0-9]{12})(?:\/(send))?)$/);
+  if (!match) return null;
+  const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+  const json = (value, status = 200) => Response.json(value, { status, headers });
+  const row = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(match[1]).first();
+  const e = row && JSON.parse(row.data);
+  const preference = await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(user.id)).first();
+  const grant = e && preference && JSON.parse(preference.data).mediaAccess?.[e.id] === e.uploadToken && !!uploadLink(e,env.BOT_USERNAME);
+  if (!e || (e.owner !== user.id && !e.guests[user.id] && !grant)) return json({ error: 'Open a valid event or media link first.' }, 403);
+  if (match[2] === 'upload-qr') {
+    if (request.method !== 'GET' || e.owner !== user.id) return json({ error: 'Only the organiser can view the upload QR code.' }, 403);
+    const link = shareUploadLink(e, env.BOT_USERNAME);
+    if (!link) return json({ error: 'Enable guest uploads first.' }, 400);
+    const qr = qrcode(0, 'M'); qr.addData(link); qr.make();
+    return json({ link, anyone: !!e.allowLinkUploads, image: qr.createDataURL(6, 24) });
+  }
+  if (!can(e, user.id, 'viewMedia')) return json({ error: 'The organiser has not enabled the gallery for guests.' }, 403);
+  if (match[2] === 'gallery' && request.method === 'GET') return json({ id: e.id, title: e.title, cancelled: !!e.cancelled, canUpload: !e.cancelled && can(e, user.id, 'uploadMedia'), uploadUrl: `https://t.me/${env.BOT_USERNAME}?start=a_${e.id}`, media: (e.media || []).map(f => ({ id: f.id, type: f.type, filename: f.filename, caption: f.caption, name: f.name, at: f.at, size: f.size || null })) });
+  const f = e.media?.find(item => item.id === match[3]);
+  if (!f) return json({ error: 'This file is no longer in the event.' }, 404);
+  if (match[4] === 'send' && request.method === 'POST') {
+    await mutateState(env, async (data, bot) => {
+      const current = data.events[e.id];
+      if (!bot.mediaAllowed(current, user.id) || !can(current, user.id, 'viewMedia')) throw new Error('Access changed');
+      const file = current.media.find(item => item.id === f.id); if (!file) throw new Error('File removed');
+      await bot.api({ photo: 'sendPhoto', video: 'sendVideo', document: 'sendDocument' }[file.type], { chat_id: user.id, [file.type]: file.fileId, caption: file.caption || undefined });
+    });
+    return json({ sent: true });
+  }
+  if (request.method !== 'GET' || match[4]) return json({ error: 'Not found.' }, 404);
+  if (f.size > 20 * 1024 * 1024) return json({ error: 'This file is larger than 20 MB. Use Send to Telegram to download it in chat.' }, 413);
+  const lookup = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getFile`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file_id: f.fileId }), signal: AbortSignal.timeout(10000) });
+  const result = await lookup.json();
+  if (!result.ok || !result.result?.file_path) return json({ error: 'Could not load the file. Use Send to Telegram instead.' }, 502);
+  const download = await fetch(`https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${result.result.file_path}`, { signal: AbortSignal.timeout(15000) });
+  if (!download.ok) return json({ error: 'Could not load this file. Try again.' }, 502);
+  return new Response(download.body, { headers: { ...headers, 'Content-Type': f.type === 'photo' ? 'image/jpeg' : f.type === 'video' ? 'video/mp4' : 'application/octet-stream', ...(url.searchParams.has('download') ? { 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(f.filename === 'photo' ? 'photo.jpg' : f.filename === 'video' ? 'video.mp4' : f.filename)}` } : {}) } });
+}

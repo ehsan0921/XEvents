@@ -76,9 +76,9 @@ export default {
       if (!response.ok) console.log(JSON.stringify({event:'mini_api_rejected',path:url.pathname,status:response.status}));
       if (response.ok && request.method === 'POST') ctx.waitUntil(drainOutbox(env));
       return response;
-      } catch (error) { console.error(JSON.stringify({event:'mini_api_failed',path:url.pathname,type:error.name})); return Response.json({ error: 'Could not load the planner. Please try again.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
+      } catch (error) { const reference=crypto.randomUUID();console.error(JSON.stringify({event:'mini_api_failed',reference,path:url.pathname,type:error.name})); return Response.json({ error: 'Could not load the planner. Please try again.',reference }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
     }
-    if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/gallery.js', '/style.css'].includes(url.pathname))) {
+    if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/errors.js', '/gallery.js', '/style.css'].includes(url.pathname))) {
       const target = new URL(request.url);
       if (url.pathname === '/app' || url.pathname === '/app/') target.pathname = '/';
       const asset = await env.ASSETS.fetch(new Request(target, request));

@@ -44,10 +44,10 @@ function options(id, zone, filter = '') {
 async function api(path, body) {
   let response;
   try { response = await fetch('/api/' + path, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: 'tma ' + initData, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); }
-  catch { $('connection-status').textContent='Connection interrupted. Tap Refresh to reconnect.'; throw new Error('Could not connect. Check your internet connection and tap Refresh.'); }
+  catch { $('connection-status').textContent='Connection interrupted. Tap Refresh to reconnect.'; const error=new Error('Could not connect. Check your internet connection and tap Refresh.');window.reportAppError?.(error,'Connection');throw error; }
   let data;
-  try { data = await response.json(); } catch { throw new Error('Could not connect. Please try again.'); }
-  if (!response.ok) { if(response.status===401)$('connection-status').textContent='Telegram session expired or unavailable. Close this app and reopen it from the bot.'; throw new Error(data.error || 'Could not save. Please try again.'); }
+  try { data = await response.json(); } catch { const error=new Error('The server returned an unreadable response. Please try again.');window.reportAppError?.(error,'HTTP '+response.status);throw error; }
+  if (!response.ok) { if(response.status===401)$('connection-status').textContent='Telegram session expired or unavailable. Close this app and reopen it from the bot.';const error=new Error(`HTTP ${response.status}: ${data.error || 'Could not save. Please try again.'}${data.reference ? ' · Reference '+data.reference : ''}`);window.reportAppError?.(error);throw error; }
   return data;
 }
 function go(tab) {
@@ -374,5 +374,5 @@ if (!initData) {
     else if (query.get('gallery')) await openGallery(query.get('gallery'));
     else if (query.get('qr')) await showQr(query.get('qr'));
     else if (query.get('event')) { const event = state.events.find(e => e.id === query.get('event')); if (event?.isOwner && !event.cancelled) setupForm(event); }
-  } catch (e) { notice(e.message); $('event-list').replaceChildren(element('div', 'Could not load your events. Tap Refresh to try again.', 'empty')); }
+  } catch (e) { window.reportAppError?.(e,'Loading planner');notice(e.message); $('event-list').replaceChildren(element('div', 'Could not load your events. Tap Refresh to try again.', 'empty')); }
 }

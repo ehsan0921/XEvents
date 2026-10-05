@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#126b5b">
   <title>XEvents · Your plans, together</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="/errors.js"></script>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script type="module" src="/app.js"></script>
 </head>
@@ -14,6 +15,7 @@
     <header class="brand"><a href="/app" aria-label="XEvents home"><span class="logo">X</span><span>XEvents<span class="wordmark-note">MAKE TIME FOR YOUR PEOPLE</span></span></a><span class="pill">PLANNER</span></header>
     <p id="connection-status" class="small muted" role="status">Connecting to your Telegram account…</p>
     <div id="notice" class="notice" role="status" hidden></div>
+    <aside id="app-error" class="notice" role="alert" hidden><strong>Something went wrong</strong><p id="app-error-message" style="white-space:pre-wrap;overflow-wrap:anywhere;user-select:text"></p><p class="small">Copy this message and send it for support.</p><button type="button" id="app-error-copy">Copy error</button> <button type="button" id="app-error-dismiss">Dismiss</button></aside>
     <section id="events-view" class="view">
       <div class="hero"><span class="eyebrow" id="greeting">GOOD TIMES START HERE</span><h1>Your plans.<br>Your people.</h1><p>A little less organising.<br>A lot more getting together.</p><button class="primary" id="hero-create">＋ Plan something</button><span class="hero-mark" aria-hidden="true">✳</span></div>
       <div class="section-heading"><h2>Your events</h2><button class="text-button" id="refresh">Refresh</button></div>

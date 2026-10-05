@@ -1,4 +1,5 @@
 import { authenticate } from './mini-auth.js';
+import { pricingSettings, parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
 import { shareUploadLink } from './permissions.js';
 import { isSuperAdmin, rememberUser, adminOverview } from './admin.js';
@@ -98,17 +99,26 @@ export async function miniApi(request, env) {
     try { zone = timezone(new URL(request.url).searchParams.get('timezone') || (preference && JSON.parse(preference.data).timezone) || 'UTC'); }
     catch(error) { return respond({error:error.message},400); }
     const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND json_extract(data,'$.isPublic')=1 AND json_extract(data,'$.timezone')=?").bind(zone).all();
-    const events = results.map(r => JSON.parse(r.data)).filter(e => !e.cancelled && Date.parse(e.endsAt || e.startsAt) > Date.now()).sort((a,b) => Date.parse(a.startsAt)-Date.parse(b.startsAt)).map(e => ({ id: e.id, title: e.title, description: e.description, startsAt: e.startsAt, endsAt: e.endsAt || null, timezone: e.timezone, hasBanner: !!e.banner, inviteUrl: `https://t.me/${env.BOT_USERNAME}?start=e_${e.id}`, responsesClosed: responsesClosed(e) }));
+    const events = results.map(r => JSON.parse(r.data)).filter(e => !e.cancelled && Date.parse(e.endsAt || e.startsAt) > Date.now()).sort((a,b) => Date.parse(a.startsAt)-Date.parse(b.startsAt)).map(e => ({ id: e.id, title: e.title, description: e.description, starPrice:e.starPrice || 0, starPricing:e.starPricing || 'group', startsAt: e.startsAt, endsAt: e.endsAt || null, timezone: e.timezone, hasBanner: !!e.banner, inviteUrl: `https://t.me/${env.BOT_USERNAME}?start=e_${e.id}`, responsesClosed: responsesClosed(e) }));
     return respond({ timezone: zone, events });
   }
   const mediaResponse = await mediaApi(request, env, user);
   if (mediaResponse) return mediaResponse;
   if (path.startsWith('/api/admin')) {
     if (!isSuperAdmin(user, env)) return respond({ error: 'Super admin access required.' }, 403);
+    if(path==='/api/admin/pricing' && request.method==='POST') {
+      const raw=await request.text();if(raw.length>12000)return respond({error:'Too much text.'},413);
+      try {
+        const settings=parsePricing(JSON.parse(raw));
+        await mutateState(env,data=>{data.preferences._pricing=settings;});
+        return respond({settings});
+      }catch(e){return respond({error:e instanceof InputError ? e.message : 'Could not save pricing settings.'},e instanceof BusyError ? 503 : 400);}
+    }
     if (path !== '/api/admin/overview' || request.method !== 'GET') return respond({ error: 'Not found.' }, 404);
     await rememberUser(env, user);
     const { results } = await env.DB.prepare("SELECT kind,id,data FROM records WHERE kind IN ('events','users','preferences','sessions')").all();
-    return respond(adminOverview(results));
+    const pricing=results.find(r=>r.kind==='preferences' && r.id==='_pricing');
+    return respond({...adminOverview(results),pricing:pricingSettings(pricing ? JSON.parse(pricing.data) : {})});
   }
   const bannerMatch = path.match(/^\/api\/events\/([a-f0-9]{16})\/banner$/);
   if (bannerMatch && ['GET', 'POST'].includes(request.method)) {
@@ -152,7 +162,9 @@ export async function miniApi(request, env) {
     const session = await env.DB.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(user.id)).first();
     const s = session ? JSON.parse(session.data) : null;
     const pickerSession = s && (s.step === 'when' || s.step === 'permissions' || (s.step === 'edit' && s.field === 'when')) ? { token: s.token, event: s.event || null, deadlineDate: s.draft?.deadlineDate || '', deadlineTime: s.draft?.deadlineTime || '', timezone: s.draft?.deadlineTimezone || s.draft?.timezone || null } : null;
-    return respond({ user: { firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: preference ? { timezone: JSON.parse(preference.data).timezone } : {}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
+    const pricing=await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id='_pricing'").first();
+    const pref=preference ? JSON.parse(preference.data) : {};
+    return respond({pricing:pricingSettings(pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: {timezone:pref.timezone,currency:pref.currency || ''}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
   }
   if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
   const raw = await request.text();
@@ -165,8 +177,10 @@ export async function miniApi(request, env) {
     const value = await mutateState(env, async (data, bot) => {
       const id = user.id;
       if (path === '/api/preferences') {
+        if(input.currency!==undefined && input.currency!=='' && !currencyCodes.includes(input.currency))throw new InputError('Choose a supported display currency.');
         data.preferences[id] = { ...data.preferences[id], timezone: timezone(input.timezone) };
-        return { preference: { timezone: data.preferences[id].timezone } };
+        if(input.currency!==undefined)data.preferences[id].currency=input.currency;
+        return { preference: { timezone: data.preferences[id].timezone,currency:data.preferences[id].currency || '' } };
       }
       if (path === '/api/events') {
         if (!/^[a-f0-9-]{36}$/.test(input.requestId || '')) throw new InputError('Refresh the planner and try again.');

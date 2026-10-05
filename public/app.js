@@ -8,6 +8,10 @@ const compactPicker = picker || deadlinePicker;
 const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 let state = { events: [], preference: {} }, activeEvent = null, createdEvent = null, previewSequence = 0;
 let requestId = crypto.randomUUID();
+function priceLabel(e){return e.starPrice ? '⭐ '+e.starPrice+' Stars '+(e.starPricing==='person'?'per person':'per group') : 'Free';}
+function priceEstimate(e){const currency=state.preference.currency || state.localCurrency;const rate=state.pricing?.rates?.[currency];return e.starPrice && rate ? '≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code'}).format(e.starPrice*rate)+' · owner-set estimate; actual Stars cost varies' : '';}
+function priceTag(e){return element('span',priceLabel(e),'tag');}
+function updatePricePreview(){const e={starPrice:$('stars-enabled').checked?Number($('stars-price').value):0,starPricing:$('stars-pricing').value};$('event-price-tag').textContent=priceLabel(e);$('event-price-estimate').textContent=priceEstimate(e);}
 let listFilter = 'all';
 let adminData = null, adminMode = 'events';
 let bannerPreviewUrl;
@@ -90,11 +94,13 @@ function renderEvents() {
       fetch(`/api/events/${e.id}/banner`, { headers: { Authorization: 'tma ' + initData } }).then(r => { if (!r.ok) throw new Error(); return r.blob(); }).then(blob => { if (!img.isConnected) return; const old = bannerUrls.get(e.id); if (old) URL.revokeObjectURL(old); const url = URL.createObjectURL(blob); bannerUrls.set(e.id,url); img.src=url; }).catch(() => img.remove());
     }
     const meta = element('div', '', 'event-meta'); meta.append(element('span', e.cancelled ? 'CANCELLED' : e.isOwner ? 'YOU’RE HOSTING' : 'INVITED', e.cancelled ? 'tag cancelled' : 'tag'));
+    meta.append(priceTag(e));
     if (e.status) meta.append(element('span', { yes: 'Accepted', no: 'Not coming', maybe: 'Tentative', later: 'Respond later' }[e.status], 'tag'));
     card.append(meta, element('h3', e.title), element('p', '🗓 ' + format(e)), element('p', '📍 ' + (e.location || (e.requireApproval ? 'Shared after organiser approval' : 'Shared after acceptance')), 'muted'));
     if (e.responsesClosed) card.append(element('p', '⏰ Responses closed — deadline passed.', 'error'));
     else if (e.responseDeadline) card.append(element('p', 'Respond by: ' + format({ startsAt: e.responseDeadline }), 'small muted'));
     if (e.approval === 'pending') card.append(element('p', 'The organiser will send your invitation details and ticket after approving your response.', 'muted'));
+    if(priceEstimate(e))card.append(element('p',priceEstimate(e),'small muted'));
     if (e.starPrice) card.append(element('p', '⭐ ' + e.starPrice + ' Stars ' + (e.starPricing === 'person' ? 'per person' : 'per group') + (e.paymentStatus ? ' · ' + e.paymentStatus.replaceAll('_',' ') : ''), 'small muted'));
     if (e.participants) card.append(element('p', 'Your group: ' + e.participants + (e.participants === 1 ? ' person' : ' people'), 'small muted'));
     if (e.ticket) card.append(element('p', `🎟 ${e.ticket.name}${e.ticket.code ? ' · ' + e.ticket.code : ''}${e.ticket.info ? '\n' + e.ticket.info : ''}`, 'time-preview'));
@@ -139,8 +145,9 @@ function setupForm(event = null) {
   activeEvent = event; createdEvent = null; requestId = crypto.randomUUID();
   $('event-form').reset(); $('event-form').hidden = false; $('success').hidden = true; $('form-error').hidden = true;
   $('stars-panel').hidden = compactPicker || !state.user?.isSuperAdmin;
-  $('stars-enabled').checked = !!event?.starPrice; $('stars-fields').hidden = !event?.starPrice;
-  $('stars-price').value = event?.starPrice || 100; $('stars-pricing').value = event?.starPricing || 'person';
+  $('stars-enabled').checked = !!(event ? event.starPrice : state.user?.isSuperAdmin && state.pricing?.defaultStarPrice); $('stars-fields').hidden = !$('stars-enabled').checked;
+  $('stars-price').value = event?.starPrice || state.pricing?.defaultStarPrice || 100; $('stars-pricing').value = event?.starPricing || state.pricing?.defaultStarPricing || 'person';
+  updatePricePreview();
   $('digital-event').checked = !!event?.digitalEvent; $('payment-terms').value = event?.paymentTerms || '';
   $('visibility-panel').hidden = compactPicker; $('event-visibility').value = event?.isPublic ? 'public' : 'private';
   $('ending-panel').hidden = deadlinePicker;
@@ -201,6 +208,7 @@ async function refresh() {
   $('admin-tab').hidden = !data.user.isSuperAdmin;
   document.querySelector('.bottom-nav').classList.toggle('with-admin', data.user.isSuperAdmin);
   $('greeting').textContent = `LET’S MAKE PLANS, ${data.user.firstName.toUpperCase()}`;
+  const currencySelect=$('display-currency');currencySelect.replaceChildren(element('option','Automatic from timezone'));currencySelect.firstChild.value='';for(const code of state.currencyCodes || []){const option=element('option',code);option.value=code;currencySelect.append(option);}currencySelect.value=state.preference.currency || '';
   options('local-zone', selectedZone()); $('device-zone').textContent = `Detected on this device: ${deviceZone}`;
   renderEvents(); return data;
 }
@@ -214,7 +222,8 @@ async function loadExplore() {
     for(const event of result.events) {
       const card=element('article','','event-card');
       if(event.hasBanner) { const img=document.createElement('img');img.className='event-banner';img.alt='Banner for '+event.title;card.append(img);fetch(`/api/events/${event.id}/banner`,{headers:{Authorization:'tma '+initData}}).then(r=>{if(!r.ok)throw new Error();return r.blob();}).then(blob=>{if(!img.isConnected)return;const url=URL.createObjectURL(blob);img.src=url;img.onload=()=>URL.revokeObjectURL(url);}).catch(()=>img.remove()); }
-      card.append(element('span','PUBLIC','tag'),element('h3',event.title),element('p','🗓 '+format(event)),element('p',event.description));
+      card.append(element('span','PUBLIC','tag'),priceTag(event),element('h3',event.title),element('p','🗓 '+format(event)),element('p',event.description));
+      if(priceEstimate(event))card.append(element('p',priceEstimate(event),'small muted'));
       if(event.responsesClosed)card.append(element('p','Responses are closed.','small muted'));
       card.append(action('Open invitation in Telegram',()=>openTelegram(event.inviteUrl),'primary'));list.append(card);
     }
@@ -224,7 +233,10 @@ async function loadExplore() {
 $('explore-refresh').onclick=loadExplore;
 async function loadAdmin() {
   $('admin-refresh').disabled = true; $('admin-error').hidden = true;
-  try { adminData = await api('admin/overview'); renderAdmin(); }
+  try { adminData = await api('admin/overview');
+  $('owner-default-price').value=adminData.pricing?.defaultStarPrice || 0; $('owner-default-unit').value=adminData.pricing?.defaultStarPricing || 'person';
+  $('owner-currency-rates').value=Object.entries(adminData.pricing?.rates || {}).map(([code,rate])=>code+' = '+rate).join('\n');
+renderAdmin(); }
   catch (error) { $('admin-error').textContent=error.message; $('admin-error').hidden=false; $('admin-list').replaceChildren(); }
   finally { $('admin-refresh').disabled=false; }
 }
@@ -244,7 +256,8 @@ function renderAdmin() {
       if (item.names.length) card.append(element('p','Guest names: '+item.names.join(', '),'small muted'));
     } else {
       const owner=adminData.users.find(u=>u.id===item.owner);
-      card.append(element('span',item.group,'tag'),element('h3',item.title),element('p','🗓 '+format(item)),element('p',`Organiser: ${owner ? userName(owner) : item.owner} · ${item.owner}`),element('p','📍 '+item.location),element('p',item.description),element('p',`${item.guests.length} guests · ${item.counts.yes} accepted · ${item.counts.pending} pending approval · ${item.mediaCount} media items`,'counts'));
+      card.append(element('span',item.group,'tag'),priceTag(item),element('h3',item.title),element('p','🗓 '+format(item)),element('p',`Organiser: ${owner ? userName(owner) : item.owner} · ${item.owner}`),element('p','📍 '+item.location),element('p',item.description),element('p',`${item.guests.length} guests · ${item.counts.yes} accepted · ${item.counts.pending} pending approval · ${item.mediaCount} media items`,'counts'));
+      if(priceEstimate(item))card.append(element('p',priceEstimate(item),'small muted'));
       const details=document.createElement('details'); details.append(element('summary','Event settings & guest responses'));
       details.append(element('p',`Event ID: ${item.id}\nApproval required: ${item.requireApproval ? 'Yes' : 'No'}\nLocation restricted: ${item.hideLocation || item.requireApproval ? 'Yes' : 'No'}\nGuest list: ${item.permissions.guestList ? 'On' : 'Off'} · Uploads: ${item.permissions.uploadMedia ? 'On' : 'Off'} · Shared media: ${item.permissions.viewMedia ? 'On' : 'Off'}\nResponse deadline: ${item.responseDeadline ? format({startsAt:item.responseDeadline}) : 'None'}\nBanner: ${item.hasBanner ? 'Yes' : 'No'}`,'small muted'));
       if (item.ticketInfo) details.append(element('p','Invitation details: '+item.ticketInfo));
@@ -259,6 +272,19 @@ $('admin-search').oninput=renderAdmin;
 $('admin-events').onclick=()=>{adminMode='events';renderAdmin();};
 $('admin-users').onclick=()=>{adminMode='users';renderAdmin();};
 $('admin-refresh').onclick=loadAdmin;
+$('owner-pricing-form').onsubmit=async event=>{
+  event.preventDefault();$('save-owner-pricing').disabled=true;
+  try{
+    const rates={};
+    for(const line of $('owner-currency-rates').value.split('\n').map(l=>l.trim()).filter(Boolean)){
+      const match=line.match(/^([A-Za-z]{3})\s*=\s*(\d+(?:\.\d+)?)$/);
+      if(!match)throw Error('Use one currency code = rate per line.');
+      const code=match[1].toUpperCase();if(Object.hasOwn(rates,code))throw Error('Each currency can appear only once.');rates[code]=Number(match[2]);
+    }
+    const result=await api('admin/pricing',{defaultStarPrice:Number($('owner-default-price').value),defaultStarPricing:$('owner-default-unit').value,rates});
+    adminData.pricing=result.settings;state.pricing=result.settings;renderEvents();$('owner-pricing-status').textContent='Saved. New events use this default; current event prices are unchanged.';
+  }catch(error){$('owner-pricing-status').textContent=error.message;}finally{$('save-owner-pricing').disabled=false;}
+};
 for (const b of document.querySelectorAll('[data-tab]')) b.onclick = () => { notice(''); b.dataset.tab === 'create' ? setupForm() : go(b.dataset.tab); };
 $('hero-create').onclick = () => setupForm();
 $('banner').onchange = () => { if (bannerPreviewUrl) URL.revokeObjectURL(bannerPreviewUrl); const file=$('banner').files[0]; $('banner-preview').hidden=!file; if (file) { bannerPreviewUrl=URL.createObjectURL(file); $('banner-preview').src=bannerPreviewUrl; } };
@@ -279,12 +305,13 @@ for (const id of ['duration-hours','duration-minutes','finish-date','finish-time
 $('deadline-enabled').onchange = updateDeadline;
 $('allow-link-uploads').onchange=()=>{if($('allow-link-uploads').checked)$('allow-upload-media').checked=true;};
 $('allow-upload-media').onchange=()=>{if(!$('allow-upload-media').checked)$('allow-link-uploads').checked=false;};
-$('stars-enabled').onchange = () => { $('stars-fields').hidden = !$('stars-enabled').checked; };
+$('stars-enabled').onchange = () => { $('stars-fields').hidden = !$('stars-enabled').checked; updatePricePreview(); };
+$('stars-price').oninput=updatePricePreview; $('stars-pricing').onchange=updatePricePreview;
 $('require-approval').onchange = () => { if ($('require-approval').checked) $('hide-location').checked = true; $('hide-location').disabled = $('require-approval').checked; };
 $('clear-draft-deadline').onclick = async () => { try { await api('draft-deadline', { clear: true, sessionToken: query.get('session') }); notice('✓ Response deadline removed. Continue creating your event in chat.'); tg?.close(); } catch (e) { notice(e.message); } };
 $('timezone-form').onsubmit = async event => {
   event.preventDefault(); $('save-zone').disabled = true;
-  try { const result = await api('preferences', { timezone: $('local-zone').value }); state.preference = result.preference; renderEvents(); notice('✓ Your timezone is saved. Event times now show in your local time.'); tg?.HapticFeedback?.notificationOccurred('success'); }
+  try { const result = await api('preferences', { timezone: $('local-zone').value,currency:$('display-currency').value }); state.preference = result.preference; await refresh(); notice('✓ Your timezone is saved. Event times now show in your local time.'); tg?.HapticFeedback?.notificationOccurred('success'); }
   catch (e) { notice(e.message); } finally { $('save-zone').disabled = false; }
 };
 $('event-form').onsubmit = async event => {
@@ -310,7 +337,7 @@ $('event-form').onsubmit = async event => {
         createdEvent = saved.event; await refresh();
       }
       $('event-form').hidden = true; $('success').hidden = false; $('share-event').hidden = false; $('another-event').hidden = false;
-      $('success-title').textContent = activeEvent ? 'The new time is set.' : 'Your event is ready.'; $('success-time').textContent = format(createdEvent);
+      $('success-title').textContent = activeEvent ? 'The new time is set.' : 'Your event is ready.'; $('success-time').textContent = format(createdEvent)+' · '+priceLabel(createdEvent)+(priceEstimate(createdEvent)?' · '+priceEstimate(createdEvent):'');
       $('open-chat').textContent = 'Open event in chat'; $('open-chat').onclick = () => openTelegram(createdEvent.inviteUrl);
     }
     tg?.HapticFeedback?.notificationOccurred('success');

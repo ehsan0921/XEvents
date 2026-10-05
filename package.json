@@ -18,6 +18,8 @@
   },
   "dependencies": {
     "@js-temporal/polyfill": "^0.5.1",
+    "countries-and-timezones": "^3.10.0",
+    "country-to-currency": "^3.0.1",
     "qrcode-generator": "^2.0.4"
   },
   "license": "MIT",

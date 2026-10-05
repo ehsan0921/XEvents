@@ -88,6 +88,10 @@ Review the [Telegram Bot API](https://core.telegram.org/bots/api) and [Cloudflar
 
 The configured super administrator can enable **Charge admission in Stars** when creating or editing an event in the Mini App. Confirm that the event is digital, choose a whole-number Stars price per person or per group, and write payment and refund terms. For example, an online workshop priced at 50 Stars per person costs 150 Stars for a group of three.
 
+**Admin → Owner fee settings** lets the owner set a default admission price and pricing unit for new events. A default of zero means Free. Existing event prices are unchanged. Free and Stars price tags appear in event views, Explore, settings and management.
+
+The owner can also enter reference prices for one Star in different currencies. Guests see approximate local-currency values based on their saved timezone when it identifies one currency, or their selected display currency in Timezone settings. These are owner-set estimates, not live exchange rates or guaranteed Telegram purchase prices. No monetary estimate appears until a reference rate is configured for that currency. The checkout amount remains in Stars.
+
 When approval is required, the organiser approves the guest before requesting payment. Guests review the terms and tap **Agree & pay with Stars** to receive a Telegram invoice. Tickets and private joining details unlock only after Telegram confirms successful payment, not simply after a checkout attempt.
 
 Payments go to the bot's Stars balance. This version limits paid event creation to the super admin; it does not offer organiser payouts or split payments. Free events remain available to everyone. Stars admission is intended for digital services such as online workshops; physical event payments are outside this integration. See [Telegram's Stars payment documentation](https://core.telegram.org/bots/payments-stars).

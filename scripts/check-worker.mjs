@@ -190,6 +190,18 @@ try {
   assert.equal((await api('bootstrap',null,456)).data.events.find(e=>e.id===groupId).participants,4);
   const disabledGroup=await api(`events/${groupId}/schedule`, {...input,date:'2099-10-24',askParticipantCount:false});
   assert.equal(disabledGroup.status,200); assert.equal(disabledGroup.data.event.counts.participants,1);
+  const ownerPricing={defaultStarPrice:50,defaultStarPricing:'person',rates:{AUD:0.02}};
+  assert.equal((await api('admin/pricing',ownerPricing,123)).status,403);
+  assert.equal((await api('admin/pricing',{...ownerPricing,rates:{AUD:-1}},999001)).status,400);
+  assert.equal((await api('admin/pricing',ownerPricing,999001)).status,200);
+  assert.equal((await api('admin/overview',null,999001)).data.pricing.defaultStarPrice,50);
+  const pricedBootstrap=(await api('bootstrap')).data;
+  assert.equal(pricedBootstrap.pricing.rates.AUD,0.02);
+  await api('preferences',{timezone:'Australia/Sydney',currency:''},456);
+  assert.equal((await api('bootstrap',null,456)).data.localCurrency,'AUD');
+  await api('preferences',{timezone:'Asia/Dubai',currency:'AED'},456);
+  assert.equal((await api('bootstrap',null,456)).data.localCurrency,'AED');
+  assert.equal((await api('preferences',{timezone:'UTC',currency:'INVALID'},456)).status,400);
   const starsInput={...input,date:'2099-10-24',starPrice:20,starPricing:'person',digitalEvent:true,paymentTerms:'Online workshop. Full refund on cancellation. Contact the organiser for other requests.',askParticipantCount:true,requireApproval:true,requestId:'55555555-5555-5555-5555-555555555555'};
   assert.equal((await api('events',starsInput,123)).status,400);
   assert.equal((await api('events',{...starsInput,digitalEvent:false},999001)).status,400);

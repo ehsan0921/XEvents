@@ -8,12 +8,14 @@ const compactPicker = picker || deadlinePicker;
 const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 let state = { events: [], preference: {} }, activeEvent = null, createdEvent = null, previewSequence = 0;
 let requestId = crypto.randomUUID();
-function priceLabel(e){return e.starPrice ? '⭐ '+e.starPrice+' Stars '+(e.starPricing==='person'?'per person':'per group') : 'Free';}
+function priceLabel(e){if(['bank','link'].includes(e.paymentMethod))return 'Paid · '+e.displayPrice;return e.starPrice ? '⭐ '+e.starPrice+' Stars '+(e.starPricing==='person'?'per person':'per group') : 'Free';}
 function priceEstimate(e){const currency=state.preference.currency || state.localCurrency;const rate=state.pricing?.rates?.[currency];return e.starPrice && rate ? '≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code'}).format(e.starPrice*rate)+' · owner-set estimate; actual Stars cost varies' : '';}
 function priceTag(e){return element('span',priceLabel(e),'tag');}
 function updatePricePreview(){
   const value=Number($('stars-price').value);
-  const e={starPrice:$('stars-enabled').checked && Number.isFinite(value) && value>0?value:0,starPricing:$('stars-pricing').value};
+  const method=$('stars-enabled').checked ? $('payment-method').value : 'free';
+  $('manual-price-fields').hidden=method==='stars' || method==='free';$('stars-price-fields').hidden=method!=='stars';$('payment-link-fields').hidden=method!=='link';
+  const e={paymentMethod:method,displayPrice:$('display-price').value || 'Set a price',starPrice:method==='stars' && Number.isFinite(value) && value>0?value:0,starPricing:$('stars-pricing').value};
   $('event-price-tag').textContent=priceLabel(e);
   const currency=state.preference.currency || state.localCurrency,rate=state.pricing?.rates?.[currency];
   $('event-price-estimate').textContent=e.starPrice && rate ? '≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code'}).format(e.starPrice*rate)+' '+(e.starPricing==='person'?'per person':'per group') : currency ? currency+' estimate unavailable' : 'Select a display currency';
@@ -40,10 +42,12 @@ function options(id, zone, filter = '') {
   select.value = zone;
 }
 async function api(path, body) {
-  const response = await fetch('/api/' + path, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: 'tma ' + initData, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  let response;
+  try { response = await fetch('/api/' + path, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: 'tma ' + initData, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); }
+  catch { $('connection-status').textContent='Connection interrupted. Tap Refresh to reconnect.'; throw new Error('Could not connect. Check your internet connection and tap Refresh.'); }
   let data;
   try { data = await response.json(); } catch { throw new Error('Could not connect. Please try again.'); }
-  if (!response.ok) throw new Error(data.error || 'Could not save. Please try again.');
+  if (!response.ok) { if(response.status===401)$('connection-status').textContent='Telegram session expired or unavailable. Close this app and reopen it from the bot.'; throw new Error(data.error || 'Could not save. Please try again.'); }
   return data;
 }
 function go(tab) {
@@ -116,13 +120,13 @@ function renderEvents() {
     else card.append(element('div', 'Guest list is private to the organiser.', 'counts'));
     const actions = element('div', '', 'event-actions'); actions.append(action('Open event in chat ↗', () => openTelegram(e.inviteUrl), 'primary'));
     if (e.isOwner && !e.cancelled) actions.append(action('Edit event', () => setupForm(e)));
-    if(e.starPrice && !e.isOwner && e.status==='yes' && e.approval==='approved' && e.paymentStatus!=='paid')actions.append(action('⭐ Pay with Stars',()=>openTelegram(e.inviteUrl.replace('?start=e_','?start=pay_'))));
+    if((e.starPrice || ['bank','link'].includes(e.paymentMethod)) && !e.isOwner && e.status==='yes' && e.approval==='approved' && e.paymentStatus!=='paid')actions.append(action(e.starPrice?'⭐ Pay with Stars':'Payment instructions',()=>openTelegram(e.inviteUrl.replace('?start=e_','?start=pay_'))));
     actions.append(action('Copy link', async () => { try { await navigator.clipboard.writeText(e.inviteUrl); notice('✓ Event link copied.'); } catch { notice('Could not copy the link. Use Share invite under the three-dot menu.'); } }));
     const more = document.createElement('details'); more.className = 'event-more';
     const moreToggle = element('summary','⋯'); moreToggle.setAttribute('aria-label',`More options for ${e.title}`);
     const extraActions = element('div','','event-more-panel'); more.append(moreToggle,extraActions);
     extraActions.append(action('Share invite', () => share(e)));
-    if(e.starPrice)extraActions.append(action(e.isOwner?'Payments & refunds':'Payment support',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=payments')));
+    if(e.starPrice || ['bank','link'].includes(e.paymentMethod))extraActions.append(action(e.isOwner?'Payments & refunds':'Payment support',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=payments')));
     if (e.isOwner || e.permissions.viewMedia) {
       actions.append(action('🗂 Shared media', () => openGallery(e.id)));
     }
@@ -151,8 +155,10 @@ document.addEventListener('keydown', event => { if (event.key==='Escape') for (c
 function setupForm(event = null) {
   activeEvent = event; createdEvent = null; requestId = crypto.randomUUID();
   $('event-form').reset(); $('event-form').hidden = false; $('success').hidden = true; $('form-error').hidden = true;
-  $('stars-panel').hidden = compactPicker || !state.user?.isSuperAdmin;
-  $('stars-enabled').checked = !!(event ? event.starPrice : state.user?.isSuperAdmin && state.pricing?.defaultStarPrice); $('stars-fields').hidden = !$('stars-enabled').checked;
+  $('stars-panel').hidden = compactPicker;
+  $('stars-enabled').checked = !!(event ? event.starPrice || ['bank','link'].includes(event.paymentMethod) : state.user?.isSuperAdmin && state.pricing?.defaultStarPrice);
+  $('payment-method').value=event?.paymentMethod && event.paymentMethod!=='free'?event.paymentMethod:event?.starPrice || state.user?.isSuperAdmin && state.pricing?.defaultStarPrice?'stars':'bank';
+  $('display-price').value=event?.displayPrice || '';$('payment-instructions').value=event?.paymentInstructions || '';$('payment-url').value=event?.paymentUrl || ''; $('stars-fields').hidden = !$('stars-enabled').checked;
   $('stars-price').value = event?.starPrice || state.pricing?.defaultStarPrice || 100; $('stars-pricing').value = event?.starPricing || state.pricing?.defaultStarPricing || 'person';
   updatePricePreview();
   $('payment-terms').value = event?.paymentTerms || '';
@@ -209,6 +215,7 @@ async function preview() {
 }
 async function refresh() {
   const data = await api('bootstrap'); state = data;
+  $('connection-status').textContent=`Connected as ${data.user.firstName}${data.user.id ? ' · Telegram ID '+data.user.id : ''}${data.user.isSuperAdmin ? ' · Super admin' : ''}`;
   const hasPending = data.events.some(e => !e.isOwner && !e.cancelled && e.status === 'later');
   document.querySelector('[data-tab="pending"]').hidden = !hasPending;
   if (!hasPending && listFilter === 'pending') go('events');
@@ -313,6 +320,7 @@ $('deadline-enabled').onchange = updateDeadline;
 $('allow-link-uploads').onchange=()=>{if($('allow-link-uploads').checked)$('allow-upload-media').checked=true;};
 $('allow-upload-media').onchange=()=>{if(!$('allow-upload-media').checked)$('allow-link-uploads').checked=false;};
 $('stars-enabled').onchange = () => { $('stars-fields').hidden = !$('stars-enabled').checked; updatePricePreview(); };
+$('payment-method').onchange=updatePricePreview;$('display-price').oninput=updatePricePreview;
 $('stars-price').oninput=updatePricePreview; $('stars-pricing').onchange=updatePricePreview;
 $('require-approval').onchange = () => { if ($('require-approval').checked) $('hide-location').checked = true; $('hide-location').disabled = $('require-approval').checked; };
 $('clear-draft-deadline').onclick = async () => { try { await api('draft-deadline', { clear: true, sessionToken: query.get('session') }); notice('✓ Response deadline removed. Continue creating your event in chat.'); tg?.close(); } catch (e) { notice(e.message); } };
@@ -323,7 +331,7 @@ $('timezone-form').onsubmit = async event => {
 };
 $('event-form').onsubmit = async event => {
   event.preventDefault(); $('save-event').disabled = true; $('form-error').hidden = true;
-  const payload = { ...(state.user.isSuperAdmin ? {starPrice:$('stars-enabled').checked ? Number($('stars-price').value) : 0, starPricing:$('stars-pricing').value, paymentTerms:$('payment-terms').value} : {}), askParticipantCount: $('ask-participant-count').checked, isPublic: $('event-visibility').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
+  const payload = { paymentMethod:$('stars-enabled').checked ? $('payment-method').value : 'free',displayPrice:$('display-price').value,paymentInstructions:$('payment-instructions').value,paymentUrl:$('payment-url').value,starPrice:$('stars-enabled').checked && $('payment-method').value==='stars' ? Number($('stars-price').value) : 0,starPricing:$('stars-pricing').value,paymentTerms:$('payment-terms').value, askParticipantCount: $('ask-participant-count').checked, isPublic: $('event-visibility').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
   try {
     const banner = $('banner').files[0];
     if (!compactPicker && banner && (banner.size > 5 * 1024 * 1024 || !['image/jpeg','image/png','image/webp'].includes(banner.type))) throw new Error('Choose a JPG, PNG, or WebP banner smaller than 5 MB.');

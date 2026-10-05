@@ -2,7 +2,7 @@ import { eventGroup } from './reminders.js';
 import { permissions, responseCounts, participantCount } from './permissions.js';
 
 export const isSuperAdmin = (user, env = {}) => {
-  const configured = String(env.SUPER_ADMIN_ID || '');
+  const configured = String(env.SUPER_ADMIN_ID || '').trim();
   if (!/^[1-9]\d*$/.test(configured)) return false;
   const id = Number(configured);
   return Number.isSafeInteger(id) && Number.isSafeInteger(user?.id) && user.id === id;
@@ -30,7 +30,7 @@ export function adminOverview(rows) {
       const u = ensure(uid); if (u) { u.invited.push(e.id); if (g.name && !u.names.includes(g.name)) u.names.push(g.name); }
       return { id: Number(uid), name: g.name || '', status: g.status, participants: g.status === 'yes' ? participantCount(e, g) : null, paymentStatus:g.payment?.status || null, paymentAmount:g.payment?.amount || null, approval: g.approval || null, phone: g.phone || '', comment: g.comment || '', answers: g.answers || [] };
     });
-    return { id: e.id, owner: e.owner, title: e.title, starPrice:e.starPrice || 0,starPricing:e.starPricing || 'group', when: e.when, startsAt: e.startsAt || null, endsAt: e.endsAt || null, durationMinutes: e.durationMinutes || null, timezone: e.timezone || null, location: e.location, description: e.description, createdAt: e.createdAt, group: eventGroup(e), cancelled: !!e.cancelled, responseDeadline: e.responseDeadline || null, askParticipantCount: e.askParticipantCount === true, requireApproval: !!e.requireApproval, hideLocation: !!e.hideLocation, permissions: permissions(e), ticketInfo: e.ticketInfo || '', questions: e.questions || [], counts: responseCounts(e), mediaCount: e.media?.length || 0, hasBanner: !!e.banner, guests };
+    return { id: e.id, owner: e.owner, title: e.title, paymentMethod:e.paymentMethod || (e.starPrice?'stars':'free'),displayPrice:e.displayPrice || '',starPrice:e.starPrice || 0,starPricing:e.starPricing || 'group', when: e.when, startsAt: e.startsAt || null, endsAt: e.endsAt || null, durationMinutes: e.durationMinutes || null, timezone: e.timezone || null, location: e.location, description: e.description, createdAt: e.createdAt, group: eventGroup(e), cancelled: !!e.cancelled, responseDeadline: e.responseDeadline || null, askParticipantCount: e.askParticipantCount === true, requireApproval: !!e.requireApproval, hideLocation: !!e.hideLocation, permissions: permissions(e), ticketInfo: e.ticketInfo || '', questions: e.questions || [], counts: responseCounts(e), mediaCount: e.media?.length || 0, hasBanner: !!e.banner, guests };
   }).sort((a,b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   return { events, users: [...users.values()].sort((a,b) => (b.lastSeen || '').localeCompare(a.lastSeen || '') || a.id-b.id) };
 }

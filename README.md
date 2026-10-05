@@ -24,7 +24,7 @@ Built for sports clubs, friends, community organisers and volunteer groups, XEve
 | Location for approved ticket holders only | Enable approval and location privacy to withhold the address and private invitation details until the organiser approves the guest. |
 | Guest privacy | Choose whether guests can see the guest list, upload media or browse shared media. |
 | Event reminders | Personal and default reminders, including 2, 3 or 4 hours before the event. |
-| Paid events | Super admins can charge Telegram Stars per person or per group, approve guests before payment and issue full refunds. |
+| Paid events | Organisers can show any price as text, accept manual bank transfers, use an external payment link or collect Telegram Stars. Approval and verified payment protect private tickets and locations. |
 | Event banners | Add an image to invitations and the Mini App. |
 | Shared event media | Collect photos, videos and files; browse, save or send them to Telegram. |
 | Upload links and QR codes | Optionally allow media contributions without an RSVP. |
@@ -86,7 +86,11 @@ Review the [Telegram Bot API](https://core.telegram.org/bots/api) and [Cloudflar
 
 ## Paid events with Telegram Stars
 
-The configured super administrator can enable **Charge admission in Stars** when creating or editing an event in the Mini App. Choose a whole-number Stars price per person or per group, and write payment and refund terms. For example, an online workshop priced at 50 Stars per person costs 150 Stars for a group of three.
+Every organiser can enable **Paid event** when creating or editing an event in the Mini App. Choose **Manual bank transfer**, **External payment link**, or **Built-in Telegram Stars**, and write payment and refund terms. Manual methods accept prices as text, such as `AUD $20 each`, `£15 per family`, or `Members $10 / guests $15`. These prices are displayed as entered; XEvents does not convert or multiply them. External payment links must use HTTPS.
+
+For bank transfers and external links, guests receive payment instructions after approval when required. **I have paid — request review** sends the organiser a request to check receipt in their bank or payment provider. Only the organiser can confirm payment and release the ticket and private location. Clearing a payment record does not move or refund money; organisers handle these refunds outside XEvents.
+
+For Stars, choose a whole-number price per person or per group. For example, a workshop priced at 50 Stars per person costs 150 Stars for a group of three.
 
 **Admin → Owner fee settings** lets the owner set a default admission price and pricing unit for new events. A default of zero means Free. Existing event prices are unchanged. Free and Stars price tags appear in event views, Explore, settings and management.
 
@@ -94,7 +98,7 @@ The owner can also enter reference prices for one Star in different currencies. 
 
 When approval is required, the organiser approves the guest before requesting payment. Guests review the terms and tap **Agree & pay with Stars** to receive a Telegram invoice. Tickets and private joining details unlock only after Telegram confirms successful payment, not simply after a checkout attempt.
 
-Payments go to the bot's Stars balance. This version limits paid event creation to the super admin; it does not offer organiser payouts or split payments. Free events remain available to everyone. Event creation has no digital-only checkbox or event-type restriction. Hosts are responsible for checking the payment rules applicable to the goods or services they sell. See [Telegram's Stars payment documentation](https://core.telegram.org/bots/payments-stars).
+Stars payments go to the bot's balance, not directly to individual organisers. Stars are available to all organisers where Telegram permits their use. The bot owner handles organiser payouts manually; XEvents does not provide automatic payouts or split payments. Free events remain available to everyone. Event creation has no digital-only checkbox or event-type restriction. Hosts are responsible for checking the payment rules applicable to the goods or services they sell. See [Telegram's Stars payment documentation](https://core.telegram.org/bots/payments-stars).
 
 Use **Payments & refunds** in the event's three-dot menu or `/paysupport` in chat to review purchases. The seller can request a full refund with confirmation. Cancelling or deleting an event requests full refunds for its recorded paid orders. Refunds are marked complete only after confirmation; failed refunds can be retried through payment support. Payment records survive event deletion, but hosts must keep their database and backups safe.
 
@@ -173,7 +177,7 @@ The host controls the database and must protect personal information and backups
 
 The implementation targets small communities. It loads event records during processing and serialises writes; larger deployments should improve queries and capacity planning. Delivery is best effort, and retries can occasionally duplicate messages. People who never open an invitation cannot be listed or contacted.
 
-Invitation tickets confirm attendance. Telegram Stars supports paid admission; card payments, organiser payouts, calendar synchronisation and ticket scanning are not implemented.
+Invitation tickets confirm attendance. Paid admission supports Telegram Stars and organiser-verified bank transfers or external payment links. Direct card processing, automatic organiser payouts, calendar synchronisation and ticket scanning are not implemented.
 
 ## Frequently asked questions
 

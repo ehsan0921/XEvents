@@ -22,6 +22,7 @@ export function parsePricing(input) {
   return {...pricingSettings(input),updatedAt:new Date().toISOString()};
 }
 export function priceText(event,preference={},settings={}) {
+  if(['bank','link'].includes(event.paymentMethod))return 'Paid · '+event.displayPrice;
   if(!event.starPrice)return 'Free';
   const unit=event.starPricing==='person'?'per person':'per group';
   const currency=localCurrency(preference),rate=settings.rates?.[currency];

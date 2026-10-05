@@ -1,3 +1,4 @@
+import {parseEventPayment,paymentMethod} from './event-payment.js';
 import { authenticate } from './mini-auth.js';
 import { pricingSettings, parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
@@ -18,18 +19,15 @@ function parsePermissions(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !Object.hasOwn(permissionLabels, k)) || Object.values(value).some(v => typeof v !== 'boolean')) throw new InputError('Guest options must be checked or unchecked.');
   return permissions({ permissions: value });
 }
-function eventSettings(input, event = {}, merchant = false) {
+function eventSettings(input, event = {}) {
   const result = {};
-  const activePayments=Object.values(event.guests || {}).some(g=>['paid','processing','refund_pending','refund_failed'].includes(g.payment?.status));
+  const activePayments=Object.values(event.guests || {}).some(g=>['reported','paid','processing','refund_pending','refund_failed'].includes(g.payment?.status));
   if(activePayments && input.askParticipantCount !== undefined && input.askParticipantCount !== (event.askParticipantCount===true)) throw new InputError('Refund active payments before changing group attendance settings.');
   if(activePayments && input.paymentTerms !== undefined && (typeof input.paymentTerms !== 'string' || input.paymentTerms.trim() !== event.paymentTerms)) throw new InputError('Refund active payments before changing payment terms.');
-  if (input.starPrice !== undefined || !event.id) {
-    const price = input.starPrice ?? 0;
-    if (!Number.isSafeInteger(price) || price < 0 || price > 100000) throw new InputError('Stars price must be a whole number between 0 and 100,000.');
-    if (price && !merchant) throw new InputError('Only the super admin can create paid events on this bot.');
-    if (price && !['person','group'].includes(input.starPricing)) throw new InputError('Choose per-person or per-group pricing.');
-    if (activePayments && (price !== event.starPrice || (price && input.starPricing !== event.starPricing))) throw new InputError('Refund active payments before changing the event price.');
-    Object.assign(result, {starPrice:price, starPricing:price ? input.starPricing : 'group', paymentTerms:price ? field(input.paymentTerms, 'Payment and refund terms', 1000, true) : ''});
+  if(input.paymentMethod!==undefined || input.starPrice!==undefined || !event.id){
+    const next=parseEventPayment(input,event,true);
+    if(activePayments && ['paymentMethod','starPrice','starPricing','displayPrice','paymentInstructions','paymentUrl','paymentTerms'].some(key=>(next[key] || '')!==(event[key] || (key==='paymentMethod'?paymentMethod(event):''))))throw new InputError('Clear or refund active payments before changing payment settings.');
+    Object.assign(result,next);
   }
   if (input.isPublic !== undefined || !event.id) {
     if (input.isPublic !== undefined && typeof input.isPublic !== 'boolean') throw new InputError('Choose public or private visibility.');
@@ -70,6 +68,8 @@ export function publicEvent(e, id, username) {
     isOwner: e.owner === id, cancelled: e.cancelled, inviteUrl: `https://t.me/${username}?start=e_${e.id}`,
     permissions: permissions(e),
     isPublic: e.isPublic === true,
+    paymentMethod:paymentMethod(e),displayPrice:e.displayPrice || '',
+    ...(e.owner === id || (e.guests[id]?.status === 'yes' && (!e.requireApproval || e.guests[id]?.approval === 'approved')) ? {paymentInstructions:e.paymentInstructions || '',paymentUrl:e.paymentUrl || ''} : {}),
     starPrice:e.starPrice || 0, starPricing:e.starPricing || 'group', paymentTerms:e.paymentTerms || '', paymentStatus:e.guests[id]?.payment?.status || null,
     defaultReminder: e.defaultReminder || 0,
     mediaCount: can(e, id, 'viewMedia') ? e.media?.length || 0 : null,
@@ -98,7 +98,7 @@ export async function miniApi(request, env) {
     try { zone = timezone(new URL(request.url).searchParams.get('timezone') || (preference && JSON.parse(preference.data).timezone) || 'UTC'); }
     catch(error) { return respond({error:error.message},400); }
     const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND json_extract(data,'$.isPublic')=1 AND json_extract(data,'$.timezone')=?").bind(zone).all();
-    const events = results.map(r => JSON.parse(r.data)).filter(e => !e.cancelled && Date.parse(e.endsAt || e.startsAt) > Date.now()).sort((a,b) => Date.parse(a.startsAt)-Date.parse(b.startsAt)).map(e => ({ id: e.id, title: e.title, description: e.description, starPrice:e.starPrice || 0, starPricing:e.starPricing || 'group', startsAt: e.startsAt, endsAt: e.endsAt || null, timezone: e.timezone, hasBanner: !!e.banner, inviteUrl: `https://t.me/${env.BOT_USERNAME}?start=e_${e.id}`, responsesClosed: responsesClosed(e) }));
+    const events = results.map(r => JSON.parse(r.data)).filter(e => !e.cancelled && Date.parse(e.endsAt || e.startsAt) > Date.now()).sort((a,b) => Date.parse(a.startsAt)-Date.parse(b.startsAt)).map(e => ({ id: e.id, title: e.title, description: e.description, paymentMethod:paymentMethod(e),displayPrice:e.displayPrice || '', starPrice:e.starPrice || 0, starPricing:e.starPricing || 'group', startsAt: e.startsAt, endsAt: e.endsAt || null, timezone: e.timezone, hasBanner: !!e.banner, inviteUrl: `https://t.me/${env.BOT_USERNAME}?start=e_${e.id}`, responsesClosed: responsesClosed(e) }));
     return respond({ timezone: zone, events });
   }
   const mediaResponse = await mediaApi(request, env, user);
@@ -163,7 +163,7 @@ export async function miniApi(request, env) {
     const pickerSession = s && (s.step === 'when' || s.step === 'permissions' || (s.step === 'edit' && s.field === 'when')) ? { token: s.token, event: s.event || null, deadlineDate: s.draft?.deadlineDate || '', deadlineTime: s.draft?.deadlineTime || '', timezone: s.draft?.deadlineTimezone || s.draft?.timezone || null } : null;
     const pricing=await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id='_pricing'").first();
     const pref=preference ? JSON.parse(preference.data) : {};
-    return respond({pricing:pricingSettings(pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: {timezone:pref.timezone,currency:pref.currency || ''}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
+    return respond({pricing:pricingSettings(pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { id: user.id, firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: {timezone:pref.timezone,currency:pref.currency || ''}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
   }
   if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
   const raw = await request.text();
@@ -191,7 +191,7 @@ export async function miniApi(request, env) {
         const questions = field(input.questions ?? '', 'Questions', 2200).split('\n').map(q => q.trim()).filter(Boolean);
         if (questions.length > 10 || questions.some(q => q.length > 200)) throw new InputError('Use up to 10 questions, each at most 200 characters.');
         const e = { ...schedule(input), id: randomBytes(8).toString('hex'), title, location, description, questions, permissions: parsePermissions(input.permissions), owner: id, guests: {}, media: [], cancelled: false, createdAt: new Date().toISOString(), createRequestId: input.requestId };
-        Object.assign(e, eventSettings(input, { ...e, id: undefined }, isSuperAdmin(user, env)));
+        Object.assign(e, eventSettings(input, { ...e, id: undefined }));
         data.events[e.id] = e;
         await bot.home(id, '🎉 Your event is ready! Created in your planner.'); await bot.card(id, e);
         return { event: publicEvent(e, id, env.BOT_USERNAME) };
@@ -240,7 +240,7 @@ export async function miniApi(request, env) {
         const e = data.events[match[1]];
         if (!e || e.owner !== id || e.cancelled) throw new InputError('Only the organiser can change an active event.');
         Object.assign(e, schedule({ endMode: e.endMode || 'none', durationMinutes: e.durationMinutes, endDate: e.endDate, endTime: e.endTime, ...input }));
-        Object.assign(e, eventSettings(input, e, isSuperAdmin(user, env)));
+        Object.assign(e, eventSettings(input, e));
         await bot.notify(e, `📣 ${e.title}: the organiser updated the date and time. Tap My events for the latest details.`); await bot.card(id, e);
         return { event: publicEvent(e, id, env.BOT_USERNAME) };
       }

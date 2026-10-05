@@ -1,3 +1,5 @@
+import {paymentMethod,paidEvent} from './event-payment.js';
+import {manualInstructions,manualReport,manualConfirm} from './manual-payment.js';
 import { priceText } from './pricing.js';
 import { randomBytes } from 'node:crypto';
 import { invoice, checkout, successful, orderFor, requestRefund, refundResult } from './payments.js';
@@ -81,20 +83,21 @@ export class Bot {
     g.ticket ||= randomBytes(6).toString('hex').toUpperCase();
     return this.long(id, `🎟 YOUR INVITATION\n\n${e.title}\nGuest: ${g.name}\nPeople: ${participantCount(e, g)}\nTicket: ${g.ticket}\n\n🗓 ${this.time(e, id)}\n${priceText(e,this.db.preferences[id],this.db.preferences._pricing)}\n📍 ${e.location}${e.ticketInfo ? '\n\n' + e.ticketInfo : ''}\n\n✅ Your place is confirmed.`, keyboard([button('Back to event', `v:${e.id}`)]));
   }
+  paymentInfo(id,e){return paymentMethod(e)==='stars'?invoice(this,id,e):manualInstructions(this,id,e);}
   async saveResponse(id, e, response) {
     if (['paid','processing','refund_pending','refund_failed'].includes(e.guests[id]?.payment?.status)) return this.send(id,'Your paid or processing booking cannot be changed. Contact /paysupport to request a refund first.');
     if (responsesClosed(e)) { this.session(id); await this.home(id, 'The response deadline has passed. Your unfinished response was not saved.'); return this.card(id, e); }
     if (response.status === 'yes') {
       response.participants = participantCount(e, response);
       response.approval = e.requireApproval ? 'pending' : 'approved';
-      if (e.requireApproval || e.starPrice) delete response.ticket; else response.ticket = randomBytes(6).toString('hex').toUpperCase();
+      if (e.requireApproval || paidEvent(e)) delete response.ticket; else response.ticket = randomBytes(6).toString('hex').toUpperCase();
     } else { delete response.approval; delete response.ticket; }
     e.guests[id] = response; this.session(id);
     if (response.status === 'yes') applyDefaultReminder(e, id);
-    await this.home(id, response.status === 'yes' && e.requireApproval ? '✅ Your acceptance request is saved. The organiser will send your invitation details and ticket after approving your response.' : e.starPrice && response.status === 'yes' ? 'Acceptance saved. Pay with Stars to confirm your ticket.' : '✅ Response saved.');
+    await this.home(id, response.status === 'yes' && e.requireApproval ? '✅ Your acceptance request is saved. The organiser will send your invitation details and ticket after approving your response.' : paidEvent(e) && response.status === 'yes' ? 'Acceptance saved. Complete payment to confirm your ticket.' : '✅ Response saved.');
     await this.send(e.owner, `${e.title}\n${response.name}: ${response.approval === 'pending' ? '⏳ Awaiting approval' : labels[response.status]}${response.status === 'yes' ? '\nPeople: ' + participantCount(e, response) : ''}${response.comment ? '\nComment: ' + response.comment : ''}`, response.approval === 'pending' ? keyboard([button('✅ Approve', `approve:${e.id}:${id}`), button('❌ Reject', `reject:${e.id}:${id}`)]) : undefined).catch(() => {});
     if (confirmed(e, response) && e.requireApproval) await this.ticket(id, e);
-    if (e.starPrice && response.status === 'yes' && response.approval === 'approved') await invoice(this,id,e);
+    if (paidEvent(e) && response.status === 'yes' && response.approval === 'approved') await this.paymentInfo(id,e);
     return this.card(id, e);
   }
   async finishCreation(id, s) {
@@ -104,7 +107,7 @@ export class Bot {
   async card(id, e, withBanner = true) {
     const host = e.owner === id;
     const counted = responseCounts(e);
-    const counts = can(e, id, 'guestList') ? [`People coming: ${counted.participants}`, ...(counted.pending ? [`People awaiting approval: ${counted.pendingParticipants}`] : []), ...Object.keys(labels).map(s => `${labels[s]}: ${counted[s]}`), ...(counted.pending ? [`⏳ Awaiting approval: ${counted.pending}`] : []), ...(counted.awaitingPayment ? [`⭐ Awaiting payment: ${counted.awaitingPayment}`] : [])].join('\n') : `Your response: ${e.guests[id]?.status === 'yes' && !confirmed(e, e.guests[id]) ? e.starPrice && e.guests[id]?.approval === 'approved' ? 'Awaiting payment' : 'Awaiting organiser approval' : labels[e.guests[id]?.status] || 'Not submitted'}`;
+    const counts = can(e, id, 'guestList') ? [`People coming: ${counted.participants}`, ...(counted.pending ? [`People awaiting approval: ${counted.pendingParticipants}`] : []), ...Object.keys(labels).map(s => `${labels[s]}: ${counted[s]}`), ...(counted.pending ? [`⏳ Awaiting approval: ${counted.pending}`] : []), ...(counted.awaitingPayment ? [`⭐ Awaiting payment: ${counted.awaitingPayment}`] : [])].join('\n') : `Your response: ${e.guests[id]?.status === 'yes' && !confirmed(e, e.guests[id]) ? paidEvent(e) && e.guests[id]?.approval === 'approved' ? 'Awaiting payment' : 'Awaiting organiser approval' : labels[e.guests[id]?.status] || 'Not submitted'}`;
     const closed = responsesClosed(e);
     const accepted = !host && e.guests[id]?.status === 'yes';
     const rows = e.cancelled || host || closed ? [] : accepted ? [[button('Change response', `change:${e.id}`)]] : [
@@ -114,9 +117,9 @@ export class Bot {
     const extras = [];
     if (!e.cancelled) {
       if (host) extras.push({ text: '📨 Invite people', url: `https://t.me/share/url?url=${encodeURIComponent(this.link(e))}&text=${encodeURIComponent(`You're invited to ${e.title}!`)}` }, button('⚙️ Manage', `h:${e.id}`));
-      if(e.starPrice)extras.push({text:host?'Payments & refunds':'Payment support',url:`https://t.me/${this.username}?start=payments`});
+      if(paidEvent(e))extras.push({text:host?'Payments & refunds':'Payment support',url:`https://t.me/${this.username}?start=payments`});
       if (can(e, id, 'guestList')) extras.push(button('👥 Guest list', `g:${e.id}`));
-      if (!host && accepted && e.starPrice && (!e.requireApproval || e.guests[id].approval === 'approved') && e.guests[id].payment?.status !== 'paid') extras.push(button('⭐ Pay with Stars', `star-terms:${e.id}`));
+      if (!host && accepted && paidEvent(e) && (!e.requireApproval || e.guests[id].approval === 'approved') && e.guests[id].payment?.status !== 'paid') extras.push(button(e.starPrice?'⭐ Pay with Stars':'Payment instructions', `star-terms:${e.id}`));
       if (!host && accepted && e.requireApproval) extras.push(button('🎟 My status', `status:${e.id}`));
       if (can(e, id, 'uploadMedia')) extras.push(button('📎 Add media', `u:${e.id}`));
       if (this.appUrl && can(e, id, 'viewMedia')) extras.push(this.miniButton('🗂 Shared media', `?gallery=${e.id}`));
@@ -129,7 +132,7 @@ export class Bot {
     rows.push(...paired(extras));
     rows.push([button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
     const visibility = can(e, id, 'guestList') ? 'Guest names and RSVP comments can be seen in the guest list.' : 'The organiser has kept the guest list private. Your response and comment are shared with the organiser.';
-    const location = canSeeLocation(e, id) ? e.location : e.starPrice ? 'Shared after approval and confirmed payment' : e.requireApproval ? 'Shared after organiser approval' : 'Shared after acceptance';
+    const location = canSeeLocation(e, id) ? e.location : paidEvent(e) ? 'Shared after approval and confirmed payment' : e.requireApproval ? 'Shared after organiser approval' : 'Shared after acceptance';
     const text = `🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n\n🗓 ${this.time(e, id)}\n📍 ${location}\n\n${priceText(e,this.db.preferences[id],this.db.preferences._pricing)}\n\n${e.description}\n\n${host ? 'You’re the organiser — no RSVP needed.\n\n' : accepted ? '✅ Accepted\n\n' : ''}${closed ? '⏰ Responses closed — deadline passed.\n\n' : ''}${e.responseDeadline ? 'Response deadline: ' + eventTime({ startsAt: e.responseDeadline, timezone: e.deadlineTimezone || e.timezone || 'UTC' }, this.db.preferences[id]?.timezone) + '\n\n' : ''}${counts}${host ? '\n\nInvite people:\n' + this.link(e) : ''}\n\n${visibility} Phone numbers and question answers are shared only with the organiser.`;
     if (e.banner && withBanner) {
       const caption = text.length <= 1024 ? text : text.slice(0, 940).replace(/[\uD800-\uDBFF]$/, '') + '\n\nTap Full details to read more.';
@@ -155,7 +158,7 @@ export class Bot {
     let text = clean(m.text, 3000);
     if(text === '/start payments')text='/paysupport';
     const paymentLink=text.match(/^\/start pay_([a-f0-9]{16})$/);
-    if(paymentLink) {const e=this.db.events[paymentLink[1]];return this.allowed(e,id) ? invoice(this,id,e) : this.home(id,'Open your event invitation before paying.');}
+    if(paymentLink) {const e=this.db.events[paymentLink[1]];return this.allowed(e,id) ? this.paymentInfo(id,e) : this.home(id,'Open your event invitation before paying.');}
     const current = this.db.sessions[id];
     const navigation = { [menu.new]: '/new', [menu.events]: '/events', [menu.help]: '/help', [menu.home]: '/start', [menu.cancel]: '/cancel', [menu.app]: '/app', [menu.picker]: '/picker', [menu.pending]: '/pending' };
     if (text === '📱 Open app') text = '/app';
@@ -165,10 +168,14 @@ export class Bot {
     else if (current && text === menu.done && current.step === 'upload') text = '/done';
     const command = text.split(/\s/)[0].split('@')[0];
     if (command === '/paysupport' || command === '/terms') {
-      await this.send(id,'Stars payments fund event admission. Event terms are shown before checkout. Cancelling an event requests a full refund. For payment help, send /paysupport followed by your question. Telegram support cannot handle purchases through this bot.');
+      await this.send(id,'Paid events can use Stars, bank transfers or external payment links. Event terms are shown before payment. Cancelling a Stars event requests a full refund; organisers handle bank and external-link refunds directly. For payment help, send /paysupport followed by your question. Telegram support cannot handle purchases through this bot.');
       for(const [uid,pref] of Object.entries(this.db.preferences))for(const order of Object.values(pref.starOrders || {}))if(order.owner===id || Number(uid)===id){
         await this.send(id,order.title+' · '+order.amount+' Stars · '+order.status, order.owner===id && ['paid','refund_failed'].includes(order.status)?keyboard([button('Full refund',`sr:${uid}:${order.id}`)]):undefined);
         if(Number(uid)===id && command==='/paysupport')await this.send(order.owner,'Payment support request for '+order.title+' from '+name(m.from)+' (Telegram ID '+id+').\n'+(text.slice(command.length).trim() || 'Please contact this guest about their payment.'));
+      }
+      for(const [uid,pref] of Object.entries(this.db.preferences))for(const record of Object.values(pref.manualPayments || {}))if(record.owner===id || Number(uid)===id){
+        await this.send(id,record.title+' · '+record.price+' · '+record.status);
+        if(Number(uid)===id && command==='/paysupport')await this.send(record.owner,'Manual payment support requested for '+record.title+' by '+name(m.from)+'.\n'+text.slice(command.length).trim());
       }
       return;
     }
@@ -362,9 +369,17 @@ export class Bot {
       return this.prompt(id,'Send photos, videos, or files, then tap Finish uploads.');
     }
     if (!this.allowed(e, id)) return this.send(id, 'Open a valid invitation link first.');
-    if (action === 'star-terms') return invoice(this,id,e);
+    if (action === 'star-terms') return this.paymentInfo(id,e);
+    if(action==='manual-report')return manualReport(this,id,e);
+    if(action==='manual-confirm' || action==='manual-clear' || action==='manual-clear-confirm'){
+      if(e.owner!==id)return this.send(id,'Only the organiser can confirm or clear payments.');
+      const uid=Number(arg);
+      if(action==='manual-confirm')return manualConfirm(this,id,e,uid);
+      if(action==='manual-clear')return this.send(id,'Clear this manual payment confirmation? This does not refund money. Handle any refund through your bank or provider first.',keyboard([button('Clear record',`manual-clear-confirm:${e.id}:${uid}`),button('Keep record',`v:${e.id}`)]));
+      return manualConfirm(this,id,e,uid,true);
+    }
     if (action === 'star-pay') return invoice(this,id,e,true);
-    if(action==='status' && e.starPrice && e.guests[id]?.approval==='approved' && !confirmed(e,e.guests[id]))return invoice(this,id,e);
+    if(action==='status' && paidEvent(e) && e.guests[id]?.approval==='approved' && !confirmed(e,e.guests[id]))return this.paymentInfo(id,e);
     if (e.cancelled && !['delete', 'delete-confirm'].includes(action)) return this.card(id, e);
     const hostActions = ['h', 'a', 'x', 'z', 'edit', 'rotate', 'remove', 'permissions', 'toggle', 'approve', 'reject', 'banner', 'delete', 'delete-confirm'];
     if (hostActions.includes(action) && e.owner !== id) return this.send(id, 'Only the organiser can do that.');
@@ -406,14 +421,14 @@ export class Bot {
       const guestId = Number(arg); const guest = e.guests[guestId];
       if (!Number.isSafeInteger(guestId) || guestId === e.owner || !guest || guest.status !== 'yes' || guest.approval !== 'pending') return this.send(id, 'There is no pending acceptance request for this guest.');
       if (action === 'approve') {
-        guest.approval = 'approved'; if(!e.starPrice)guest.ticket = randomBytes(6).toString('hex').toUpperCase();
+        guest.approval = 'approved'; if(!paidEvent(e))guest.ticket = randomBytes(6).toString('hex').toUpperCase();
         await this.send(guestId, `✅ The organiser approved your response for ${e.title}.`);
-        if(e.starPrice)await invoice(this,guestId,e);else await this.ticket(guestId,e);
+        if(paidEvent(e))await this.paymentInfo(guestId,e);else await this.ticket(guestId,e);
       } else {
         guest.approval = 'rejected'; guest.status = 'no'; delete guest.ticket;
         await this.home(guestId, `Your acceptance request for ${e.title} was not approved by the organiser. Contact them if you have questions.`);
       }
-      return this.send(id, `${guest.name}: ${action === 'approve' ? e.starPrice ? 'approved — payment requested' : 'approved — invitation ticket sent' : 'request rejected'}.`);
+      return this.send(id, `${guest.name}: ${action === 'approve' ? paidEvent(e) ? 'approved — payment requested' : 'approved — invitation ticket sent' : 'request rejected'}.`);
     }
     if (action === 'u') { this.session(id, { event: eid, step: 'upload' }); return this.prompt(id, `Send photos, videos, or files for this event. ${permissions(e).viewMedia ? 'Guests can view the shared collection.' : 'The shared collection is private to the organiser.'} Tap Finish uploads when finished.`); }
     if (action === 'm') {
@@ -446,12 +461,16 @@ export class Bot {
     if (action === 'a') {
       const rows = guests(e).map(g => `${g.name} — ${g.status === 'yes' && !confirmed(e, g) ? '⏳ Awaiting approval' : labels[g.status]}\nPeople: ${g.status === 'yes' ? participantCount(e, g) : 'Not attending'}\nPhone: ${g.phone || 'Not shared'}\n${(g.answers || []).map(a => `${a.question}: ${a.answer || 'Skipped'}`).join('\n')}\nComment: ${g.comment || 'None'}`);
       await this.long(id, `Private organiser responses — ${e.title}\n\n${rows.join('\n\n') || 'No guests yet.'}`, keyboard([button('Back to organiser tools', `h:${eid}`)]));
+      if(['bank','link'].includes(paymentMethod(e)))for(const [uid,g] of Object.entries(e.guests)){
+        if(g.payment?.status==='reported')await this.send(id,g.name+' — payment reported',keyboard([button('Confirm received',`manual-confirm:${e.id}:${uid}`),button('Clear report',`manual-clear:${e.id}:${uid}`)]));
+        if(g.payment?.status==='paid')await this.send(id,g.name+' — payment confirmed',keyboard([button('Clear payment record',`manual-clear:${e.id}:${uid}`)]));
+      }
       for (const [uid, guest] of Object.entries(e.guests)) if (Number(uid) !== e.owner && guest.status === 'yes' && guest.approval === 'pending') await this.send(id, `⏳ ${guest.name} — awaiting approval`, keyboard([button('✅ Approve', `approve:${eid}:${uid}`), button('❌ Reject', `reject:${eid}:${uid}`)]));
       return;
     }
     if (action === 'edit' && ['title', 'when', 'location', 'description'].includes(arg)) { this.session(id, { event: eid, step: 'edit', field: arg }); return this.prompt(id, `Enter the new ${arg}.`); }
     if (action === 'rotate') {
-      if(e.starPrice)return this.send(id,'Paid event links cannot be rotated while payment records reference them.');
+      if(paidEvent(e))return this.send(id,'Paid event links cannot be rotated while payment records reference them.');
       const newId = randomBytes(8).toString('hex'); delete this.db.events[eid]; e.id = newId; this.db.events[newId] = e;
       for (const s of Object.values(this.db.sessions)) if (s.event === eid) s.event = newId;
       await this.send(id, 'Invite link replaced. The old link no longer works. Existing guests can still open the event with My events.'); return this.card(id, e);

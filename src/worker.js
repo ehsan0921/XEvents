@@ -73,9 +73,10 @@ export default {
     if (url.pathname.startsWith('/api/')) {
       try {
       const response = await miniApi(request, env);
+      if (!response.ok) console.log(JSON.stringify({event:'mini_api_rejected',path:url.pathname,status:response.status}));
       if (response.ok && request.method === 'POST') ctx.waitUntil(drainOutbox(env));
       return response;
-      } catch { return Response.json({ error: 'Could not load the planner. Please try again.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
+      } catch (error) { console.error(JSON.stringify({event:'mini_api_failed',path:url.pathname,type:error.name})); return Response.json({ error: 'Could not load the planner. Please try again.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
     }
     if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/gallery.js', '/style.css'].includes(url.pathname))) {
       const target = new URL(request.url);

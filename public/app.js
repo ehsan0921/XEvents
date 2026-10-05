@@ -138,7 +138,7 @@ document.addEventListener('keydown', event => { if (event.key==='Escape') for (c
 function setupForm(event = null) {
   activeEvent = event; createdEvent = null; requestId = crypto.randomUUID();
   $('event-form').reset(); $('event-form').hidden = false; $('success').hidden = true; $('form-error').hidden = true;
-  $('stars-panel').hidden = compactPicker || !state.user.isSuperAdmin;
+  $('stars-panel').hidden = compactPicker || !state.user?.isSuperAdmin;
   $('stars-enabled').checked = !!event?.starPrice; $('stars-fields').hidden = !event?.starPrice;
   $('stars-price').value = event?.starPrice || 100; $('stars-pricing').value = event?.starPricing || 'person';
   $('digital-event').checked = !!event?.digitalEvent; $('payment-terms').value = event?.paymentTerms || '';

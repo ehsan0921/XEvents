@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { open, unlink } from 'node:fs/promises';
 import { Store } from './store.js';
 import { Bot } from './bot.js';
+import { refundResult } from './payments.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token || token === 'replace_with_your_bot_token') {
@@ -13,6 +14,7 @@ let lock;
 try { lock = await open(lockPath, 'wx'); await lock.writeFile(String(process.pid)); }
 catch { console.error('Another bot may be running. If it stopped unexpectedly, remove data/bot.lock before restarting.'); process.exit(1); }
 let stopping = false;
+let bot;
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopping = true; });
 
 async function api(method, params = {}) {
@@ -25,16 +27,18 @@ async function api(method, params = {}) {
   } catch { throw new Error(`Telegram ${method}: network failure`); }
   const body = await response.json();
   if (!body.ok) {
+    if(method==='refundStarPayment' && bot)await refundResult(bot,params.user_id,params.telegram_payment_charge_id,false);
     const error = new Error(`Telegram ${method} failed (${body.error_code})`);
     error.code = body.error_code; error.retryAfter = body.parameters?.retry_after;
     throw error;
   }
+  if(method==='refundStarPayment' && bot)await refundResult(bot,params.user_id,params.telegram_payment_charge_id,true);
   return body.result;
 }
 const delay = ms => new Promise(r => setTimeout(r, ms));
 try {
   const me = await api('getMe');
-  const bot = new Bot(store, api, me.username);
+  bot = new Bot(store, api, me.username);
   await api('deleteWebhook', { drop_pending_updates: false });
   await api('setMyCommands', { commands: [
     { command: 'new', description: 'Create an event' }, { command: 'events', description: 'Your events and invitations' },
@@ -43,7 +47,7 @@ try {
   console.log(`@${me.username} is running. Press Ctrl+C to stop.`);
   while (!stopping) {
     try {
-      const updates = await api('getUpdates', { offset: store.data.offset, timeout: 30, allowed_updates: ['message', 'callback_query'] });
+      const updates = await api('getUpdates', { offset: store.data.offset, timeout: 30, allowed_updates: ['message', 'callback_query', 'pre_checkout_query'] });
       for (const update of updates) {
         try { await bot.handle(update); }
         catch (error) {

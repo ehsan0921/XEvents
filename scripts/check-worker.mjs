@@ -3,11 +3,13 @@ import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 
+const telegramCalls=[];
 const mf = new Miniflare(convertV4MiniflareOptions({
   workers: [{ name: 'test',
   modules: true, scriptPath: '.wrangler/build/worker.js', compatibilityDate: '2026-10-05', compatibilityFlags: ['nodejs_compat'],
   d1Databases: ['DB'], bindings: { SUPER_ADMIN_ID: '999001', BOT_USERNAME: 'XEvents_bot', APP_URL: 'https://test/app', TELEGRAM_BOT_TOKEN: 'fake', TELEGRAM_WEBHOOK_SECRET: 'test-secret' },
   outboundService: async request => {
+    if(request.method==='POST' && request.headers.get('Content-Type')?.includes('application/json'))telegramCalls.push({method:new URL(request.url).pathname.split('/').at(-1),params:await request.clone().json()});
     if (request.url.includes('/file/bot')) return new Response(new Uint8Array([255,216,255]), { headers: { 'Content-Type':'image/jpeg' } });
     return new Response(JSON.stringify({ ok: true, result: request.url.endsWith('/sendPhoto') ? { photo:[{file_id:'test-banner'}] } : request.url.endsWith('/getFile') ? {file_path:'photos/banner.jpg'} : {} }), { headers: { 'Content-Type': 'application/json' } });
   }
@@ -188,5 +190,31 @@ try {
   assert.equal((await api('bootstrap',null,456)).data.events.find(e=>e.id===groupId).participants,4);
   const disabledGroup=await api(`events/${groupId}/schedule`, {...input,date:'2099-10-24',askParticipantCount:false});
   assert.equal(disabledGroup.status,200); assert.equal(disabledGroup.data.event.counts.participants,1);
-  console.log('Worker integration passed: authentication, scheduling, privacy, approvals, media, discovery and optional participant counts. Telegram mocked.');
+  const starsInput={...input,date:'2099-10-24',starPrice:20,starPricing:'person',digitalEvent:true,paymentTerms:'Online workshop. Full refund on cancellation. Contact the organiser for other requests.',askParticipantCount:true,requireApproval:true,requestId:'55555555-5555-5555-5555-555555555555'};
+  assert.equal((await api('events',starsInput,123)).status,400);
+  assert.equal((await api('events',{...starsInput,digitalEvent:false},999001)).status,400);
+  const starsEvent=await api('events',starsInput,999001);assert.equal(starsEvent.status,200);
+  const starsId=starsEvent.data.event.id;
+  await message(4000,`/start e_${starsId}`,456);await callback(4001,`r:${starsId}:yes`,456);
+  await message(4002,'Stars guest',456);await message(4003,'2',456);for(let i=0;i<4;i++)await message(4004+i,'/skip',456);
+  await callback(4010,`approve:${starsId}:456`,999001);
+  await callback(4011,`star-pay:${starsId}`,456);
+  const pref=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='preferences' AND id='456'").first()).data);
+  const starOrder=Object.values(pref.starOrders).find(o=>o.event===starsId);assert.equal(starOrder.amount,40);
+  const checkoutUpdate={update_id:4012,pre_checkout_query:{id:'stars-checkout',from:{id:456},invoice_payload:starOrder.id,currency:'XTR',total_amount:40}};
+  const checkoutRequest=()=>mf.dispatchFetch('https://test/telegram',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':'test-secret'},body:JSON.stringify(checkoutUpdate)});
+  assert.equal((await checkoutRequest()).status,200);assert.equal((await checkoutRequest()).status,200);
+  assert.ok(telegramCalls.some(c=>c.method==='answerPreCheckoutQuery' && c.params.ok===true));
+  assert.equal((await api('bootstrap',null,456)).data.events.find(e=>e.id===starsId).ticket,null);
+  const payment={currency:'XTR',total_amount:40,invoice_payload:starOrder.id,telegram_payment_charge_id:'integration-charge'};
+  await message(4013,undefined,456,{successful_payment:payment});await message(4013,undefined,456,{successful_payment:payment});
+  const paidEvent=(await api('bootstrap',null,456)).data.events.find(e=>e.id===starsId);
+  assert.equal(paidEvent.paymentStatus,'paid');assert.ok(paidEvent.ticket);assert.equal(paidEvent.location,input.location);
+  assert.doesNotMatch(JSON.stringify((await api('bootstrap',null,456)).data),/integration-charge|starOrders|checkoutId/);
+  assert.equal((await api(`events/${starsId}/schedule`,{...starsInput,starPrice:30},999001)).status,400);
+  await api(`events/${starsId}/delete`,{confirm:true},999001);
+  const durablePref=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='preferences' AND id='456'").first()).data);
+  assert.ok(['refund_pending','refunded'].includes(durablePref.starOrders[starOrder.id].status));
+  assert.equal((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(starsId).first()),null);
+  console.log('Worker integration passed: authenticated Stars checkout, durable payment/refund records, duplicate handling, privacy, scheduling, approvals and media. Telegram mocked.');
 } finally { await mf.dispose(); }

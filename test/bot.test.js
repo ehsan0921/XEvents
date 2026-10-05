@@ -7,6 +7,8 @@ import { Bot } from '../src/bot.js';
 import { Store } from '../src/store.js';
 import { sendDueReminders, setReminder, eventGroup, applyDefaultReminder } from '../src/reminders.js';
 import { responseCounts, participantCount } from '../src/permissions.js';
+import { invoice, checkout, successful, refundResult } from '../src/payments.js';
+import { confirmed, canSeeLocation } from '../src/permissions.js';
 
 function fixture() {
   const store = { data: { events: {}, sessions: {}, offset: 0 } };
@@ -23,6 +25,49 @@ function fixture() {
   }
   return { store, bot, calls, msg, cb, create };
 }
+
+test('Stars admission requires approval, binds payer and amount, confirms only after payment and supports refunds', async () => {
+  const f=fixture(), e=await f.create({requireApproval:true,askParticipantCount:true});
+  Object.assign(e,{starPrice:25,starPricing:'person',paymentTerms:'Online workshop. Full refund on cancellation.'});
+  e.guests[2]={name:'Buyer',status:'yes',approval:'pending',participants:3};
+  await invoice(f.bot,2,e,true);
+  assert.equal(f.calls.some(c=>c.method==='sendInvoice'),false);
+  await f.cb(1,`approve:${e.id}:2`);
+  assert.equal(e.guests[2].approval,'approved'); assert.equal(confirmed(e,e.guests[2]),false);
+  assert.equal(canSeeLocation(e,2),false); assert.equal(e.guests[2].ticket,undefined);
+  await f.cb(2,`star-pay:${e.id}`);
+  const bill=f.calls.find(c=>c.method==='sendInvoice');assert.equal(bill.currency,'XTR');assert.equal(bill.prices[0].amount,75);
+  const q={id:'checkout',from:{id:2},currency:'XTR',total_amount:75,invoice_payload:bill.payload};
+  assert.equal(checkout(f.bot,{...q,from:{id:3}}).ok,false);
+  assert.equal(checkout(f.bot,{...q,total_amount:25}).ok,false);
+  assert.equal(checkout(f.bot,{...q,currency:'USD'}).ok,false);
+  assert.equal(checkout(f.bot,q).ok,true);assert.equal(checkout(f.bot,q).ok,true);
+  assert.equal(checkout(f.bot,{...q,id:'duplicate-checkout'}).ok,false);
+  assert.equal(confirmed(e,e.guests[2]),false);
+  const paid={from:{id:2},successful_payment:{currency:'XTR',total_amount:75,invoice_payload:bill.payload,telegram_payment_charge_id:'test-charge'}};
+  await successful(f.bot,paid);assert.equal(confirmed(e,e.guests[2]),true);assert.equal(canSeeLocation(e,2),true);
+  assert.ok(e.guests[2].ticket);assert.equal(responseCounts(e).participants,3);
+  const count=f.calls.length;await successful(f.bot,paid);assert.equal(f.calls.length,count);
+  await f.cb(2,`r:${e.id}:no`);assert.equal(e.guests[2].status,'yes');
+  await f.cb(3,`src:2:${bill.payload}`);assert.equal(e.guests[2].payment.status,'paid');
+  await f.cb(1,`src:2:${bill.payload}`);assert.equal(e.guests[2].payment.status,'refund_pending');
+  assert.ok(f.calls.some(c=>c.method==='refundStarPayment' && c.telegram_payment_charge_id==='test-charge'));
+  await refundResult(f.bot,2,'test-charge',false);assert.equal(e.guests[2].payment.status,'refund_failed');
+  await f.cb(1,`src:2:${bill.payload}`);await refundResult(f.bot,2,'test-charge',true);
+  assert.equal(e.guests[2].status,'no');assert.equal(e.guests[2].payment.status,'refunded');assert.equal(e.guests[2].ticket,undefined);
+});
+
+test('Stars refunds survive event deletion and late payment never unlocks a changed event', async()=>{
+  const f=fixture(),e=await f.create({});Object.assign(e,{starPrice:10,starPricing:'group',paymentTerms:'Digital admission'});
+  e.guests[2]={status:'yes',approval:'approved',name:'Buyer'};
+  await invoice(f.bot,2,e,true);const bill=f.calls.find(c=>c.method==='sendInvoice');
+  e.cancelled=true;
+  assert.equal(checkout(f.bot,{id:'q',from:{id:2},currency:'XTR',total_amount:10,invoice_payload:bill.payload}).ok,false);
+  delete f.store.data.events[e.id];
+  await successful(f.bot,{from:{id:2},successful_payment:{currency:'XTR',total_amount:10,invoice_payload:bill.payload,telegram_payment_charge_id:'late-charge'}});
+  const order=f.store.data.preferences[2].starOrders[bill.payload];assert.equal(order.status,'refund_pending');
+  await refundResult(f.bot,2,'late-charge',true);assert.equal(order.status,'refunded');
+});
 
 test('optional group size validates whole numbers and separates people from responses and approval', async () => {
   const f = fixture(); const e = await f.create({askParticipantCount:true, requireApproval:true});

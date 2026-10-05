@@ -95,18 +95,21 @@ function renderEvents() {
     if (e.responsesClosed) card.append(element('p', '⏰ Responses closed — deadline passed.', 'error'));
     else if (e.responseDeadline) card.append(element('p', 'Respond by: ' + format({ startsAt: e.responseDeadline }), 'small muted'));
     if (e.approval === 'pending') card.append(element('p', 'The organiser will send your invitation details and ticket after approving your response.', 'muted'));
+    if (e.starPrice) card.append(element('p', '⭐ ' + e.starPrice + ' Stars ' + (e.starPricing === 'person' ? 'per person' : 'per group') + (e.paymentStatus ? ' · ' + e.paymentStatus.replaceAll('_',' ') : ''), 'small muted'));
     if (e.participants) card.append(element('p', 'Your group: ' + e.participants + (e.participants === 1 ? ' person' : ' people'), 'small muted'));
     if (e.ticket) card.append(element('p', `🎟 ${e.ticket.name}${e.ticket.code ? ' · ' + e.ticket.code : ''}${e.ticket.info ? '\n' + e.ticket.info : ''}`, 'time-preview'));
     if (e.startsAt && selectedZone() !== e.timezone) card.append(element('p', 'Organiser time: ' + format(e, e.timezone), 'small muted'));
-    if (e.counts) card.append(element('div', `${e.counts.participants} people coming (${e.counts.yes} responses) · ${e.counts.pendingParticipants || 0} people awaiting approval · ${e.counts.maybe} tentative · ${e.counts.no} declined · ${e.counts.later} later`, 'counts'));
+    if (e.counts) card.append(element('div', `${e.counts.participants} people coming (${e.counts.yes} responses) · ${e.counts.pendingParticipants || 0} people awaiting approval · ${e.counts.awaitingPayment || 0} awaiting payment · ${e.counts.maybe} tentative · ${e.counts.no} declined · ${e.counts.later} later`, 'counts'));
     else card.append(element('div', 'Guest list is private to the organiser.', 'counts'));
     const actions = element('div', '', 'event-actions'); actions.append(action('Open event in chat ↗', () => openTelegram(e.inviteUrl), 'primary'));
     if (e.isOwner && !e.cancelled) actions.append(action('Edit event', () => setupForm(e)));
+    if(e.starPrice && !e.isOwner && e.status==='yes' && e.approval==='approved' && e.paymentStatus!=='paid')actions.append(action('⭐ Pay with Stars',()=>openTelegram(e.inviteUrl.replace('?start=e_','?start=pay_'))));
     actions.append(action('Copy link', async () => { try { await navigator.clipboard.writeText(e.inviteUrl); notice('✓ Event link copied.'); } catch { notice('Could not copy the link. Use Share invite under the three-dot menu.'); } }));
     const more = document.createElement('details'); more.className = 'event-more';
     const moreToggle = element('summary','⋯'); moreToggle.setAttribute('aria-label',`More options for ${e.title}`);
     const extraActions = element('div','','event-more-panel'); more.append(moreToggle,extraActions);
     extraActions.append(action('Share invite', () => share(e)));
+    if(e.starPrice)extraActions.append(action(e.isOwner?'Payments & refunds':'Payment support',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=payments')));
     if (e.isOwner || e.permissions.viewMedia) {
       actions.append(action('🗂 Shared media', () => openGallery(e.id)));
     }
@@ -135,6 +138,10 @@ document.addEventListener('keydown', event => { if (event.key==='Escape') for (c
 function setupForm(event = null) {
   activeEvent = event; createdEvent = null; requestId = crypto.randomUUID();
   $('event-form').reset(); $('event-form').hidden = false; $('success').hidden = true; $('form-error').hidden = true;
+  $('stars-panel').hidden = compactPicker || !state.user.isSuperAdmin;
+  $('stars-enabled').checked = !!event?.starPrice; $('stars-fields').hidden = !event?.starPrice;
+  $('stars-price').value = event?.starPrice || 100; $('stars-pricing').value = event?.starPricing || 'person';
+  $('digital-event').checked = !!event?.digitalEvent; $('payment-terms').value = event?.paymentTerms || '';
   $('visibility-panel').hidden = compactPicker; $('event-visibility').value = event?.isPublic ? 'public' : 'private';
   $('ending-panel').hidden = deadlinePicker;
   $('end-mode').value = event?.endMode || 'none';
@@ -272,6 +279,7 @@ for (const id of ['duration-hours','duration-minutes','finish-date','finish-time
 $('deadline-enabled').onchange = updateDeadline;
 $('allow-link-uploads').onchange=()=>{if($('allow-link-uploads').checked)$('allow-upload-media').checked=true;};
 $('allow-upload-media').onchange=()=>{if(!$('allow-upload-media').checked)$('allow-link-uploads').checked=false;};
+$('stars-enabled').onchange = () => { $('stars-fields').hidden = !$('stars-enabled').checked; };
 $('require-approval').onchange = () => { if ($('require-approval').checked) $('hide-location').checked = true; $('hide-location').disabled = $('require-approval').checked; };
 $('clear-draft-deadline').onclick = async () => { try { await api('draft-deadline', { clear: true, sessionToken: query.get('session') }); notice('✓ Response deadline removed. Continue creating your event in chat.'); tg?.close(); } catch (e) { notice(e.message); } };
 $('timezone-form').onsubmit = async event => {
@@ -281,7 +289,7 @@ $('timezone-form').onsubmit = async event => {
 };
 $('event-form').onsubmit = async event => {
   event.preventDefault(); $('save-event').disabled = true; $('form-error').hidden = true;
-  const payload = { askParticipantCount: $('ask-participant-count').checked, isPublic: $('event-visibility').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
+  const payload = { ...(state.user.isSuperAdmin ? {starPrice:$('stars-enabled').checked ? Number($('stars-price').value) : 0, starPricing:$('stars-pricing').value, digitalEvent:$('digital-event').checked, paymentTerms:$('payment-terms').value} : {}), askParticipantCount: $('ask-participant-count').checked, isPublic: $('event-visibility').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
   try {
     const banner = $('banner').files[0];
     if (!compactPicker && banner && (banner.size > 5 * 1024 * 1024 || !['image/jpeg','image/png','image/webp'].includes(banner.type))) throw new Error('Choose a JPG, PNG, or WebP banner smaller than 5 MB.');

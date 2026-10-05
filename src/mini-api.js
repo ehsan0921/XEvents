@@ -17,8 +17,20 @@ function parsePermissions(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !Object.hasOwn(permissionLabels, k)) || Object.values(value).some(v => typeof v !== 'boolean')) throw new InputError('Guest options must be checked or unchecked.');
   return permissions({ permissions: value });
 }
-function eventSettings(input, event = {}) {
+function eventSettings(input, event = {}, merchant = false) {
   const result = {};
+  const activePayments=Object.values(event.guests || {}).some(g=>['paid','processing','refund_pending','refund_failed'].includes(g.payment?.status));
+  if(activePayments && input.askParticipantCount !== undefined && input.askParticipantCount !== (event.askParticipantCount===true)) throw new InputError('Refund active payments before changing group attendance settings.');
+  if(activePayments && input.paymentTerms !== undefined && (typeof input.paymentTerms !== 'string' || input.paymentTerms.trim() !== event.paymentTerms)) throw new InputError('Refund active payments before changing payment terms.');
+  if (input.starPrice !== undefined || !event.id) {
+    const price = input.starPrice ?? 0;
+    if (!Number.isSafeInteger(price) || price < 0 || price > 100000) throw new InputError('Stars price must be a whole number between 0 and 100,000.');
+    if (price && !merchant) throw new InputError('Only the super admin can create paid events on this bot.');
+    if (price && input.digitalEvent !== true) throw new InputError('Stars payments are for digital events. Confirm this event is digital.');
+    if (price && !['person','group'].includes(input.starPricing)) throw new InputError('Choose per-person or per-group pricing.');
+    if (activePayments && (price !== event.starPrice || (price && input.starPricing !== event.starPricing))) throw new InputError('Refund active payments before changing the event price.');
+    Object.assign(result, {starPrice:price, starPricing:price ? input.starPricing : 'group', digitalEvent:price > 0, paymentTerms:price ? field(input.paymentTerms, 'Payment and refund terms', 1000, true) : ''});
+  }
   if (input.isPublic !== undefined || !event.id) {
     if (input.isPublic !== undefined && typeof input.isPublic !== 'boolean') throw new InputError('Choose public or private visibility.');
     result.isPublic = input.isPublic === true;
@@ -58,6 +70,7 @@ export function publicEvent(e, id, username) {
     isOwner: e.owner === id, cancelled: e.cancelled, inviteUrl: `https://t.me/${username}?start=e_${e.id}`,
     permissions: permissions(e),
     isPublic: e.isPublic === true,
+    starPrice:e.starPrice || 0, starPricing:e.starPricing || 'group', digitalEvent:!!e.digitalEvent, paymentTerms:e.paymentTerms || '', paymentStatus:e.guests[id]?.payment?.status || null,
     defaultReminder: e.defaultReminder || 0,
     mediaCount: can(e, id, 'viewMedia') ? e.media?.length || 0 : null,
     imageCount: can(e, id, 'viewMedia') ? e.media?.filter(f => f.type === 'photo').length || 0 : null,
@@ -68,7 +81,7 @@ export function publicEvent(e, id, username) {
     ...(e.owner === id ? { ticketInfo: e.ticketInfo || '' } : {}),
     ticket: e.owner !== id && confirmed(e, e.guests[id]) && !e.cancelled ? { code: e.guests[id].ticket || '', name: e.guests[id].name, info: e.ticketInfo || '' } : null,
     counts: can(e, id, 'guestList') ? responseCounts(e) : null,
-    approval: e.owner !== id && e.guests[id]?.status === 'yes' ? confirmed(e, e.guests[id]) ? 'approved' : 'pending' : null,
+    approval: e.owner !== id && e.guests[id]?.status === 'yes' ? (!e.requireApproval || e.guests[id]?.approval === 'approved') ? 'approved' : 'pending' : null,
     status: e.owner === id ? null : e.guests[id]?.status || null
   };
 }
@@ -165,7 +178,7 @@ export async function miniApi(request, env) {
         const questions = field(input.questions ?? '', 'Questions', 2200).split('\n').map(q => q.trim()).filter(Boolean);
         if (questions.length > 10 || questions.some(q => q.length > 200)) throw new InputError('Use up to 10 questions, each at most 200 characters.');
         const e = { ...schedule(input), id: randomBytes(8).toString('hex'), title, location, description, questions, permissions: parsePermissions(input.permissions), owner: id, guests: {}, media: [], cancelled: false, createdAt: new Date().toISOString(), createRequestId: input.requestId };
-        Object.assign(e, eventSettings(input, { ...e, id: undefined }));
+        Object.assign(e, eventSettings(input, { ...e, id: undefined }, isSuperAdmin(user, env)));
         data.events[e.id] = e;
         await bot.home(id, '🎉 Your event is ready! Created in your planner.'); await bot.card(id, e);
         return { event: publicEvent(e, id, env.BOT_USERNAME) };
@@ -214,7 +227,7 @@ export async function miniApi(request, env) {
         const e = data.events[match[1]];
         if (!e || e.owner !== id || e.cancelled) throw new InputError('Only the organiser can change an active event.');
         Object.assign(e, schedule({ endMode: e.endMode || 'none', durationMinutes: e.durationMinutes, endDate: e.endDate, endTime: e.endTime, ...input }));
-        Object.assign(e, eventSettings(input, e));
+        Object.assign(e, eventSettings(input, e, isSuperAdmin(user, env)));
         await bot.notify(e, `📣 ${e.title}: the organiser updated the date and time. Tap My events for the latest details.`); await bot.card(id, e);
         return { event: publicEvent(e, id, env.BOT_USERNAME) };
       }

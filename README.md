@@ -24,6 +24,7 @@ Built for sports clubs, friends, community organisers and volunteer groups, XEve
 | Location for approved ticket holders only | Enable approval and location privacy to withhold the address and private invitation details until the organiser approves the guest. |
 | Guest privacy | Choose whether guests can see the guest list, upload media or browse shared media. |
 | Event reminders | Personal and default reminders, including 2, 3 or 4 hours before the event. |
+| Paid digital events | Super admins can charge Telegram Stars per person or per group, approve guests before payment and issue full refunds. |
 | Event banners | Add an image to invitations and the Mini App. |
 | Shared event media | Collect photos, videos and files; browse, save or send them to Telegram. |
 | Upload links and QR codes | Optionally allow media contributions without an RSVP. |
@@ -82,6 +83,18 @@ XEvents does not impose a built-in event media count quota. Telegram hosts uploa
 **Unlimited free storage is not guaranteed.** Telegram restrictions, Cloudflare database and execution quotas, and provider policies still apply. Free tiers may suit small communities; larger deployments may need paid capacity. Telegram-hosted media is not an independent backup. Deleting an event cannot remove copies already delivered to someone’s chat.
 
 Review the [Telegram Bot API](https://core.telegram.org/bots/api) and [Cloudflare platform limits](https://developers.cloudflare.com/workers/platform/limits/) before planning a large deployment.
+
+## Paid digital events with Telegram Stars
+
+The configured super administrator can enable **Charge admission in Stars** when creating or editing an event in the Mini App. Confirm that the event is digital, choose a whole-number Stars price per person or per group, and write payment and refund terms. For example, an online workshop priced at 50 Stars per person costs 150 Stars for a group of three.
+
+When approval is required, the organiser approves the guest before requesting payment. Guests review the terms and tap **Agree & pay with Stars** to receive a Telegram invoice. Tickets and private joining details unlock only after Telegram confirms successful payment, not simply after a checkout attempt.
+
+Payments go to the bot's Stars balance. This version limits paid event creation to the super admin; it does not offer organiser payouts or split payments. Free events remain available to everyone. Stars admission is intended for digital services such as online workshops; physical event payments are outside this integration. See [Telegram's Stars payment documentation](https://core.telegram.org/bots/payments-stars).
+
+Use **Payments & refunds** in the event's three-dot menu or `/paysupport` in chat to review purchases. The seller can request a full refund with confirmation. Cancelling or deleting an event requests full refunds for its recorded paid orders. Refunds are marked complete only after confirmation; failed refunds can be retried through payment support. Payment records survive event deletion, but hosts must keep their database and backups safe.
+
+Paid bookings cannot change their RSVP or group size before a refund. Pricing, terms and group attendance settings cannot be changed while relevant payments are active. Provider balance and refund availability still apply. No real payment is made by the automated test suite; test your own checkout in Telegram's dedicated test environment before collecting payments.
 
 ## Self-host your own Telegram event planner
 
@@ -156,7 +169,7 @@ The host controls the database and must protect personal information and backups
 
 The implementation targets small communities. It loads event records during processing and serialises writes; larger deployments should improve queries and capacity planning. Delivery is best effort, and retries can occasionally duplicate messages. People who never open an invitation cannot be listed or contacted.
 
-Invitation tickets confirm attendance. Payments, calendar synchronisation and ticket scanning are not implemented.
+Invitation tickets confirm attendance. Telegram Stars supports paid digital admission; card payments, organiser payouts, calendar synchronisation and ticket scanning are not implemented.
 
 ## Frequently asked questions
 

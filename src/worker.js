@@ -2,6 +2,7 @@ import { mutateState, BusyError } from './worker-store.js';
 import { miniApi } from './mini-api.js';
 import { rememberUser } from './admin.js';
 import { sendDueReminders } from './reminders.js';
+import { checkout, refundResult } from './payments.js';
 
 export async function authorized(request, secret) {
   if (!secret) return false;
@@ -15,7 +16,7 @@ async function telegram(env, method, params) {
   let response;
   try {
     response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params), signal: AbortSignal.timeout(10000)
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params), signal: AbortSignal.timeout(method === 'answerPreCheckoutQuery' ? 5000 : 10000)
     });
   } catch { return { ok: false, error_code: 503 }; }
   try { return await response.json(); } catch { return { ok: false, error_code: 503 }; }
@@ -23,6 +24,11 @@ async function telegram(env, method, params) {
 
 export async function processUpdate(env, update) {
   try {
+    if (update.pre_checkout_query) {
+      const decision = await mutateState(env, (data, bot) => checkout(bot, update.pre_checkout_query));
+      const result = await telegram(env, 'answerPreCheckoutQuery', decision);
+      return new Response(result.ok ? 'OK' : 'Retry', {status: result.ok ? 200 : 503});
+    }
     const user = update.callback_query?.from || (update.message?.chat?.type === 'private' ? update.message.from : null);
     if (user) await rememberUser(env, user);
     await mutateState(env, (data, bot) => bot.handle(update), update.update_id);
@@ -45,6 +51,10 @@ export async function drainOutbox(env) {
     const row = await env.DB.prepare('UPDATE outbox SET due=unixepoch()+60, attempts=attempts+1 WHERE id=? AND due<=unixepoch() RETURNING *').bind(id).first();
     if (!row) continue;
     const result = await telegram(env, row.method, JSON.parse(row.params));
+    if (row.method === 'refundStarPayment' && (result.ok || [400,403].includes(result.error_code))) {
+      const params=JSON.parse(row.params);
+      await mutateState(env, (data,bot) => refundResult(bot,params.user_id,params.telegram_payment_charge_id,result.ok));
+    }
     if (result.ok || [400, 403].includes(result.error_code)) {
       await env.DB.prepare('DELETE FROM outbox WHERE id=?').bind(id).run();
       if (!result.ok) console.log(JSON.stringify({ event: 'delivery_rejected', method: row.method, code: result.error_code }));
@@ -84,7 +94,7 @@ export default {
       const me = await telegram(env, 'getMe', {});
       if (!me.ok) return Response.json({ configured: false, error: 'Bot token is invalid or unavailable' }, { status: 502 });
       if (me.result.username.toLowerCase() !== env.BOT_USERNAME.toLowerCase()) return Response.json({ configured: false, error: 'Bot username mismatch' }, { status: 409 });
-      const hook = await telegram(env, 'setWebhook', { url: `${url.origin}/telegram`, secret_token: env.TELEGRAM_WEBHOOK_SECRET, max_connections: 1, allowed_updates: ['message', 'callback_query'], drop_pending_updates: false });
+      const hook = await telegram(env, 'setWebhook', { url: `${url.origin}/telegram`, secret_token: env.TELEGRAM_WEBHOOK_SECRET, max_connections: 1, allowed_updates: ['message', 'callback_query', 'pre_checkout_query'], drop_pending_updates: false });
       if (!hook.ok) return Response.json({ configured: false, error: 'Webhook setup failed', code: hook.error_code }, { status: 502 });
       await telegram(env, 'setMyCommands', { commands: [
         { command: 'new', description: 'Create an event' }, { command: 'events', description: 'Your events and invitations' },
@@ -119,6 +129,14 @@ export default {
 
 export async function configureMiniApp(env) {
   if (!env.APP_URL) return;
+  const payments = await env.DB.prepare("SELECT value FROM app_settings WHERE key='stars-webhook'").first();
+  if(payments?.value !== env.APP_URL && env.TELEGRAM_WEBHOOK_SECRET) {
+    const hook=await telegram(env,'setWebhook',{url:new URL('/telegram',env.APP_URL).href,secret_token:env.TELEGRAM_WEBHOOK_SECRET,max_connections:1,allowed_updates:['message','callback_query','pre_checkout_query'],drop_pending_updates:false});
+    if(hook.ok) {
+      const commands=await telegram(env,'setMyCommands',{commands:[{command:'new',description:'Create an event'},{command:'events',description:'Your events and invitations'},{command:'cancel',description:'Stop current input'},{command:'help',description:'How XEvents works'},{command:'paysupport',description:'Payment support and refunds'},{command:'terms',description:'Payment terms'}]});
+      if(commands.ok)await env.DB.prepare("INSERT INTO app_settings(key,value) VALUES ('stars-webhook',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(env.APP_URL).run();
+    }
+  }
   const setting = await env.DB.prepare("SELECT value FROM app_settings WHERE key='mini-menu'").first();
   if (setting?.value === env.APP_URL) return;
   const result = await telegram(env, 'setChatMenuButton', { menu_button: { type: 'web_app', text: 'Planner', web_app: { url: env.APP_URL } } });

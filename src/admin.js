@@ -28,7 +28,7 @@ export function adminOverview(rows) {
     ensure(e.owner)?.organised.push(e.id);
     const guests = Object.entries(e.guests || {}).filter(([id]) => Number(id) !== e.owner).map(([uid,g]) => {
       const u = ensure(uid); if (u) { u.invited.push(e.id); if (g.name && !u.names.includes(g.name)) u.names.push(g.name); }
-      return { id: Number(uid), name: g.name || '', status: g.status, participants: g.status === 'yes' ? participantCount(e, g) : null, approval: g.approval || null, phone: g.phone || '', comment: g.comment || '', answers: g.answers || [] };
+      return { id: Number(uid), name: g.name || '', status: g.status, participants: g.status === 'yes' ? participantCount(e, g) : null, paymentStatus:g.payment?.status || null, paymentAmount:g.payment?.amount || null, approval: g.approval || null, phone: g.phone || '', comment: g.comment || '', answers: g.answers || [] };
     });
     return { id: e.id, owner: e.owner, title: e.title, when: e.when, startsAt: e.startsAt || null, endsAt: e.endsAt || null, durationMinutes: e.durationMinutes || null, timezone: e.timezone || null, location: e.location, description: e.description, createdAt: e.createdAt, group: eventGroup(e), cancelled: !!e.cancelled, responseDeadline: e.responseDeadline || null, askParticipantCount: e.askParticipantCount === true, requireApproval: !!e.requireApproval, hideLocation: !!e.hideLocation, permissions: permissions(e), ticketInfo: e.ticketInfo || '', questions: e.questions || [], counts: responseCounts(e), mediaCount: e.media?.length || 0, hasBanner: !!e.banner, guests };
   }).sort((a,b) => (b.createdAt || '').localeCompare(a.createdAt || ''));

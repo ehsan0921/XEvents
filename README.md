@@ -8,7 +8,7 @@
 
 Organising a gathering should be simple: create an event, send a link and see who is coming. XEvents brings invitations, attendance responses, local times, reminders and shared media into the messaging app your community already uses.
 
-Built for friends, clubs, community organisers and volunteer groups, XEvents provides a free event planner and an open source RSVP system. Anyone can use, modify and self-host the source under MIT, including for commercial use.
+Built for sports clubs, friends, community organisers and volunteer groups, XEvents provides a free event planner and an open source RSVP system. Anyone can use, modify and self-host the source under MIT, including for commercial use.
 
 ## Event management features
 
@@ -20,7 +20,8 @@ Built for friends, clubs, community organisers and volunteer groups, XEvents pro
 | Flexible schedules | Set a start, duration or finish time, and a response deadline. |
 | Group attendance | Organisers can ask accepted guests how many people are attending, including themselves. Otherwise each response counts as one person. |
 | Guest information | Collect names, optional phone numbers, comments and custom question answers. |
-| Organiser approval | Review acceptance requests before releasing private location and invitation details. |
+| Individual request approval | Approve or reject each acceptance request separately before issuing an invitation ticket. |
+| Location for approved ticket holders only | Enable approval and location privacy to withhold the address and private invitation details until the organiser approves the guest. |
 | Guest privacy | Choose whether guests can see the guest list, upload media or browse shared media. |
 | Event reminders | Personal and default reminders, including 2, 3 or 4 hours before the event. |
 | Event banners | Add an image to invitations and the Mini App. |
@@ -39,6 +40,40 @@ Built for friends, clubs, community organisers and volunteer groups, XEvents pro
 5. Review responses in **My events** and approve guests when required.
 
 Guests can change their response before the deadline. **Later** keeps invitations in the pending list. Organisers do not RSVP to their own events.
+
+## Approve guests before sharing the event location
+
+For an invitation-only gathering, enable **Approve acceptance requests**. Guests can request to attend, but accepting does not immediately confirm their place. The organiser can **approve or reject each request individually**.
+
+With approval required, the event location and private invitation instructions are shared only after approval. Approved guests receive a personalised invitation ticket and can see their invitation details in the Mini App. Guests awaiting approval see a message explaining that the organiser will send the details after reviewing their response.
+
+This is useful for private training venues, members-only gatherings and events where the organiser wants to review attendance first. Invitation tickets confirm attendance; they are not paid tickets or a venue check-in system. Recipients can still forward information they receive, so this controls disclosure through XEvents rather than preventing sharing outside the app.
+
+## Examples: sports clubs, meetups and community events
+
+### Sports club training and friendly matches
+
+A football, basketball or running club can organise a training session or friendly match, share its invitation in the club's Telegram group and collect player RSVPs. Add a custom question such as “Which team or training group are you joining?” and set a reminder two hours before the start. For a private venue, approve each request before sharing the meeting location with confirmed ticket holders.
+
+### Club family days and social gatherings
+
+A tennis club or community sports association can enable group attendance so a member enters the total number coming, including themselves. One response for a family of four counts as four people. Use custom questions for dietary preferences or activity choices, and collect photos through the event's shared media gallery.
+
+### Cycling rides, hikes and outdoor meetups
+
+Create a ride or hike with a start time, timezone and expected duration. Ask about experience level or equipment, review acceptance requests individually and release the meeting point after approval. A response deadline helps the organiser prepare the attendance list before departure.
+
+### Volunteer activities and community cleanups
+
+Share a public event for a park cleanup or volunteer day. Participants can find it through Explore when their saved timezone matches the event's timezone. Ask which task they prefer, set reminders and optionally share a media upload QR code for photos from the day.
+
+### Workshops, hobby clubs and study groups
+
+A photography club, language exchange or study group can invite members to a workshop, collect questions in advance and keep the guest list private. Enable media uploads and browsing when participants should share photos, videos or documents afterwards.
+
+### Private parties and members-only events
+
+Create a private birthday party, club dinner or community gathering with a banner and invitation link. Require individual approval to keep the address unavailable until a guest's request is approved. Set a response deadline, ask how many people are attending and review accepted and tentative responses in My events.
 
 ## Free event media storage: how it works
 

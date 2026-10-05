@@ -18,6 +18,7 @@ Built for friends, clubs, community organisers and volunteer groups, XEvents pro
 | Telegram Mini App | Create and edit events with mobile date and time pickers. |
 | Local timezones | Save your timezone and view times locally, with daylight-saving validation. |
 | Flexible schedules | Set a start, duration or finish time, and a response deadline. |
+| Group attendance | Organisers can ask accepted guests how many people are attending, including themselves. Otherwise each response counts as one person. |
 | Guest information | Collect names, optional phone numbers, comments and custom question answers. |
 | Organiser approval | Review acceptance requests before releasing private location and invitation details. |
 | Guest privacy | Choose whether guests can see the guest list, upload media or browse shared media. |

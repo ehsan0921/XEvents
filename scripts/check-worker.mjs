@@ -174,5 +174,19 @@ try {
   assert.equal((await api('explore?timezone=Invalid')).status,400);
   await api(`events/${publicId}/schedule`,{...publicInput,isPublic:false});assert.ok(!(await api('explore?timezone=Australia%2FSydney')).data.events.some(e=>e.id===publicId));
   await api(`events/${publicId}/schedule`,{...publicInput,isPublic:true});await api(`events/${publicId}/cancel`,{confirm:true});assert.ok(!(await api('explore?timezone=Australia%2FSydney')).data.events.some(e=>e.id===publicId));
-  console.log('Worker integration passed: authentication, timezone/date conversion, opt-in guest settings, private data, deadlines, approvals/tickets, and chat picker continuation. Telegram mocked.');
+  const groupEvent = await api('events', {...input, date:'2099-10-24', askParticipantCount:true, requireApproval:false, requestId:'44444444-4444-4444-4444-444444444444'});
+  assert.equal(groupEvent.status,200); assert.equal(groupEvent.data.event.askParticipantCount,true);
+  const groupId=groupEvent.data.event.id;
+  assert.equal((await api(`events/${groupId}/schedule`, {...input, date:'2099-10-24', askParticipantCount:'yes'})).status,400);
+  await message(3000,`/start e_${groupId}`,456); await callback(3001,`r:${groupId}:yes`,456);
+  await message(3002,'Group guest',456); await message(3003,'4',456);
+  for (let i=0;i<4;i++) await message(3004+i,'/skip',456);
+  const groupStored=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(groupId).first()).data);
+  assert.equal(groupStored.guests[456].participants,4); assert.equal(groupStored.guests[456].status,'yes');
+  const hostGroup=(await api('bootstrap')).data.events.find(e=>e.id===groupId);
+  assert.equal(hostGroup.counts.yes,1); assert.equal(hostGroup.counts.participants,4);
+  assert.equal((await api('bootstrap',null,456)).data.events.find(e=>e.id===groupId).participants,4);
+  const disabledGroup=await api(`events/${groupId}/schedule`, {...input,date:'2099-10-24',askParticipantCount:false});
+  assert.equal(disabledGroup.status,200); assert.equal(disabledGroup.data.event.counts.participants,1);
+  console.log('Worker integration passed: authentication, scheduling, privacy, approvals, media, discovery and optional participant counts. Telegram mocked.');
 } finally { await mf.dispose(); }

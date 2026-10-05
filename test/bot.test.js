@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { Bot } from '../src/bot.js';
 import { Store } from '../src/store.js';
 import { sendDueReminders, setReminder, eventGroup, applyDefaultReminder } from '../src/reminders.js';
+import { responseCounts, participantCount } from '../src/permissions.js';
 
 function fixture() {
   const store = { data: { events: {}, sessions: {}, offset: 0 } };
@@ -22,6 +23,35 @@ function fixture() {
   }
   return { store, bot, calls, msg, cb, create };
 }
+
+test('optional group size validates whole numbers and separates people from responses and approval', async () => {
+  const f = fixture(); const e = await f.create({askParticipantCount:true, requireApproval:true});
+  assert.equal(e.askParticipantCount,true);
+  await f.msg(2, `/start e_${e.id}`); await f.cb(2, `r:${e.id}:yes`); await f.msg(2,'Group organiser');
+  assert.equal(f.store.data.sessions[2].step,'participants');
+  for (const value of ['0','-1','1.5','10001','abc','/skip']) {
+    await f.msg(2,value);
+    assert.equal(f.store.data.sessions[2].step,'participants');
+    assert.equal(e.guests[2].status,'later');
+  }
+  await f.msg(2,'3'); await f.msg(2,'/skip'); await f.msg(2,'/skip'); await f.msg(2,'/skip'); await f.msg(2,'/skip');
+  assert.equal(e.guests[2].participants,3);
+  assert.equal(responseCounts(e).participants,0);
+  assert.equal(responseCounts(e).pendingParticipants,3);
+  await f.cb(1,`approve:${e.id}:2`);
+  assert.equal(responseCounts(e).yes,1);
+  assert.equal(responseCounts(e).participants,3);
+  assert.equal(responseCounts(e).pendingParticipants,0);
+  await f.cb(2,`r:${e.id}:no`); await f.msg(2,'/skip');
+  assert.equal(responseCounts(e).participants,0);
+  await f.cb(1,`toggle:${e.id}:askParticipantCount`);
+  assert.equal(e.askParticipantCount,false);
+  await f.cb(2,`r:${e.id}:yes`); await f.msg(2,'Solo guest');
+  assert.equal(f.store.data.sessions[2].step,'phone');
+  assert.equal(f.store.data.sessions[2].response.participants,1);
+  assert.equal(participantCount({}, {participants:9}),1);
+  assert.equal(participantCount({askParticipantCount:true}, {}),1);
+});
 
 test('create, invite, accept, custom name, private phone/questions, comment, change response', async () => {
   const f = fixture(); const e = await f.create();

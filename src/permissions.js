@@ -9,7 +9,10 @@ export function guests(event) { return Object.entries(event.guests).filter(([id]
 export function confirmed(event, guest) { return guest?.status === 'yes' && (!event.requireApproval || guest.approval === 'approved'); }
 export function canSeeLocation(event, userId) { return event.owner === userId || (!(event.hideLocation || event.requireApproval) || confirmed(event, event.guests[userId])); }
 export function responsesClosed(event, now = Date.now()) { return !!event.responseDeadline && new Date(event.responseDeadline).getTime() <= now; }
+export function participantCount(event, guest) {
+  return event.askParticipantCount === true && Number.isSafeInteger(guest?.participants) && guest.participants >= 1 && guest.participants <= 10000 ? guest.participants : 1;
+}
 export function responseCounts(event) {
   const list = guests(event);
-  return { yes: list.filter(g => confirmed(event, g)).length, pending: list.filter(g => g.status === 'yes' && !confirmed(event, g)).length, no: list.filter(g => g.status === 'no').length, maybe: list.filter(g => g.status === 'maybe').length, later: list.filter(g => g.status === 'later').length };
+  return { yes: list.filter(g => confirmed(event, g)).length, participants: list.filter(g => confirmed(event, g)).reduce((sum, g) => sum + participantCount(event, g), 0), pendingParticipants: list.filter(g => g.status === 'yes' && !confirmed(event, g)).reduce((sum, g) => sum + participantCount(event, g), 0), pending: list.filter(g => g.status === 'yes' && !confirmed(event, g)).length, no: list.filter(g => g.status === 'no').length, maybe: list.filter(g => g.status === 'maybe').length, later: list.filter(g => g.status === 'later').length };
 }

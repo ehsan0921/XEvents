@@ -95,9 +95,10 @@ function renderEvents() {
     if (e.responsesClosed) card.append(element('p', '⏰ Responses closed — deadline passed.', 'error'));
     else if (e.responseDeadline) card.append(element('p', 'Respond by: ' + format({ startsAt: e.responseDeadline }), 'small muted'));
     if (e.approval === 'pending') card.append(element('p', 'The organiser will send your invitation details and ticket after approving your response.', 'muted'));
+    if (e.participants) card.append(element('p', 'Your group: ' + e.participants + (e.participants === 1 ? ' person' : ' people'), 'small muted'));
     if (e.ticket) card.append(element('p', `🎟 ${e.ticket.name}${e.ticket.code ? ' · ' + e.ticket.code : ''}${e.ticket.info ? '\n' + e.ticket.info : ''}`, 'time-preview'));
     if (e.startsAt && selectedZone() !== e.timezone) card.append(element('p', 'Organiser time: ' + format(e, e.timezone), 'small muted'));
-    if (e.counts) card.append(element('div', `${e.counts.yes} coming · ${e.counts.pending || 0} awaiting approval · ${e.counts.maybe} tentative · ${e.counts.no} declined · ${e.counts.later} later`, 'counts'));
+    if (e.counts) card.append(element('div', `${e.counts.participants} people coming (${e.counts.yes} responses) · ${e.counts.pendingParticipants || 0} people awaiting approval · ${e.counts.maybe} tentative · ${e.counts.no} declined · ${e.counts.later} later`, 'counts'));
     else card.append(element('div', 'Guest list is private to the organiser.', 'counts'));
     const actions = element('div', '', 'event-actions'); actions.append(action('Open event in chat ↗', () => openTelegram(e.inviteUrl), 'primary'));
     if (e.isOwner && !e.cancelled) actions.append(action('Edit event', () => setupForm(e)));
@@ -149,6 +150,7 @@ function setupForm(event = null) {
   $('default-reminder-panel').hidden = compactPicker; $('default-reminder').value = event?.defaultReminder || 0;
   $('response-deadline').hidden = compactPicker;
   $('clear-draft-deadline').hidden = !deadlinePicker;
+  $('ask-participant-count').checked = event?.askParticipantCount === true;
   $('require-approval').checked = event?.requireApproval === true;
   $('hide-location').checked = event?.hideLocation === true || event?.requireApproval === true;
   $('hide-location').disabled = $('require-approval').checked;
@@ -240,7 +242,7 @@ function renderAdmin() {
       const details=document.createElement('details'); details.append(element('summary','Event settings & guest responses'));
       details.append(element('p',`Event ID: ${item.id}\nApproval required: ${item.requireApproval ? 'Yes' : 'No'}\nLocation restricted: ${item.hideLocation || item.requireApproval ? 'Yes' : 'No'}\nGuest list: ${item.permissions.guestList ? 'On' : 'Off'} · Uploads: ${item.permissions.uploadMedia ? 'On' : 'Off'} · Shared media: ${item.permissions.viewMedia ? 'On' : 'Off'}\nResponse deadline: ${item.responseDeadline ? format({startsAt:item.responseDeadline}) : 'None'}\nBanner: ${item.hasBanner ? 'Yes' : 'No'}`,'small muted'));
       if (item.ticketInfo) details.append(element('p','Invitation details: '+item.ticketInfo));
-      for (const guest of item.guests) details.append(element('div',`${guest.name} · ${guest.id}\nResponse: ${{yes:'Accepted',no:'Declined',maybe:'Tentative',later:'Later'}[guest.status] || guest.status}${guest.approval ? ' · '+guest.approval : ''}\nPhone: ${guest.phone || 'Not shared'}\nComment: ${guest.comment || 'None'}${guest.answers.map(a=>'\n'+a.question+': '+(a.answer || 'Skipped')).join('')}`,'admin-guest'));
+      for (const guest of item.guests) details.append(element('div',`${guest.name} · ${guest.id}\nResponse: ${{yes:'Accepted',no:'Declined',maybe:'Tentative',later:'Later'}[guest.status] || guest.status}${guest.approval ? ' · '+guest.approval : ''}\nPeople: ${guest.participants ?? 'Not attending'}\nPhone: ${guest.phone || 'Not shared'}\nComment: ${guest.comment || 'None'}${guest.answers.map(a=>'\n'+a.question+': '+(a.answer || 'Skipped')).join('')}`,'admin-guest'));
       if (!item.guests.length) details.append(element('p','No guests yet.','muted'));
       card.append(details);
     }
@@ -280,7 +282,7 @@ $('timezone-form').onsubmit = async event => {
 };
 $('event-form').onsubmit = async event => {
   event.preventDefault(); $('save-event').disabled = true; $('form-error').hidden = true;
-  const payload = { isPublic: $('event-visibility').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
+  const payload = { askParticipantCount: $('ask-participant-count').checked, isPublic: $('event-visibility').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
   try {
     const banner = $('banner').files[0];
     if (!compactPicker && banner && (banner.size > 5 * 1024 * 1024 || !['image/jpeg','image/png','image/webp'].includes(banner.type))) throw new Error('Choose a JPG, PNG, or WebP banner smaller than 5 MB.');

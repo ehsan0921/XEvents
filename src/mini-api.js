@@ -6,7 +6,7 @@ import { schedule, timezone, InputError } from './time.js';
 import { mutateState, BusyError } from './worker-store.js';
 import { randomBytes } from 'node:crypto';
 import { upcoming, eventGroup, setReminder, reminderOptions } from './reminders.js';
-import { permissions, permissionLabels, can, confirmed, canSeeLocation, responsesClosed, responseCounts } from './permissions.js';
+import { permissions, permissionLabels, can, confirmed, canSeeLocation, responsesClosed, responseCounts, participantCount } from './permissions.js';
 
 function field(value, label, max, required = false) {
   if (typeof value !== 'string' || value.trim().length > max || (required && !value.trim())) throw new InputError(`${label} ${required ? 'is required and ' : ''}must be at most ${max} characters.`);
@@ -33,7 +33,7 @@ function eventSettings(input, event = {}) {
     result.uploadToken = result.allowLinkUploads ? event.uploadToken || randomBytes(16).toString('hex') : null;
   }
   if (input.permissions !== undefined || !event.id) result.permissions = parsePermissions(input.permissions);
-  for (const key of ['requireApproval', 'hideLocation']) {
+  for (const key of ['requireApproval', 'hideLocation', 'askParticipantCount']) {
     if (input[key] !== undefined && typeof input[key] !== 'boolean') throw new InputError('Event options must be checked or unchecked.');
     if (input[key] !== undefined || !event.id) result[key] = input[key] === true;
   }
@@ -63,7 +63,7 @@ export function publicEvent(e, id, username) {
     imageCount: can(e, id, 'viewMedia') ? e.media?.filter(f => f.type === 'photo').length || 0 : null,
     ...(e.owner === id ? { allowLinkUploads: !!e.allowLinkUploads, uploadLink: shareUploadLink(e, username) } : {}),
     group: eventGroup(e), upcoming: upcoming(e), reminder: e.reminders?.[id]?.minutes || 0, hasBanner: !!e.banner,
-    requireApproval: e.requireApproval === true, hideLocation: e.hideLocation === true,
+    askParticipantCount: e.askParticipantCount === true, participants: e.guests[id]?.status === 'yes' ? participantCount(e, e.guests[id]) : null, requireApproval: e.requireApproval === true, hideLocation: e.hideLocation === true,
     responseDeadline: e.responseDeadline || null, responsesClosed: responsesClosed(e), deadlineDate: e.deadlineDate || '', deadlineTime: e.deadlineTime || '', deadlineTimezone: e.deadlineTimezone || e.timezone || null,
     ...(e.owner === id ? { ticketInfo: e.ticketInfo || '' } : {}),
     ticket: e.owner !== id && confirmed(e, e.guests[id]) && !e.cancelled ? { code: e.guests[id].ticket || '', name: e.guests[id].name, info: e.ticketInfo || '' } : null,

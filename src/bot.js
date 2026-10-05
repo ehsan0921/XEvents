@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { eventTime } from './time.js';
 import { uploadLink, shareUploadLink } from './permissions.js';
 import { upcoming, eventGroup, setReminder, reminderOptions, reminderLabel, applyDefaultReminder } from './reminders.js';
-import { permissions, permissionLabels, can, guests, confirmed, canSeeLocation, responsesClosed, responseCounts } from './permissions.js';
+import { permissions, permissionLabels, can, guests, confirmed, canSeeLocation, responsesClosed, responseCounts, participantCount } from './permissions.js';
 
 const labels = { yes: '✅ Accepted', no: '❌ Not coming', maybe: '🤔 Tentative', later: '⏳ Respond later' };
 const button = (text, callback_data) => ({ text, callback_data });
@@ -51,6 +51,7 @@ export class Bot {
     const settings = permissions(e);
     return paired([
       ...Object.entries({ guestList: 'Guest list', uploadMedia: 'Upload media', viewMedia: 'View media' }).map(([key, label]) => button(`${settings[key] ? '✅' : '⬜'} ${label}`, `${prefix}:${key}`)),
+      button(`${e.askParticipantCount ? '✅' : '⬜'} Group size`, `${prefix}:askParticipantCount`),
       button(`${e.requireApproval ? '✅' : '⬜'} Approval`, `${prefix}:requireApproval`),
       button(`${e.hideLocation || e.requireApproval ? '✅' : '⬜'} Private location`, `${prefix}:hideLocation`),
       button(`${e.isPublic ? '🌍 Public' : '🔒 Private'}`, `${prefix}:isPublic`),
@@ -76,18 +77,19 @@ export class Bot {
     const g = e.guests[id];
     if (!g || !confirmed(e, g) || e.owner === id || e.cancelled) return this.send(id, 'Your invitation details will be available after your response is approved.');
     g.ticket ||= randomBytes(6).toString('hex').toUpperCase();
-    return this.long(id, `🎟 YOUR INVITATION\n\n${e.title}\nGuest: ${g.name}\nTicket: ${g.ticket}\n\n🗓 ${this.time(e, id)}\n📍 ${e.location}${e.ticketInfo ? '\n\n' + e.ticketInfo : ''}\n\n✅ Your place is confirmed.`, keyboard([button('Back to event', `v:${e.id}`)]));
+    return this.long(id, `🎟 YOUR INVITATION\n\n${e.title}\nGuest: ${g.name}\nPeople: ${participantCount(e, g)}\nTicket: ${g.ticket}\n\n🗓 ${this.time(e, id)}\n📍 ${e.location}${e.ticketInfo ? '\n\n' + e.ticketInfo : ''}\n\n✅ Your place is confirmed.`, keyboard([button('Back to event', `v:${e.id}`)]));
   }
   async saveResponse(id, e, response) {
     if (responsesClosed(e)) { this.session(id); await this.home(id, 'The response deadline has passed. Your unfinished response was not saved.'); return this.card(id, e); }
     if (response.status === 'yes') {
+      response.participants = participantCount(e, response);
       response.approval = e.requireApproval ? 'pending' : 'approved';
       if (e.requireApproval) delete response.ticket; else response.ticket = randomBytes(6).toString('hex').toUpperCase();
     } else { delete response.approval; delete response.ticket; }
     e.guests[id] = response; this.session(id);
     if (response.status === 'yes') applyDefaultReminder(e, id);
     await this.home(id, response.status === 'yes' && e.requireApproval ? '✅ Your acceptance request is saved. The organiser will send your invitation details and ticket after approving your response.' : '✅ Response saved.');
-    await this.send(e.owner, `${e.title}\n${response.name}: ${response.approval === 'pending' ? '⏳ Awaiting approval' : labels[response.status]}${response.comment ? '\nComment: ' + response.comment : ''}`, response.approval === 'pending' ? keyboard([button('✅ Approve', `approve:${e.id}:${id}`), button('❌ Reject', `reject:${e.id}:${id}`)]) : undefined).catch(() => {});
+    await this.send(e.owner, `${e.title}\n${response.name}: ${response.approval === 'pending' ? '⏳ Awaiting approval' : labels[response.status]}${response.status === 'yes' ? '\nPeople: ' + participantCount(e, response) : ''}${response.comment ? '\nComment: ' + response.comment : ''}`, response.approval === 'pending' ? keyboard([button('✅ Approve', `approve:${e.id}:${id}`), button('❌ Reject', `reject:${e.id}:${id}`)]) : undefined).catch(() => {});
     if (confirmed(e, response) && e.requireApproval) await this.ticket(id, e);
     return this.card(id, e);
   }
@@ -98,7 +100,7 @@ export class Bot {
   async card(id, e, withBanner = true) {
     const host = e.owner === id;
     const counted = responseCounts(e);
-    const counts = can(e, id, 'guestList') ? [...Object.keys(labels).map(s => `${labels[s]}: ${counted[s]}`), ...(counted.pending ? [`⏳ Awaiting approval: ${counted.pending}`] : [])].join('\n') : `Your response: ${e.guests[id]?.status === 'yes' && !confirmed(e, e.guests[id]) ? 'Awaiting organiser approval' : labels[e.guests[id]?.status] || 'Not submitted'}`;
+    const counts = can(e, id, 'guestList') ? [`People coming: ${counted.participants}`, ...(counted.pending ? [`People awaiting approval: ${counted.pendingParticipants}`] : []), ...Object.keys(labels).map(s => `${labels[s]}: ${counted[s]}`), ...(counted.pending ? [`⏳ Awaiting approval: ${counted.pending}`] : [])].join('\n') : `Your response: ${e.guests[id]?.status === 'yes' && !confirmed(e, e.guests[id]) ? 'Awaiting organiser approval' : labels[e.guests[id]?.status] || 'Not submitted'}`;
     const closed = responsesClosed(e);
     const accepted = !host && e.guests[id]?.status === 'yes';
     const rows = e.cancelled || host || closed ? [] : accepted ? [[button('Change response', `change:${e.id}`)]] : [
@@ -238,6 +240,17 @@ export class Bot {
       if (e.owner === id) { this.session(id); return this.card(id, e); }
       if (!text || text.length > 100) return this.prompt(id, 'Enter a name up to 100 characters, or tap Use Telegram name.');
       s.response.name = command === '/skip' ? name(m.from) : text;
+      if (e.askParticipantCount === true) {
+        s.step = 'participants';
+        return this.prompt(id, 'How many people are attending with this response, including you? Enter a whole number from 1 to 10,000.');
+      }
+      s.response.participants = 1;
+      s.step = 'phone';
+      return this.prompt(id, 'Optionally share your phone number with the organiser only. Tap Share my phone number, type a number, or tap Skip.');
+    }
+    if (s.step === 'participants') {
+      if (!/^[1-9]\d{0,4}$/.test(text) || Number(text) > 10000) return this.prompt(id, 'Enter a whole number from 1 to 10,000, including yourself.');
+      s.response.participants = e.askParticipantCount === true ? Number(text) : 1;
       s.step = 'phone';
       return this.prompt(id, 'Optionally share your phone number with the organiser only. Tap Share my phone number, type a number, or tap Skip.');
     }
@@ -310,7 +323,7 @@ export class Bot {
       if (arg === 'defaultReminder') { const index = reminderOptions.indexOf(s.draft.defaultReminder || 0); s.draft.defaultReminder = reminderOptions[(index + 1) % reminderOptions.length]; }
       if (action === 'pd') return this.finishCreation(id, s);
       if (Object.hasOwn(permissionLabels, arg)) s.draft.permissions[arg] = !s.draft.permissions[arg];
-      if (['requireApproval', 'hideLocation'].includes(arg)) s.draft[arg] = !s.draft[arg];
+      if (['requireApproval', 'hideLocation', 'askParticipantCount'].includes(arg)) s.draft[arg] = !s.draft[arg];
       if (arg === 'isPublic') s.draft.isPublic = !s.draft.isPublic;
       if (arg === 'allowLinkUploads') { s.draft.allowLinkUploads = !s.draft.allowLinkUploads; s.draft.uploadToken = s.draft.allowLinkUploads ? randomBytes(16).toString('hex') : null; }
       return this.creationPermissions(id, s);
@@ -351,7 +364,7 @@ export class Bot {
       for (const [status, label] of [...Object.entries(labels), ['pending', '⏳ Awaiting approval']]) {
         text += `\n${label}\n`;
         const group = guests(e).filter(g => status === 'yes' ? confirmed(e, g) : status === 'pending' ? g.status === 'yes' && !confirmed(e, g) : g.status === status);
-        text += group.length ? group.map(g => `• ${g.name}${g.comment ? ' — ' + g.comment : ''}`).join('\n') + '\n' : 'Nobody yet\n';
+        text += group.length ? group.map(g => `• ${g.name}${g.status === 'yes' ? ' (' + participantCount(e, g) + ' people)' : ''}${g.comment ? ' — ' + g.comment : ''}`).join('\n') + '\n' : 'Nobody yet\n';
       }
       return this.long(id, text, keyboard([button('Back to event', `v:${eid}`)]));
     }
@@ -393,13 +406,13 @@ export class Bot {
     if (action === 'permissions' || action === 'toggle') {
       e.permissions = permissions(e);
       if (action === 'toggle' && Object.hasOwn(permissionLabels, arg)) e.permissions[arg] = !e.permissions[arg];
-      if (action === 'toggle' && ['requireApproval', 'hideLocation'].includes(arg)) e[arg] = !e[arg];
+      if (action === 'toggle' && ['requireApproval', 'hideLocation', 'askParticipantCount'].includes(arg)) e[arg] = !e[arg];
       if (action === 'toggle' && arg === 'isPublic') e.isPublic = !e.isPublic;
       if (action === 'toggle' && arg === 'allowLinkUploads') { e.allowLinkUploads = !e.allowLinkUploads; e.uploadToken = e.allowLinkUploads ? randomBytes(16).toString('hex') : null; }
       return this.send(id, 'Guest options — tap to enable or disable. Changes apply immediately to guests, including old buttons.', keyboard(...this.permissionKeyboard(e, `toggle:${eid}`), ...(this.appUrl ? [[this.miniButton('🗓 Deadline & invitation details', `?event=${eid}`)]] : []), [button('Back to organiser tools', `h:${eid}`)]));
     }
     if (action === 'a') {
-      const rows = guests(e).map(g => `${g.name} — ${g.status === 'yes' && !confirmed(e, g) ? '⏳ Awaiting approval' : labels[g.status]}\nPhone: ${g.phone || 'Not shared'}\n${(g.answers || []).map(a => `${a.question}: ${a.answer || 'Skipped'}`).join('\n')}\nComment: ${g.comment || 'None'}`);
+      const rows = guests(e).map(g => `${g.name} — ${g.status === 'yes' && !confirmed(e, g) ? '⏳ Awaiting approval' : labels[g.status]}\nPeople: ${g.status === 'yes' ? participantCount(e, g) : 'Not attending'}\nPhone: ${g.phone || 'Not shared'}\n${(g.answers || []).map(a => `${a.question}: ${a.answer || 'Skipped'}`).join('\n')}\nComment: ${g.comment || 'None'}`);
       await this.long(id, `Private organiser responses — ${e.title}\n\n${rows.join('\n\n') || 'No guests yet.'}`, keyboard([button('Back to organiser tools', `h:${eid}`)]));
       for (const [uid, guest] of Object.entries(e.guests)) if (Number(uid) !== e.owner && guest.status === 'yes' && !confirmed(e, guest)) await this.send(id, `⏳ ${guest.name} — awaiting approval`, keyboard([button('✅ Approve', `approve:${eid}:${uid}`), button('❌ Reject', `reject:${eid}:${uid}`)]));
       return;

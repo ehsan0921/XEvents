@@ -60,7 +60,7 @@ try {
   assert.equal((await api('bootstrap')).data.events.length, 1);
   assert.equal((await api('bootstrap', null, 456)).data.events.length, 0);
   assert.equal((await api('preferences', { timezone: 'America/New_York' })).status, 200);
-  const input = { title: 'Mini app event', location: 'Cafe', description: '', questions: 'Diet?', date: '2026-10-24', time: '18:00', timezone: 'Australia/Sydney', requestId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' };
+  const input = { invitationMode:'legacy',title: 'Mini app event', location: 'Cafe', description: '', questions: 'Diet?', date: '2026-10-24', time: '18:00', timezone: 'Australia/Sydney', requestId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' };
   const made = await api('events', input); assert.equal(made.status, 200); assert.equal(made.data.event.startsAt, '2026-10-24T07:00:00Z');
   assert.equal((await api('events', input)).data.event.id, made.data.event.id);
   assert.equal((await api('bootstrap')).data.events.length, 2);
@@ -230,5 +230,26 @@ try {
   const durablePref=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='preferences' AND id='456'").first()).data);
   assert.ok(['refund_pending','refunded'].includes(durablePref.starOrders[starOrder.id].status));
   assert.equal((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(starsId).first()),null);
-  console.log('Worker integration passed: authenticated Stars checkout, durable payment/refund records, duplicate handling, privacy, scheduling, approvals and media. Telegram mocked.');
+  const ticketInput={...input,title:'Ticket workflow',questions:'',date:'2099-10-24',requestId:'66666666-6666-6666-6666-666666666666',requireApproval:true};delete ticketInput.invitationMode;
+  const ticketEvent=await api('events',ticketInput);assert.equal(ticketEvent.status,200);assert.equal(ticketEvent.data.event.invitationMode,'tickets');
+  const ticketId=ticketEvent.data.event.id;
+  await message(5000,`/start e_${ticketId}`,456);await callback(5001,`book:${ticketId}`,456);await message(5002,'Ticket Guest',456);await message(5003,'/skip',456);await message(5004,'/skip',456);
+  assert.equal((await api(`events/${ticketId}`,null,456)).data.event.approval,'pending');
+  const namedInput={...ticketInput,title:'Named workflow',invitationMode:'named',guestNames:'Alex Smith\nSam Jones',requestId:'77777777-7777-7777-7777-777777777777'};
+  const namedEvent=await api('events',namedInput);assert.equal(namedEvent.status,200);assert.equal(namedEvent.data.event.invitees.length,2);
+  const namedId=namedEvent.data.event.id,personalUrl=namedEvent.data.event.invitees[0].url;
+  await message(5010,'/start '+new URL(personalUrl).searchParams.get('start'),456);
+  await message(5011,'/start '+new URL(personalUrl).searchParams.get('start'),789);
+  assert.equal((await api(`events/${namedId}`,null,789)).status,403);
+  const personalView=(await api(`events/${namedId}`,null,456)).data.event;assert.equal(personalView.guestName,'Alex Smith');assert.equal(personalView.invitees,undefined);
+  await callback(5012,`r:${namedId}:yes`,456);
+  assert.equal(JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='sessions' AND id='456'").first()).data).step,'phone');
+  await message(5013,'/skip',456);await message(5014,'/skip',456);
+  const editedNamed=await api(`events/${namedId}/schedule`,{...namedInput,title:'Edited title',location:'Edited address',description:'Edited description',questions:'New question?',guestNames:'Alex Smith\nSam Jones\nTaylor'});
+  assert.equal(editedNamed.status,200);assert.equal(editedNamed.data.event.invitees[0].url,personalUrl);
+  const freshNamed=(await api(`events/${namedId}`)).data.event;
+  assert.equal(freshNamed.title,'Edited title');assert.equal(freshNamed.location,'Edited address');assert.deepEqual(freshNamed.questions,['New question?']);
+  assert.equal((await api(`events/${namedId}/schedule`,{...namedInput,invitationMode:'tickets'})).status,400);
+  assert.equal((await api(`events/${namedId}/schedule`,{...namedInput,guestNames:'Sam Jones'})).status,400);
+  console.log('Worker integration passed: ticket bookings, personal RSVP links, owner-only edit loading, approvals, Stars checkout, durable refunds and media. Telegram mocked.');
 } finally { await mf.dispose(); }

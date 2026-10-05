@@ -21,7 +21,7 @@ function fixture() {
     const token = store.data.sessions[1].token;
     for (const [key, enabled] of Object.entries(settings)) if (enabled) await cb(1, `pc:${token}:${key}`);
     await cb(1, `pd:${token}`);
-    return Object.values(store.data.events).at(-1);
+    const event=Object.values(store.data.events).at(-1);event.invitationMode='legacy';return event;
   }
   return { store, bot, calls, msg, cb, create };
 }
@@ -161,7 +161,7 @@ test('event data, conversations, and polling offset survive a restart', async ()
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test('button menus complete event creation and RSVP without typed commands', async () => {
+test('button menus complete event creation and ticket booking without typed commands', async () => {
   const f = fixture();
   await f.msg(1, '/start');
   assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, '📱 Open app');
@@ -173,7 +173,7 @@ test('button menus complete event creation and RSVP without typed commands', asy
   assert.equal(e.description, ''); assert.deepEqual(e.questions, []);
   const invite = f.calls.at(-1).reply_markup.inline_keyboard.flat().find(b => b.url);
   assert.equal(new URL(invite.url).searchParams.get('url'), f.bot.link(e));
-  await f.msg(2, `/start e_${e.id}`); await f.cb(2, `r:${e.id}:yes`);
+  await f.msg(2, `/start e_${e.id}`); await f.cb(2, `book:${e.id}`);
   await f.msg(2, '👤 Use Telegram name');
   assert.ok(f.calls.at(-1).reply_markup.keyboard.flat().some(b => b.request_contact));
   await f.msg(2, '⏭ Skip'); await f.msg(2, '⏭ Skip');

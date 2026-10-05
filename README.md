@@ -14,7 +14,8 @@ Built for sports clubs, friends, community organisers and volunteer groups, XEve
 
 | Feature | What you can do |
 | --- | --- |
-| Event invitations and RSVPs | Share invitation links; guests accept, decline, choose tentative or respond later. |
+| Ticket booking links | Share one event link. Guests enter their name and get a ticket or request organiser approval, without RSVP options. |
+| Named invitations and RSVPs | Enter a guest list and share an individual link for each name. Guests accept, decline, choose tentative or respond later without entering their name again. |
 | Telegram Mini App | Create and edit events with mobile date and time pickers. |
 | Local timezones | Save your timezone and view times locally, with daylight-saving validation. |
 | Flexible schedules | Set a start, duration or finish time, and a response deadline. |
@@ -37,10 +38,18 @@ Built for sports clubs, friends, community organisers and volunteer groups, XEve
 1. Open **[@XEvents_bot](https://t.me/XEvents_bot)** and press **Start**.
 2. Choose **Open app**, set your timezone and create an event.
 3. Add the schedule, banner, guest permissions and any custom questions.
-4. Share the invitation link with your guests.
+4. Choose **Ticket booking** and share one link, or choose **Named invitations**, enter your guest list and use **Guest invitations** to copy or share each personal link.
 5. Review responses in **My events** and approve guests when required.
 
-Guests can change their response before the deadline. **Later** keeps invitations in the pending list. Organisers do not RSVP to their own events.
+Named guests can change their response before the deadline. **Later** keeps these invitations in the pending list. Ticket guests use **Get ticket** or **Request ticket** and enter their ticket name. Organisers do not respond to their own events. Existing events retain their original RSVP links and responses.
+
+### Two ways to invite people
+
+**Ticket booking** suits open workshops, community activities and paid events. Guests use a shared link, enter their name, optionally provide contact details and answer custom questions. A free booking can issue its ticket immediately; approval and payment requirements hold the ticket and private location until satisfied.
+
+**Named invitations** suit a club roster, wedding guest list or private team dinner. Enter up to 100 unique guest names, one per line. XEvents generates a separate link for each person and shows their organiser-assigned name when they open it. Accept, Decline, Tentative and Later do not ask for a name again. Send each link only to its intended guest: it binds to the first Telegram account that opens it, rather than verifying a person's real-world identity. Another account cannot claim that link. Names and unused links stay private to the organiser. Saved personal links remain stable during edits; removing an unopened guest revokes their link. Claimed invitations cannot be removed or renamed through the guest-list editor. Named invitation events are private and do not appear in Explore.
+
+Editing fetches the latest event data, including title, address, description, questions, guest list and payment settings, and previews the existing banner. Saving without a new image preserves the banner.
 
 ## Approve guests before sharing the event location
 

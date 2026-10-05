@@ -1,5 +1,6 @@
 import {parseEventPayment,paymentMethod} from './event-payment.js';
 import {readOnlinePricing} from './exchange.js';
+import {invitationMode,invitationSettings,namedLink} from './invitations.js';
 import { authenticate } from './mini-auth.js';
 import { parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
@@ -63,6 +64,8 @@ function eventSettings(input, event = {}) {
 }
 export function publicEvent(e, id, username) {
   return {
+    invitationMode:invitationMode(e),guestName:e.owner!==id ? e.guests[id]?.name || null : null,
+    ...(e.owner===id ? {questions:e.questions || [],invitees:Object.entries(e.invitees || {}).map(([token,g])=>({name:g.name,claimed:!!g.claimedBy,status:g.claimedBy ? e.guests[g.claimedBy]?.status : null,url:namedLink(e,token,username)}))} : {}),
     id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
     endsAt: e.endsAt || null, durationMinutes: e.durationMinutes || null, endMode: e.endMode || 'none', endDate: e.endDate || '', endTime: e.endTime || '',
@@ -93,6 +96,12 @@ export async function miniApi(request, env) {
   const user = authenticate(request.headers.get('Authorization')?.replace(/^tma /, ''), env.TELEGRAM_BOT_TOKEN);
   if (!user) return respond({ error: 'Open the planner inside Telegram. If it was open for a while, close and reopen it.' }, 401);
   const path = new URL(request.url).pathname;
+  const eventMatch=path.match(/^\/api\/events\/([a-f0-9]{16})$/);
+  if(eventMatch && request.method==='GET'){
+    const row=await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(eventMatch[1]).first();const e=row && JSON.parse(row.data);
+    if(!e || (e.owner!==user.id && !e.guests[user.id]))return respond({error:'Open a valid invitation first.'},403);
+    return respond({event:publicEvent(e,user.id,env.BOT_USERNAME)});
+  }
   if (path === '/api/explore' && request.method === 'GET') {
     const preference = await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(user.id)).first();
     let zone;
@@ -168,7 +177,7 @@ export async function miniApi(request, env) {
   }
   if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
   const raw = await request.text();
-  if (raw.length > 12000) return respond({ error: 'Too much text.' }, 413);
+  if (raw.length > 24000) return respond({ error: 'Too much text.' }, 413);
   let input;
   try { input = JSON.parse(raw); if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error(); }
   catch { return respond({ error: 'Invalid request.' }, 400); }
@@ -193,6 +202,7 @@ export async function miniApi(request, env) {
         if (questions.length > 10 || questions.some(q => q.length > 200)) throw new InputError('Use up to 10 questions, each at most 200 characters.');
         const e = { ...schedule(input), id: randomBytes(8).toString('hex'), title, location, description, questions, permissions: parsePermissions(input.permissions), owner: id, guests: {}, media: [], cancelled: false, createdAt: new Date().toISOString(), createRequestId: input.requestId };
         Object.assign(e, eventSettings(input, { ...e, id: undefined }));
+        Object.assign(e,invitationSettings(input,{...e,id:undefined,invitationMode:input.invitationMode || 'tickets'}));
         data.events[e.id] = e;
         await bot.home(id, '🎉 Your event is ready! Created in your planner.'); await bot.card(id, e);
         return { event: publicEvent(e, id, env.BOT_USERNAME) };
@@ -240,9 +250,15 @@ export async function miniApi(request, env) {
       if (match) {
         const e = data.events[match[1]];
         if (!e || e.owner !== id || e.cancelled) throw new InputError('Only the organiser can change an active event.');
+        const inviteSettings=invitationSettings(input,e);
+        if(input.title!==undefined)e.title=field(input.title,'Event name',100,true);
+        if(input.location!==undefined)e.location=field(input.location,'Location',300,true);
+        if(input.description!==undefined)e.description=field(input.description,'Description',1500);
+        if(input.questions!==undefined){const questions=field(input.questions,'Questions',2200).split('\n').map(q=>q.trim()).filter(Boolean);if(questions.length>10 || questions.some(q=>q.length>200))throw new InputError('Use up to 10 questions, each at most 200 characters.');e.questions=questions;}
         Object.assign(e, schedule({ endMode: e.endMode || 'none', durationMinutes: e.durationMinutes, endDate: e.endDate, endTime: e.endTime, ...input }));
         Object.assign(e, eventSettings(input, e));
-        await bot.notify(e, `📣 ${e.title}: the organiser updated the date and time. Tap My events for the latest details.`); await bot.card(id, e);
+        Object.assign(e,inviteSettings);
+        await bot.notify(e, `📣 ${e.title}: the organiser updated the event details. Tap My events for the latest details.`); await bot.card(id, e);
         return { event: publicEvent(e, id, env.BOT_USERNAME) };
       }
       throw new InputError('Not found');

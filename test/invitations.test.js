@@ -13,7 +13,7 @@ function fixture(mode){
   return {e,data,calls,bot,msg,cb};
 }
 test('personal invitation links preserve organiser names, bind to one account and skip the name prompt',async()=>{
-  const f=fixture('named');Object.assign(f.e,invitationSettings({invitationMode:'named',guestNames:'Alex Smith\nSam Jones'},f.e));
+  const f=fixture('named');Object.assign(f.e,{askPhone:true,askComments:true},invitationSettings({invitationMode:'named',guestNames:'Alex Smith\nSam Jones'},f.e));
   const token=Object.keys(f.e.invitees)[0],second=Object.keys(f.e.invitees)[1];
   assert.ok(namedLink(f.e,token,'ExampleBot').split('start=')[1].length<=64);
   await f.msg(2,`/start i_${f.e.id}_${token}`);assert.equal(f.e.guests[2].name,'Alex Smith');
@@ -41,4 +41,23 @@ test('named guest lists validate names, visibility and expiry',()=>{
   assert.throws(()=>invitationSettings({invitationMode:'named',guestNames:'Alex',isPublic:true}));
   const f=fixture('named');Object.assign(f.e,invitationSettings({guestNames:'Alex'},f.e));f.e.responseDeadline='2000-01-01';
   assert.throws(()=>claimInvitation(f.e,Object.keys(f.e.invitees)[0],2));
+});
+test('initial RSVP has only four choices and preserves the expiry in long banner captions',async()=>{
+  const f=fixture('named');Object.assign(f.e,invitationSettings({guestNames:'Alex'},f.e));
+  Object.assign(f.e,{permissions:{guestList:true,uploadMedia:true,viewMedia:true},startsAt:'2099-10-24T00:00:00Z',timezone:'Australia/Sydney',responseDeadline:'2099-10-20T08:00:00Z',banner:'photo',description:'Details '.repeat(300)});
+  const token=Object.keys(f.e.invitees)[0];await f.msg(2,`/start i_${f.e.id}_${token}`);
+  const card=f.calls.at(-1),buttons=card.reply_markup.inline_keyboard.flat();
+  assert.deepEqual(buttons.map(b=>b.text),['✅ Accept','❌ Reject','🤔 Maybe','⏳ Respond later']);
+  assert.match(card.caption,/Respond by:/);assert.match(card.caption,/2099/);assert.ok(card.caption.length<=1024);
+  f.e.guests[2].status='yes';await f.bot.card(2,f.e);
+  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`g:${f.e.id}`));
+  f.e.guests[2].status='maybe';await f.bot.card(2,f.e);
+  assert.equal(f.calls.at(-1).reply_markup.inline_keyboard.flat().length,4);
+});
+test('new named invitations save accept, reject and maybe without phone or comment prompts by default',async()=>{
+  for(const status of ['yes','no','maybe']){
+    const f=fixture('named');Object.assign(f.e,invitationSettings({guestNames:'Alex'},f.e));
+    await f.msg(2,`/start i_${f.e.id}_${Object.keys(f.e.invitees)[0]}`);await f.cb(2,`r:${f.e.id}:${status}`);
+    assert.equal(f.e.guests[2].status,status);assert.equal(f.e.guests[2].name,'Alex');assert.equal(f.data.sessions[2],undefined);assert.equal(f.e.guests[2].phone,'');assert.equal(f.e.guests[2].comment,'');
+  }
 });

@@ -43,6 +43,8 @@ Built for sports clubs, friends, community organisers and volunteer groups, XEve
 
 Named guests can change their response before the deadline. **Later** keeps these invitations in the pending list. Ticket guests use **Get ticket** or **Request ticket** and enter their ticket name. Organisers do not respond to their own events. Existing events retain their original RSVP links and responses.
 
+The initial RSVP message shows only **Accept**, **Reject**, **Maybe**, and **Respond later**, plus any response deadline. Enabled guest-list, media, reminder and other event buttons appear after acceptance. **Ask for phone number** and **Ask for comments** are off by default for new events; organisers can turn them on under Guest options. With those options, group size and custom questions off, a named guest's Accept, Reject or Maybe response saves immediately. Existing events keep their saved options.
+
 ### Two ways to invite people
 
 **Ticket booking** suits open workshops, community activities and paid events. Guests use a shared link, enter their name, optionally provide contact details and answer custom questions. A free booking can issue its ticket immediately; approval and payment requirements hold the ticket and private location until satisfied.

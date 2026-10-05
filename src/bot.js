@@ -5,7 +5,7 @@ import { priceText } from './pricing.js';
 import { randomBytes } from 'node:crypto';
 import { invoice, checkout, successful, orderFor, requestRefund, refundResult } from './payments.js';
 import { eventTime } from './time.js';
-import { uploadLink, shareUploadLink } from './permissions.js';
+import { uploadLink, shareUploadLink,asksPhone,asksComments } from './permissions.js';
 import { upcoming, eventGroup, setReminder, reminderOptions, reminderLabel, applyDefaultReminder } from './reminders.js';
 import { permissions, permissionLabels, can, guests, confirmed, canSeeLocation, responsesClosed, responseCounts, participantCount } from './permissions.js';
 
@@ -57,6 +57,7 @@ export class Bot {
     return paired([
       ...Object.entries({ guestList: 'Guest list', uploadMedia: 'Upload media', viewMedia: 'View media' }).map(([key, label]) => button(`${settings[key] ? '✅' : '⬜'} ${label}`, `${prefix}:${key}`)),
       button(`${e.askParticipantCount ? '✅' : '⬜'} Group size`, `${prefix}:askParticipantCount`),
+      button(`${asksPhone(e) ? '✅' : '⬜'} Ask phone`,`${prefix}:askPhone`),button(`${asksComments(e) ? '✅' : '⬜'} Ask comments`,`${prefix}:askComments`),
       button(`${e.requireApproval ? '✅' : '⬜'} Approval`, `${prefix}:requireApproval`),
       button(`${e.hideLocation || e.requireApproval ? '✅' : '⬜'} Private location`, `${prefix}:hideLocation`),
       button(`${e.isPublic ? '🌍 Public' : '🔒 Private'}`, `${prefix}:isPublic`),
@@ -94,6 +95,7 @@ export class Bot {
     const step=personal ? e.askParticipantCount ? 'participants':'phone' : 'name';
     if(personal)response.participants=1;
     this.session(id,{event:e.id,step,response});
+    if(personal && !e.askParticipantCount)return this.afterIdentity(id,e,this.db.sessions[id]);
     return this.prompt(id,personal ? step==='participants' ? 'How many people are attending, including you? Enter a whole number from 1 to 10,000.' : `Invitation for ${response.name}. Optionally share your own phone number with the organiser, or tap Skip.` : `${e.requireApproval ? 'Your ticket request needs organiser approval.\n\n' : ''}What name should appear on your ticket? Enter your name, or tap Use Telegram name.`);
   }
   async personalLinks(id,e){
@@ -129,12 +131,13 @@ export class Bot {
     if(mode==='tickets')counts=can(e,id,'guestList') ? `Confirmed tickets: ${counted.yes} · People: ${counted.participants} · Approval requests: ${counted.pending} · Awaiting payment: ${counted.awaitingPayment}` : e.guests[id]?.status==='yes' ? confirmed(e,e.guests[id]) ? 'Your ticket is confirmed.' : 'Your ticket request is saved.' : 'Book a ticket using the button below.';
     const closed = responsesClosed(e);
     const accepted = !host && e.guests[id]?.status === 'yes';
+    const rsvpOnly=!host && !accepted && mode!=='tickets';
     const rows = e.cancelled || host || closed ? [] : mode==='tickets' ? accepted ? [] : [[button(e.requireApproval ? 'Request ticket' : 'Get ticket',`book:${e.id}`)]] : accepted ? [[button('Change response', `change:${e.id}`)]] : [
-      [button('✅ Accept', `r:${e.id}:yes`), button('❌ Decline', `r:${e.id}:no`)],
-      [button('🤔 Tentative', `r:${e.id}:maybe`), button('⏳ Later', `r:${e.id}:later`)]
+      [button('✅ Accept', `r:${e.id}:yes`), button('❌ Reject', `r:${e.id}:no`)],
+      [button('🤔 Maybe', `r:${e.id}:maybe`), button('⏳ Respond later', `r:${e.id}:later`)]
     ];
     const extras = [];
-    if (!e.cancelled) {
+    if (!e.cancelled && (host || accepted)) {
       if (host) extras.push(...(mode==='named' ? [this.appUrl ? this.miniButton('Personal invitations',`?invitations=${e.id}`) : button('Personal invitations',`invite-links:${e.id}`)] : [{ text: mode==='tickets' ? 'Share ticket link' : '📨 Invite people', url: `https://t.me/share/url?url=${encodeURIComponent(this.link(e))}&text=${encodeURIComponent(e.title)}` }]), button('⚙️ Manage', `h:${e.id}`));
       if(paidEvent(e))extras.push({text:host?'Payments & refunds':'Payment support',url:`https://t.me/${this.username}?start=payments`});
       if (can(e, id, 'guestList')) extras.push(button('👥 Guest list', `g:${e.id}`));
@@ -149,10 +152,16 @@ export class Bot {
     if (this.appUrl && host) extras.push(this.miniButton('📱 Open planner', `?event=${e.id}`));
     if (host) extras.push(button('Delete event', `delete:${e.id}`));
     rows.push(...paired(extras));
-    rows.push([button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
+    if(!rsvpOnly)rows.push([button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
     const visibility = can(e, id, 'guestList') ? 'Guest names and RSVP comments can be seen in the guest list.' : 'The organiser has kept the guest list private. Your response and comment are shared with the organiser.';
     const location = canSeeLocation(e, id) ? e.location : paidEvent(e) ? 'Shared after approval and confirmed payment' : e.requireApproval ? 'Shared after organiser approval' : 'Shared after acceptance';
-    const text = `🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n\n🗓 ${this.time(e, id)}\n📍 ${location}\n\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n${e.description}\n\n${host ? 'You’re the organiser.\n\n' : mode==='named' ? 'Personal invitation for '+e.guests[id].name+'\n\n'+(accepted ? '✅ Accepted\n\n' : '') : mode==='tickets' ? (accepted ? '🎟 Ticket '+(confirmed(e,e.guests[id]) ? 'confirmed' : 'requested')+'\n\n' : '') : accepted ? '✅ Accepted\n\n' : ''}${closed ? '⏰ Responses closed — deadline passed.\n\n' : ''}${e.responseDeadline ? 'Response deadline: ' + eventTime({ startsAt: e.responseDeadline, timezone: e.deadlineTimezone || e.timezone || 'UTC' }, this.db.preferences[id]?.timezone) + '\n\n' : ''}${counts}${host && mode!=='named' ? '\n\n'+(mode==='tickets' ? 'Ticket link:' : 'Invite people:')+'\n' + this.link(e) : ''}\n\n${visibility} Phone numbers and question answers are shared only with the organiser.`;
+    let text = `🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n\n🗓 ${this.time(e, id)}\n📍 ${location}\n\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n${e.description}\n\n${host ? 'You’re the organiser.\n\n' : mode==='named' ? 'Personal invitation for '+e.guests[id].name+'\n\n'+(accepted ? '✅ Accepted\n\n' : '') : mode==='tickets' ? (accepted ? '🎟 Ticket '+(confirmed(e,e.guests[id]) ? 'confirmed' : 'requested')+'\n\n' : '') : accepted ? '✅ Accepted\n\n' : ''}${closed ? '⏰ Responses closed — deadline passed.\n\n' : ''}${e.responseDeadline ? 'Response deadline: ' + eventTime({ startsAt: e.responseDeadline, timezone: e.deadlineTimezone || e.timezone || 'UTC' }, this.db.preferences[id]?.timezone) + '\n\n' : ''}${counts}${host && mode!=='named' ? '\n\n'+(mode==='tickets' ? 'Ticket link:' : 'Invite people:')+'\n' + this.link(e) : ''}\n\n${visibility} Phone numbers and question answers are shared only with the organiser.`;
+    if(rsvpOnly){
+      const deadline=e.responseDeadline ? '⏰ Respond by: '+eventTime({startsAt:e.responseDeadline,timezone:e.deadlineTimezone || e.timezone || 'UTC'},this.db.preferences[id]?.timezone)+'\n'+(closed ? 'Responses closed — deadline passed.\n' : '') : '';
+      const summary=`🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n${mode==='named' ? 'Invitation for '+e.guests[id].name+'\n' : ''}\n🗓 ${this.time(e,id)}\n${deadline}📍 ${location}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n`;
+      const limit=e.banner && withBanner ? Math.max(0,1024-summary.length) : 1500;
+      const description=e.description || '';text=summary+(description.length>limit ? description.slice(0,Math.max(0,limit-1)).replace(/[\uD800-\uDBFF]$/,'')+'…' : description);
+    }
     if (e.banner && withBanner) {
       const caption = text.length <= 1024 ? text : text.slice(0, 940).replace(/[\uD800-\uDBFF]$/, '') + '\n\nTap Full details to read more.';
       if (text.length > 1024) rows.unshift([button('Full details', `details:${e.id}`)]);
@@ -246,7 +255,7 @@ export class Bot {
       return;
     }
     if (command === '/new') {
-      this.session(id, { step: 'title', draft: {invitationMode:'tickets'} });
+      this.session(id, { step: 'title', draft: {invitationMode:'tickets',askPhone:false,askComments:false} });
       return this.prompt(id, 'Let’s create your event. What is its name? (up to 100 characters)');
     }
     if (text.startsWith('/') && command !== '/skip' && command !== '/done') return this.send(id, 'Choose a menu button, or tap Cancel input to leave this step.', current ? this.inputKeyboard(current) : homeKeyboard(this.appUrl));
@@ -293,14 +302,12 @@ export class Bot {
         return this.prompt(id, 'How many people are attending with this response, including you? Enter a whole number from 1 to 10,000.');
       }
       s.response.participants = 1;
-      s.step = 'phone';
-      return this.prompt(id, 'Optionally share your phone number with the organiser only. Tap Share my phone number, type a number, or tap Skip.');
+      return this.afterIdentity(id,e,s);
     }
     if (s.step === 'participants') {
       if (!/^[1-9]\d{0,4}$/.test(text) || Number(text) > 10000) return this.prompt(id, 'Enter a whole number from 1 to 10,000, including yourself.');
       s.response.participants = e.askParticipantCount === true ? Number(text) : 1;
-      s.step = 'phone';
-      return this.prompt(id, 'Optionally share your phone number with the organiser only. Tap Share my phone number, type a number, or tap Skip.');
+      return this.afterIdentity(id,e,s);
     }
     if (s.step === 'phone') {
       if (m.contact && m.contact.user_id !== id) return this.prompt(id, 'Please share your own contact, type your number, or tap Skip.');
@@ -342,8 +349,13 @@ export class Bot {
     s.draft[s.step] = text === '/skip' ? '' : text;
     const [next, prompt] = prompts[s.step]; s.step = next; return this.prompt(id, prompt);
   }
+  async afterIdentity(id,e,s){
+    if(asksPhone(e)){s.step='phone';return this.prompt(id,'Optionally share your phone number with the organiser only, or tap Skip.');}
+    s.response.phone ||= '';s.step='question';s.index=0;return this.nextQuestion(id,e,s);
+  }
   async nextQuestion(id, e, s) {
     if (s.index < e.questions.length) return this.prompt(id, `Question ${s.index + 1}/${e.questions.length}\n${e.questions[s.index]}\n\nEnter your answer, or tap Skip.`);
+    if(!asksComments(e))return this.saveResponse(id,e,s.response);
     s.step = 'comment'; return this.prompt(id, `Add an ${invitationMode(e)==='tickets' ? 'optional booking note' : 'RSVP comment'} ${permissions(e).guestList ? 'visible in the guest list' : 'for the organiser only'}, or tap Skip to save without a comment.`);
   }
   async notify(e, text) {
@@ -381,7 +393,7 @@ export class Bot {
       if (arg === 'defaultReminder') { const index = reminderOptions.indexOf(s.draft.defaultReminder || 0); s.draft.defaultReminder = reminderOptions[(index + 1) % reminderOptions.length]; }
       if (action === 'pd') return this.finishCreation(id, s);
       if (Object.hasOwn(permissionLabels, arg)) s.draft.permissions[arg] = !s.draft.permissions[arg];
-      if (['requireApproval', 'hideLocation', 'askParticipantCount'].includes(arg)) s.draft[arg] = !s.draft[arg];
+      if (['requireApproval', 'hideLocation', 'askParticipantCount','askPhone','askComments'].includes(arg)) s.draft[arg] = !s.draft[arg];
       if (arg === 'isPublic') {if(invitationMode(s.draft)==='named')return this.send(id,'Named invitations are private.');s.draft.isPublic = !s.draft.isPublic;}
       if (arg === 'allowLinkUploads') { s.draft.allowLinkUploads = !s.draft.allowLinkUploads; s.draft.uploadToken = s.draft.allowLinkUploads ? randomBytes(16).toString('hex') : null; }
       return this.creationPermissions(id, s);
@@ -431,6 +443,7 @@ export class Bot {
       }
       if(arg==='yes' && invitationMode(e)==='named')return this.beginAcceptance(id,e,q.from);
       this.session(id, { event: eid, step: arg === 'yes' ? 'name' : 'comment', response: { ...(e.guests[id] || { name: name(q.from), phone: '', answers: [] }), ...(arg === 'yes' ? { answers: [] } : {}), status: arg } });
+      if(arg!=='yes' && !asksComments(e))return this.saveResponse(id,e,this.db.sessions[id].response);
       return this.prompt(id, arg === 'yes' ? `${e.requireApproval ? 'The organiser will send invitation details and your ticket after approving your response.\n\n' : ''}What name should the organiser see? Enter a custom name, or tap Use Telegram name.` : `Selected: ${labels[arg]}. Add a comment ${permissions(e).guestList ? 'visible in the guest list' : 'for the organiser only'}, or tap Skip to save your response.`);
     }
     if (action === 'g') {
@@ -482,7 +495,7 @@ export class Bot {
       if(action==='toggle' && arg==='askParticipantCount' && Object.values(e.guests).some(g=>['paid','processing','refund_pending','refund_failed'].includes(g.payment?.status)))return this.send(id,'Refund active payments before changing group attendance settings.');
       e.permissions = permissions(e);
       if (action === 'toggle' && Object.hasOwn(permissionLabels, arg)) e.permissions[arg] = !e.permissions[arg];
-      if (action === 'toggle' && ['requireApproval', 'hideLocation', 'askParticipantCount'].includes(arg)) e[arg] = !e[arg];
+      if (action === 'toggle' && ['requireApproval', 'hideLocation', 'askParticipantCount','askPhone','askComments'].includes(arg)) e[arg] = arg==='askPhone' ? !asksPhone(e) : arg==='askComments' ? !asksComments(e) : !e[arg];
       if (action === 'toggle' && arg === 'isPublic') e.isPublic = !e.isPublic;
       if (action === 'toggle' && arg === 'allowLinkUploads') { e.allowLinkUploads = !e.allowLinkUploads; e.uploadToken = e.allowLinkUploads ? randomBytes(16).toString('hex') : null; }
       return this.send(id, 'Guest options — tap to enable or disable. Changes apply immediately to guests, including old buttons.', keyboard(...this.permissionKeyboard(e, `toggle:${eid}`), ...(this.appUrl ? [[this.miniButton('🗓 Deadline & invitation details', `?event=${eid}`)]] : []), [button('Back to organiser tools', `h:${eid}`)]));

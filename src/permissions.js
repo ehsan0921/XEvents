@@ -1,4 +1,6 @@
 export const permissionLabels = { guestList: 'See other guests', uploadMedia: 'Send photos, videos & files', viewMedia: 'See shared media' };
+export const asksPhone=e=>e.askPhone ?? (!e.invitationMode || e.invitationMode==='legacy');
+export const asksComments=e=>e.askComments ?? (!e.invitationMode || e.invitationMode==='legacy');
 export function permissions(event) {
   return Object.fromEntries(Object.keys(permissionLabels).map(key => [key, event.permissions?.[key] === true]));
 }

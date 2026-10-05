@@ -21,7 +21,7 @@ function fixture() {
     const token = store.data.sessions[1].token;
     for (const [key, enabled] of Object.entries(settings)) if (enabled) await cb(1, `pc:${token}:${key}`);
     await cb(1, `pd:${token}`);
-    const event=Object.values(store.data.events).at(-1);event.invitationMode='legacy';return event;
+    const event=Object.values(store.data.events).at(-1);event.invitationMode='legacy';event.askPhone=true;event.askComments=true;return event;
   }
   return { store, bot, calls, msg, cb, create };
 }
@@ -175,7 +175,7 @@ test('button menus complete event creation and ticket booking without typed comm
   assert.equal(new URL(invite.url).searchParams.get('url'), f.bot.link(e));
   await f.msg(2, `/start e_${e.id}`); await f.cb(2, `book:${e.id}`);
   await f.msg(2, '👤 Use Telegram name');
-  assert.ok(f.calls.at(-1).reply_markup.keyboard.flat().some(b => b.request_contact));
+  assert.equal(e.askPhone,false);assert.equal(e.askComments,false);assert.equal(e.guests[2].status,'yes');assert.equal(f.store.data.sessions[2],undefined);
   await f.msg(2, '⏭ Skip'); await f.msg(2, '⏭ Skip');
   assert.equal(e.guests[2].status, 'yes'); assert.equal(e.guests[2].name, 'User 2');
   await f.cb(2, `u:${e.id}`); await f.msg(2, undefined, { document: { file_id: 'test' } });
@@ -286,6 +286,7 @@ test('banners persist from creation, are owner-controlled, and addresses are cop
   await f.cb(1,`pd:${token}`); const e=Object.values(f.store.data.events)[0];
   assert.equal(e.banner,'banner-large'); assert.ok(f.calls.some(c=>c.method==='sendPhoto' && c.photo==='banner-large'));
   await f.msg(2,`/start e_${e.id}`); await f.cb(2,`banner:${e.id}`); assert.equal(f.store.data.sessions[2],undefined);
+  e.guests[2].status='yes';e.guests[2].approval='approved';
   await f.bot.card(2,e); const card=f.calls.at(-1);
   assert.equal(card.reply_markup.inline_keyboard.flat().find(b=>b.copy_text).copy_text.text,'My house');
   assert.equal(card.method,'sendPhoto');
@@ -356,7 +357,8 @@ test('long banner invitations remain one bounded photo caption with full details
   const f=fixture();const e=await f.create({});e.banner='banner';e.description='Long description '.repeat(90);
   f.calls.length=0;await f.msg(2,`/start e_${e.id}`);
   const cards=f.calls.filter(c=>c.method==='sendPhoto' || c.method==='sendMessage');assert.equal(cards.length,1);
-  assert.ok(cards[0].caption.length<=1024);assert.ok(cards[0].reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`details:${e.id}`));
+  assert.ok(cards[0].caption.length<=1024);assert.equal(cards[0].reply_markup.inline_keyboard.flat().length,4);
+  e.guests[2].status='yes';await f.bot.card(2,e);assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`details:${e.id}`));
   await f.cb(2,`details:${e.id}`);assert.match(f.calls.at(-1).text,/Long description/);
 });
 

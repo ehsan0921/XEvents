@@ -60,7 +60,7 @@ try {
   assert.equal((await api('bootstrap')).data.events.length, 1);
   assert.equal((await api('bootstrap', null, 456)).data.events.length, 0);
   assert.equal((await api('preferences', { timezone: 'America/New_York' })).status, 200);
-  const input = { invitationMode:'legacy',title: 'Mini app event', location: 'Cafe', description: '', questions: 'Diet?', date: '2026-10-24', time: '18:00', timezone: 'Australia/Sydney', requestId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' };
+  const input = { askPhone:true,askComments:true,invitationMode:'legacy',title: 'Mini app event', location: 'Cafe', description: '', questions: 'Diet?', date: '2026-10-24', time: '18:00', timezone: 'Australia/Sydney', requestId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' };
   const made = await api('events', input); assert.equal(made.status, 200); assert.equal(made.data.event.startsAt, '2026-10-24T07:00:00Z');
   assert.equal((await api('events', input)).data.event.id, made.data.event.id);
   assert.equal((await api('bootstrap')).data.events.length, 2);

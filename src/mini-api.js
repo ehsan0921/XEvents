@@ -4,7 +4,7 @@ import {invitationMode,invitationSettings,namedLink} from './invitations.js';
 import { authenticate } from './mini-auth.js';
 import { parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
-import { shareUploadLink } from './permissions.js';
+import { shareUploadLink,asksPhone,asksComments } from './permissions.js';
 import { isSuperAdmin, rememberUser, adminOverview } from './admin.js';
 import { schedule, timezone, InputError } from './time.js';
 import { mutateState, BusyError } from './worker-store.js';
@@ -45,7 +45,7 @@ function eventSettings(input, event = {}) {
     result.uploadToken = result.allowLinkUploads ? event.uploadToken || randomBytes(16).toString('hex') : null;
   }
   if (input.permissions !== undefined || !event.id) result.permissions = parsePermissions(input.permissions);
-  for (const key of ['requireApproval', 'hideLocation', 'askParticipantCount']) {
+  for (const key of ['requireApproval', 'hideLocation', 'askParticipantCount','askPhone','askComments']) {
     if (input[key] !== undefined && typeof input[key] !== 'boolean') throw new InputError('Event options must be checked or unchecked.');
     if (input[key] !== undefined || !event.id) result[key] = input[key] === true;
   }
@@ -65,6 +65,7 @@ function eventSettings(input, event = {}) {
 export function publicEvent(e, id, username) {
   return {
     invitationMode:invitationMode(e),guestName:e.owner!==id ? e.guests[id]?.name || null : null,
+    askPhone:asksPhone(e),askComments:asksComments(e),
     ...(e.owner===id ? {questions:e.questions || [],invitees:Object.entries(e.invitees || {}).map(([token,g])=>({name:g.name,claimed:!!g.claimedBy,status:g.claimedBy ? e.guests[g.claimedBy]?.status : null,url:namedLink(e,token,username)}))} : {}),
     id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,

@@ -108,8 +108,7 @@ function renderEvents() {
     const extraActions = element('div','','event-more-panel'); more.append(moreToggle,extraActions);
     extraActions.append(action('Share invite', () => share(e)));
     if (e.isOwner || e.permissions.viewMedia) {
-      extraActions.append(action('🗂 Shared media', () => openGallery(e.id)));
-      if (e.imageCount > 10) extraActions.append(element('p', 'More than 10 images? Try Shared media to browse and download them together.', 'small muted'));
+      actions.append(action('🗂 Shared media', () => openGallery(e.id)));
     }
     if (e.isOwner && e.uploadLink) extraActions.append(action('Upload link & QR code', () => showQr(e.id)));
     if (e.isOwner && !e.cancelled) {

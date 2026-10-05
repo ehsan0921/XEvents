@@ -107,21 +107,20 @@ export class Bot {
       [button('✅ Accept', `r:${e.id}:yes`), button('❌ Decline', `r:${e.id}:no`)],
       [button('🤔 Tentative', `r:${e.id}:maybe`), button('⏳ Later', `r:${e.id}:later`)]
     ];
+    const extras = [];
     if (!e.cancelled) {
-      if (can(e, id, 'guestList')) rows.push([button('👥 Guest list', `g:${e.id}`)]);
-      const media = [];
-      if (can(e, id, 'uploadMedia')) media.push(button('📎 Add media', `u:${e.id}`));
-      if (media.length) rows.push(media);
-      if (this.appUrl && can(e, id, 'viewMedia')) rows.push([this.miniButton('🗂 Shared media', `?gallery=${e.id}`)]);
-      if (this.appUrl && host && shareUploadLink(e, this.username)) rows.push([this.miniButton('Upload link & QR code', `?qr=${e.id}`)]);
-      if (host) rows.push([button('⚙️ Manage', `h:${e.id}`)]);
-      if (!host && accepted && e.requireApproval) rows.push([button('🎟 My status', `status:${e.id}`)]);
-      if (upcoming(e)) rows.push([button('🔔 Event reminder', `reminder:${e.id}`)]);
-      if (canSeeLocation(e, id) && e.location) rows.push([e.location.length <= 256 ? { text: '📋 Copy address', copy_text: { text: e.location } } : button('📋 Copy address', `address:${e.id}`)]);
+      if (host) extras.push({ text: '📨 Invite people', url: `https://t.me/share/url?url=${encodeURIComponent(this.link(e))}&text=${encodeURIComponent(`You're invited to ${e.title}!`)}` }, button('⚙️ Manage', `h:${e.id}`));
+      if (can(e, id, 'guestList')) extras.push(button('👥 Guest list', `g:${e.id}`));
+      if (!host && accepted && e.requireApproval) extras.push(button('🎟 My status', `status:${e.id}`));
+      if (can(e, id, 'uploadMedia')) extras.push(button('📎 Add media', `u:${e.id}`));
+      if (this.appUrl && can(e, id, 'viewMedia')) extras.push(this.miniButton('🗂 Shared media', `?gallery=${e.id}`));
+      if (upcoming(e)) extras.push(button('🔔 Reminder', `reminder:${e.id}`));
+      if (canSeeLocation(e, id) && e.location) extras.push(e.location.length <= 256 ? { text: '📋 Copy address', copy_text: { text: e.location } } : button('📋 Copy address', `address:${e.id}`));
+      if (this.appUrl && host && shareUploadLink(e, this.username)) extras.push(this.miniButton('Upload QR code', `?qr=${e.id}`));
     }
-    if (this.appUrl && host) rows.push([this.miniButton('📱 View in planner', `?event=${e.id}`)]);
-    if (!e.cancelled && host) rows.push([{ text: '📨 Invite people', url: `https://t.me/share/url?url=${encodeURIComponent(this.link(e))}&text=${encodeURIComponent(`You're invited to ${e.title}!`)}` }]);
-    if (host) rows.push([button('Delete event', `delete:${e.id}`)]);
+    if (this.appUrl && host) extras.push(this.miniButton('📱 Open planner', `?event=${e.id}`));
+    if (host) extras.push(button('Delete event', `delete:${e.id}`));
+    rows.push(...paired(extras));
     rows.push([button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
     const visibility = can(e, id, 'guestList') ? 'Guest names and RSVP comments can be seen in the guest list.' : 'The organiser has kept the guest list private. Your response and comment are shared with the organiser.';
     const location = canSeeLocation(e, id) ? e.location : e.requireApproval ? 'Shared after organiser approval' : 'Shared after acceptance';
@@ -402,7 +401,7 @@ export class Bot {
       return this.send(id, `Media page ${page + 1}`, keyboard(...(nav.length ? [nav] : []), [button('Back to event', `v:${eid}`)]));
     }
     if (action === 'remove') { e.media = e.media.filter(f => f.id !== arg); return this.send(id, 'Removed from the event collection. Previously sent copies remain in Telegram chats.'); }
-    if (action === 'h') return this.send(id, 'Organiser tools', keyboard([button('Private guest responses', `a:${eid}`)], [button('Guest options', `permissions:${eid}`)], [button('Edit title', `edit:${eid}:title`), button('Edit time', `edit:${eid}:when`)], [button('Edit location', `edit:${eid}:location`), button('Edit description', `edit:${eid}:description`)], [button('🖼 Add / replace banner', `banner:${eid}`)], [button('Replace invite link', `rotate:${eid}`)], [button('Cancel event', `x:${eid}`), button('Delete event', `delete:${eid}`)], [button('Back to event', `v:${eid}`)]));
+    if (action === 'h') return this.send(id, 'Organiser tools', keyboard([button('Guest responses', `a:${eid}`), button('Guest options', `permissions:${eid}`)], [button('Edit title', `edit:${eid}:title`), button('Edit time', `edit:${eid}:when`)], [button('Edit location', `edit:${eid}:location`), button('Edit description', `edit:${eid}:description`)], [button('🖼 Edit banner', `banner:${eid}`), button('Replace invite link', `rotate:${eid}`)], [button('Cancel event', `x:${eid}`), button('Delete event', `delete:${eid}`)], [button('Back to event', `v:${eid}`)]));
     if (action === 'permissions' || action === 'toggle') {
       e.permissions = permissions(e);
       if (action === 'toggle' && Object.hasOwn(permissionLabels, arg)) e.permissions[arg] = !e.permissions[arg];

@@ -35,3 +35,7 @@ fieldset.panel{min-width:0}fieldset legend{font-size:18px;font-weight:700;letter
 .event-more-panel { position:absolute; right:0; top:46px; width:240px; padding:12px; border:1px solid var(--line); border-radius:14px; background:var(--panel); box-shadow:0 10px 30px #0002; max-height:65vh; overflow:auto; }
 .event-more-panel button { display:block; width:100%; text-align:left; margin:0 0 6px; font-size:13px; }
 .event-card:has(.event-more) .event-meta { padding-right:44px; }
+.price-input-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.price-input-row input { flex:1 1 110px; width:110px; min-width:0; }
+.price-input-row output { flex:1 1 140px; color:var(--accent); font-weight:650; font-size:14px; }
+#event-price-tag { display:inline-block; margin-bottom:12px; }

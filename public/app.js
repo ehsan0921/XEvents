@@ -11,7 +11,14 @@ let requestId = crypto.randomUUID();
 function priceLabel(e){return e.starPrice ? '⭐ '+e.starPrice+' Stars '+(e.starPricing==='person'?'per person':'per group') : 'Free';}
 function priceEstimate(e){const currency=state.preference.currency || state.localCurrency;const rate=state.pricing?.rates?.[currency];return e.starPrice && rate ? '≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code'}).format(e.starPrice*rate)+' · owner-set estimate; actual Stars cost varies' : '';}
 function priceTag(e){return element('span',priceLabel(e),'tag');}
-function updatePricePreview(){const e={starPrice:$('stars-enabled').checked?Number($('stars-price').value):0,starPricing:$('stars-pricing').value};$('event-price-tag').textContent=priceLabel(e);$('event-price-estimate').textContent=priceEstimate(e);}
+function updatePricePreview(){
+  const value=Number($('stars-price').value);
+  const e={starPrice:$('stars-enabled').checked && Number.isFinite(value) && value>0?value:0,starPricing:$('stars-pricing').value};
+  $('event-price-tag').textContent=priceLabel(e);
+  const currency=state.preference.currency || state.localCurrency,rate=state.pricing?.rates?.[currency];
+  $('event-price-estimate').textContent=e.starPrice && rate ? '≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code'}).format(e.starPrice*rate)+' '+(e.starPricing==='person'?'per person':'per group') : currency ? currency+' estimate unavailable' : 'Select a display currency';
+  $('stars-rate-note').textContent=rate ? 'Reference: 1 Star ≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code',maximumFractionDigits:6}).format(rate)+'. Owner-set estimate; actual Telegram purchase prices vary.' : currency ? 'Add a '+currency+' reference rate under Admin → Owner fee settings to see the local equivalent.' : 'Choose your price display currency in Timezone settings to see a local equivalent.';
+}
 let listFilter = 'all';
 let adminData = null, adminMode = 'events';
 let bannerPreviewUrl;

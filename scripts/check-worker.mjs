@@ -190,13 +190,15 @@ try {
   assert.equal((await api('bootstrap',null,456)).data.events.find(e=>e.id===groupId).participants,4);
   const disabledGroup=await api(`events/${groupId}/schedule`, {...input,date:'2099-10-24',askParticipantCount:false});
   assert.equal(disabledGroup.status,200); assert.equal(disabledGroup.data.event.counts.participants,1);
-  const ownerPricing={defaultStarPrice:50,defaultStarPricing:'person',rates:{AUD:0.02}};
+  const ownerPricing={defaultStarPrice:50,defaultStarPricing:'person'};
   assert.equal((await api('admin/pricing',ownerPricing,123)).status,403);
-  assert.equal((await api('admin/pricing',{...ownerPricing,rates:{AUD:-1}},999001)).status,400);
+  assert.equal((await api('admin/pricing',{...ownerPricing,defaultStarPrice:-1},999001)).status,400);
   assert.equal((await api('admin/pricing',ownerPricing,999001)).status,200);
   assert.equal((await api('admin/overview',null,999001)).data.pricing.defaultStarPrice,50);
+  await db.prepare("INSERT INTO app_settings(key,value) VALUES ('online-currency-rates',?)").bind(JSON.stringify({rates:{AUD:0.0195},dates:{AUD:'2026-10-05'},retrievedAt:new Date().toISOString(),basis:'organiser-reward'})).run();
   const pricedBootstrap=(await api('bootstrap')).data;
-  assert.equal(pricedBootstrap.pricing.rates.AUD,0.02);
+  assert.equal(pricedBootstrap.pricing.rates.AUD,0.0195);
+  assert.equal(pricedBootstrap.pricing.basis,'organiser-reward');
   await api('preferences',{timezone:'Australia/Sydney',currency:''},456);
   assert.equal((await api('bootstrap',null,456)).data.localCurrency,'AUD');
   await api('preferences',{timezone:'Asia/Dubai',currency:'AED'},456);

@@ -12,13 +12,11 @@ export function localCurrency(preference={}) {
   return candidates.length===1 ? candidates[0] : null;
 }
 export function pricingSettings(value={}) {
-  return {defaultStarPrice:value.defaultStarPrice || 0,defaultStarPricing:value.defaultStarPricing || 'person',rates:value.rates || {},updatedAt:value.updatedAt || null};
+  return {defaultStarPrice:value.defaultStarPrice || 0,defaultStarPricing:value.defaultStarPricing || 'person',updatedAt:value.updatedAt || null};
 }
 export function parsePricing(input) {
   if(!Number.isSafeInteger(input.defaultStarPrice) || input.defaultStarPrice<0 || input.defaultStarPrice>100000)throw new InputError('Default fee must be a whole number from 0 to 100,000 Stars.');
   if(!['person','group'].includes(input.defaultStarPricing))throw new InputError('Choose per-person or per-group pricing.');
-  if(!input.rates || typeof input.rates!=='object' || Array.isArray(input.rates) || Object.keys(input.rates).length>200)throw new InputError('Provide currency reference rates.');
-  for(const [code,rate] of Object.entries(input.rates))if(!currencyCodes.includes(code) || typeof rate!=='number' || !Number.isFinite(rate) || rate<=0 || rate>1000000)throw new InputError('Use supported currencies and positive reference rates.');
   return {...pricingSettings(input),updatedAt:new Date().toISOString()};
 }
 export function priceText(event,preference={},settings={}) {
@@ -27,5 +25,5 @@ export function priceText(event,preference={},settings={}) {
   const unit=event.starPricing==='person'?'per person':'per group';
   const currency=localCurrency(preference),rate=settings.rates?.[currency];
   const money=currency && rate ? new Intl.NumberFormat('en',{style:'currency',currency,currencyDisplay:'code'}).format(event.starPrice*rate) : null;
-  return `⭐ ${event.starPrice} Stars ${unit}${money ? ` · ≈ ${money} (owner-set estimate; actual Stars cost varies)` : ''}`;
+  return `⭐ ${event.starPrice} Stars ${unit}${money ? ` · ≈ ${money} (estimated organiser reward; guest purchase cost varies)` : ''}`;
 }

@@ -1,4 +1,5 @@
 import { Bot } from './bot.js';
+import {readOnlinePricing} from './exchange.js';
 
 export class BusyError extends Error {}
 
@@ -14,6 +15,7 @@ export async function mutateState(env, action, updateId) {
     const before = new Map(results.map(r => [`${r.kind}:${r.id}`, r.data]));
     const messages = [];
     const bot = new Bot({ data }, async (method, params) => { messages.push({ method, params }); return {}; }, env.BOT_USERNAME, env.APP_URL);
+    bot.pricing=await readOnlinePricing(env,data.preferences._pricing);
     const value = await action(data, bot);
     const batch = [env.DB.prepare('INSERT INTO commits(owner) VALUES (?)').bind(owner)];
     for (const kind of ['events', 'sessions', 'preferences']) {

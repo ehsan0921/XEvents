@@ -3,6 +3,7 @@ import { miniApi } from './mini-api.js';
 import { rememberUser } from './admin.js';
 import { sendDueReminders } from './reminders.js';
 import { checkout, refundResult } from './payments.js';
+import {refreshOnlineRates} from './exchange.js';
 
 export async function authorized(request, secret) {
   if (!secret) return false;
@@ -122,6 +123,7 @@ export default {
     }
   },
   async scheduled(controller, env, ctx) {
+    ctx.waitUntil(refreshOnlineRates(env).catch(()=>console.error('online_rates_storage_failed')));
     ctx.waitUntil(configureMiniApp(env));
     ctx.waitUntil(mutateState(env, (data, bot) => sendDueReminders(data, bot)).then(() => drainOutbox(env)).catch(error => { if (!(error instanceof BusyError)) console.error('reminder_processing_failed'); }));
     ctx.waitUntil(env.DB.prepare('DELETE FROM processed WHERE at < unixepoch()-604800').run());

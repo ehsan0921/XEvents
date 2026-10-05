@@ -9,7 +9,7 @@ const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 let state = { events: [], preference: {} }, activeEvent = null, createdEvent = null, previewSequence = 0;
 let requestId = crypto.randomUUID();
 function priceLabel(e){if(['bank','link'].includes(e.paymentMethod))return 'Paid · '+e.displayPrice;return e.starPrice ? '⭐ '+e.starPrice+' Stars '+(e.starPricing==='person'?'per person':'per group') : 'Free';}
-function priceEstimate(e){const currency=state.preference.currency || state.localCurrency;const rate=state.pricing?.rates?.[currency];return e.starPrice && rate ? '≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code'}).format(e.starPrice*rate)+' · owner-set estimate; actual Stars cost varies' : '';}
+function priceEstimate(e){const currency=state.preference.currency || state.localCurrency;const rate=state.pricing?.rates?.[currency];return e.starPrice && rate ? '≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code'}).format(e.starPrice*rate)+' · estimated organiser reward; guest purchase cost varies' : '';}
 function priceTag(e){return element('span',priceLabel(e),'tag');}
 function updatePricePreview(){
   const value=Number($('stars-price').value);
@@ -20,8 +20,8 @@ function updatePricePreview(){
   const e={paymentMethod:method,displayPrice:$('display-price').value || 'Set a price',starPrice:method==='stars' && Number.isFinite(value) && value>0?value:0,starPricing:$('stars-pricing').value};
   $('event-price-tag').textContent=priceLabel(e);
   const currency=state.preference.currency || state.localCurrency,rate=state.pricing?.rates?.[currency];
-  $('event-price-estimate').textContent=e.starPrice && rate ? '≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code'}).format(e.starPrice*rate)+' '+(e.starPricing==='person'?'per person':'per group') : currency ? 'No '+currency+' reference rate set' : 'Select a display currency';
-  $('stars-rate-note').textContent=rate ? 'Reference: 1 Star ≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code',maximumFractionDigits:6}).format(rate)+'. Owner-set estimate; actual Telegram purchase prices vary.' : currency ? (state.user?.isSuperAdmin ? 'Set the cost of one Star in '+currency+' under Admin → Owner fee settings. ' : 'The bot owner has not configured a '+currency+' reference rate. ')+'Telegram purchase prices vary; this is an estimate, not a live exchange rate.' : 'Choose your price display currency in Timezone settings to see a local equivalent.';
+  $('event-price-estimate').textContent=e.starPrice && rate ? '≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code'}).format(e.starPrice*rate)+' '+(e.starPricing==='person'?'per person':'per group') : currency ? currency+' online rate temporarily unavailable' : 'Select a display currency';
+  $('stars-rate-note').textContent=rate ? 'Automatic online estimate of organiser rewards. Guest Stars purchase prices vary.'+(state.pricing?.dates?.[currency] ? ' Exchange-rate date: '+state.pricing.dates[currency]+'.' : '') : currency ? 'Online currency rates are temporarily unavailable. Stars payments still work; try Refresh later.' : 'Choose your display currency in Timezone settings.';
 }
 let listFilter = 'all';
 let adminData = null, adminMode = 'events';
@@ -251,7 +251,6 @@ async function loadAdmin() {
   $('admin-refresh').disabled = true; $('admin-error').hidden = true;
   try { adminData = await api('admin/overview');
   $('owner-default-price').value=adminData.pricing?.defaultStarPrice || 0; $('owner-default-unit').value=adminData.pricing?.defaultStarPricing || 'person';
-  $('owner-currency-rates').value=Object.entries(adminData.pricing?.rates || {}).map(([code,rate])=>code+' = '+rate).join('\n');
 renderAdmin(); }
   catch (error) { $('admin-error').textContent=error.message; $('admin-error').hidden=false; $('admin-list').replaceChildren(); }
   finally { $('admin-refresh').disabled=false; }
@@ -291,14 +290,8 @@ $('admin-refresh').onclick=loadAdmin;
 $('owner-pricing-form').onsubmit=async event=>{
   event.preventDefault();$('save-owner-pricing').disabled=true;
   try{
-    const rates={};
-    for(const line of $('owner-currency-rates').value.split('\n').map(l=>l.trim()).filter(Boolean)){
-      const match=line.match(/^([A-Za-z]{3})\s*=\s*(\d+(?:\.\d+)?)$/);
-      if(!match)throw Error('Use one currency code = rate per line.');
-      const code=match[1].toUpperCase();if(Object.hasOwn(rates,code))throw Error('Each currency can appear only once.');rates[code]=Number(match[2]);
-    }
-    const result=await api('admin/pricing',{defaultStarPrice:Number($('owner-default-price').value),defaultStarPricing:$('owner-default-unit').value,rates});
-    adminData.pricing=result.settings;state.pricing=result.settings;renderEvents();$('owner-pricing-status').textContent='Saved. New events use this default; current event prices are unchanged.';
+    const result=await api('admin/pricing',{defaultStarPrice:Number($('owner-default-price').value),defaultStarPricing:$('owner-default-unit').value});
+    await refresh();adminData.pricing=state.pricing;renderEvents();$('owner-pricing-status').textContent='Saved. New events use this default; current event prices are unchanged.';
   }catch(error){$('owner-pricing-status').textContent=error.message;}finally{$('save-owner-pricing').disabled=false;}
 };
 for (const b of document.querySelectorAll('[data-tab]')) b.onclick = () => { notice(''); b.dataset.tab === 'create' ? setupForm() : go(b.dataset.tab); };
@@ -372,7 +365,7 @@ if (!initData) {
 } else {
   try {
     const data = await refresh();
-    if (!state.preference.timezone) { const saved = await api('preferences', { timezone: deviceZone }); state.preference = saved.preference; options('local-zone', selectedZone()); renderEvents(); }
+    if (!state.preference.timezone) { const saved = await api('preferences', { timezone: deviceZone }); state.preference = saved.preference; await refresh(); }
     if (compactPicker) { setupForm(state.events.find(e => e.id === data.session?.event) || null); document.querySelector('.bottom-nav').hidden = true; if (data.session?.token !== query.get('session')) { notice('This picker has expired. Open a new picker from the current chat step.'); $('save-event').disabled = true; } }
     else if (query.get('gallery')) await openGallery(query.get('gallery'));
     else if (query.get('qr')) await showQr(query.get('qr'));

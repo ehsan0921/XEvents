@@ -1,6 +1,7 @@
 import {parseEventPayment,paymentMethod} from './event-payment.js';
+import {readOnlinePricing} from './exchange.js';
 import { authenticate } from './mini-auth.js';
-import { pricingSettings, parsePricing, currencyCodes, localCurrency } from './pricing.js';
+import { parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
 import { shareUploadLink } from './permissions.js';
 import { isSuperAdmin, rememberUser, adminOverview } from './admin.js';
@@ -117,7 +118,7 @@ export async function miniApi(request, env) {
     await rememberUser(env, user);
     const { results } = await env.DB.prepare("SELECT kind,id,data FROM records WHERE kind IN ('events','users','preferences','sessions')").all();
     const pricing=results.find(r=>r.kind==='preferences' && r.id==='_pricing');
-    return respond({...adminOverview(results),pricing:pricingSettings(pricing ? JSON.parse(pricing.data) : {})});
+    return respond({...adminOverview(results),pricing:await readOnlinePricing(env,pricing ? JSON.parse(pricing.data) : {})});
   }
   const bannerMatch = path.match(/^\/api\/events\/([a-f0-9]{16})\/banner$/);
   if (bannerMatch && ['GET', 'POST'].includes(request.method)) {
@@ -163,7 +164,7 @@ export async function miniApi(request, env) {
     const pickerSession = s && (s.step === 'when' || s.step === 'permissions' || (s.step === 'edit' && s.field === 'when')) ? { token: s.token, event: s.event || null, deadlineDate: s.draft?.deadlineDate || '', deadlineTime: s.draft?.deadlineTime || '', timezone: s.draft?.deadlineTimezone || s.draft?.timezone || null } : null;
     const pricing=await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id='_pricing'").first();
     const pref=preference ? JSON.parse(preference.data) : {};
-    return respond({pricing:pricingSettings(pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { id: user.id, firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: {timezone:pref.timezone,currency:pref.currency || ''}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
+    return respond({pricing:await readOnlinePricing(env,pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { id: user.id, firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: {timezone:pref.timezone,currency:pref.currency || ''}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
   }
   if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
   const raw = await request.text();

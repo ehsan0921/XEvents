@@ -155,7 +155,7 @@ function setupForm(event = null) {
   $('stars-enabled').checked = !!(event ? event.starPrice : state.user?.isSuperAdmin && state.pricing?.defaultStarPrice); $('stars-fields').hidden = !$('stars-enabled').checked;
   $('stars-price').value = event?.starPrice || state.pricing?.defaultStarPrice || 100; $('stars-pricing').value = event?.starPricing || state.pricing?.defaultStarPricing || 'person';
   updatePricePreview();
-  $('digital-event').checked = !!event?.digitalEvent; $('payment-terms').value = event?.paymentTerms || '';
+  $('payment-terms').value = event?.paymentTerms || '';
   $('visibility-panel').hidden = compactPicker; $('event-visibility').value = event?.isPublic ? 'public' : 'private';
   $('ending-panel').hidden = deadlinePicker;
   $('end-mode').value = event?.endMode || 'none';
@@ -323,7 +323,7 @@ $('timezone-form').onsubmit = async event => {
 };
 $('event-form').onsubmit = async event => {
   event.preventDefault(); $('save-event').disabled = true; $('form-error').hidden = true;
-  const payload = { ...(state.user.isSuperAdmin ? {starPrice:$('stars-enabled').checked ? Number($('stars-price').value) : 0, starPricing:$('stars-pricing').value, digitalEvent:$('digital-event').checked, paymentTerms:$('payment-terms').value} : {}), askParticipantCount: $('ask-participant-count').checked, isPublic: $('event-visibility').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
+  const payload = { ...(state.user.isSuperAdmin ? {starPrice:$('stars-enabled').checked ? Number($('stars-price').value) : 0, starPricing:$('stars-pricing').value, paymentTerms:$('payment-terms').value} : {}), askParticipantCount: $('ask-participant-count').checked, isPublic: $('event-visibility').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
   try {
     const banner = $('banner').files[0];
     if (!compactPicker && banner && (banner.size > 5 * 1024 * 1024 || !['image/jpeg','image/png','image/webp'].includes(banner.type))) throw new Error('Choose a JPG, PNG, or WebP banner smaller than 5 MB.');

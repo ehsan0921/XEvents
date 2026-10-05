@@ -26,7 +26,7 @@ export async function invoice(bot, uid, e, consent = false) {
     order=orders[id]={id,event:e.id,owner:e.owner,title:e.title,amount:total,unitPrice:e.starPrice,pricing:e.starPricing,terms:e.paymentTerms,participants:participantCount(e,g),status:'pending',createdAt:new Date().toISOString()};
     g.payment={order:id,status:'pending'};
   }
-  return bot.api('sendInvoice',{chat_id:uid,title:e.title.slice(0,32),description:`Digital event admission · ${order.participants} participant(s)`.slice(0,255),payload:order.id,provider_token:'',currency:'XTR',prices:[{label:'Event admission',amount:order.amount}],start_parameter:`e_${e.id}`});
+  return bot.api('sendInvoice',{chat_id:uid,title:e.title.slice(0,32),description:`Event admission · ${order.participants} participant(s)`.slice(0,255),payload:order.id,provider_token:'',currency:'XTR',prices:[{label:'Event admission',amount:order.amount}],start_parameter:`e_${e.id}`});
 }
 export function checkout(bot,q) {
   const order=orderFor(bot.db,q.from.id,q.invoice_payload);

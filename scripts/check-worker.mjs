@@ -202,9 +202,9 @@ try {
   await api('preferences',{timezone:'Asia/Dubai',currency:'AED'},456);
   assert.equal((await api('bootstrap',null,456)).data.localCurrency,'AED');
   assert.equal((await api('preferences',{timezone:'UTC',currency:'INVALID'},456)).status,400);
-  const starsInput={...input,date:'2099-10-24',starPrice:20,starPricing:'person',digitalEvent:true,paymentTerms:'Online workshop. Full refund on cancellation. Contact the organiser for other requests.',askParticipantCount:true,requireApproval:true,requestId:'55555555-5555-5555-5555-555555555555'};
+  const starsInput={...input,date:'2099-10-24',starPrice:20,starPricing:'person',paymentTerms:'Online workshop. Full refund on cancellation. Contact the organiser for other requests.',askParticipantCount:true,requireApproval:true,requestId:'55555555-5555-5555-5555-555555555555'};
   assert.equal((await api('events',starsInput,123)).status,400);
-  assert.equal((await api('events',{...starsInput,digitalEvent:false},999001)).status,400);
+  assert.equal((await api('events',{...starsInput,starPrice:1.5},999001)).status,400);
   const starsEvent=await api('events',starsInput,999001);assert.equal(starsEvent.status,200);
   const starsId=starsEvent.data.event.id;
   await message(4000,`/start e_${starsId}`,456);await callback(4001,`r:${starsId}:yes`,456);

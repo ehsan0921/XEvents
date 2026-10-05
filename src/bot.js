@@ -165,7 +165,7 @@ export class Bot {
     else if (current && text === menu.done && current.step === 'upload') text = '/done';
     const command = text.split(/\s/)[0].split('@')[0];
     if (command === '/paysupport' || command === '/terms') {
-      await this.send(id,'Stars payments fund digital event admission. Event terms are shown before checkout. Cancelling an event requests a full refund. For payment help, send /paysupport followed by your question. Telegram support cannot handle purchases through this bot.');
+      await this.send(id,'Stars payments fund event admission. Event terms are shown before checkout. Cancelling an event requests a full refund. For payment help, send /paysupport followed by your question. Telegram support cannot handle purchases through this bot.');
       for(const [uid,pref] of Object.entries(this.db.preferences))for(const order of Object.values(pref.starOrders || {}))if(order.owner===id || Number(uid)===id){
         await this.send(id,order.title+' · '+order.amount+' Stars · '+order.status, order.owner===id && ['paid','refund_failed'].includes(order.status)?keyboard([button('Full refund',`sr:${uid}:${order.id}`)]):undefined);
         if(Number(uid)===id && command==='/paysupport')await this.send(order.owner,'Payment support request for '+order.title+' from '+name(m.from)+' (Telegram ID '+id+').\n'+(text.slice(command.length).trim() || 'Please contact this guest about their payment.'));

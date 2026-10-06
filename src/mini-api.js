@@ -193,7 +193,12 @@ export async function miniApi(request, env) {
         const e=data.events[ticketMatch[1]];
         if(ticketMatch[2]==='ticket')return {ticket:issueTicket(e,id)};
         if(input.checkIn!==undefined && typeof input.checkIn!=='boolean')throw new InputError('Invalid check-in request.');
-        return {ticket:verifyTicket(e,id,input.code,input.checkIn===true)};
+        const ticket=verifyTicket(e,id,input.code,input.checkIn===true);
+        if(input.checkIn===true && ticket.valid && !ticket.alreadyCheckedIn){
+          const guestId=e.checkIns[ticket.code].userId;
+          await bot.send(guestId,`✅ Checked in\n${e.title}\n${ticket.participants} ${ticket.participants===1?'person':'people'}`);
+        }
+        return {ticket};
       }
       if (path === '/api/preferences') {
         if(input.currency!==undefined && input.currency!=='' && !currencyCodes.includes(input.currency))throw new InputError('Choose a supported display currency.');

@@ -240,9 +240,17 @@ try {
   const qrTicket=await api(`events/${ticketId}/ticket`,{},456);assert.equal(qrTicket.status,200);assert.match(qrTicket.data.ticket.image,/^data:image\/gif;base64,/);
   const ticketCode=qrTicket.data.ticket.code;
   assert.equal((await api(`events/${ticketId}/ticket-check`,{code:ticketCode},456)).status,400);
+  const checkinMessages=()=>telegramCalls.filter(c=>c.method==='sendMessage' && c.params.chat_id===456 && c.params.text?.startsWith('✅ Checked in\n'+ticketInput.title));
   const validated=await api(`events/${ticketId}/ticket-check`,{code:`XE1:${ticketId}:${ticketCode}`});assert.equal(validated.data.ticket.valid,true);assert.equal(validated.data.ticket.checkedInAt,null);
+  assert.equal(checkinMessages().length,0);
   const admitted=await api(`events/${ticketId}/ticket-check`,{code:ticketCode,checkIn:true});assert.equal(admitted.data.ticket.valid,true);assert.equal(admitted.data.ticket.alreadyCheckedIn,false);
+  // The notification commits with attendance; background delivery may still be draining older messages.
+  const queuedCheckins=async()=> (await db.prepare("SELECT params FROM outbox WHERE method='sendMessage' AND json_extract(params,'$.chat_id')=456 AND json_extract(params,'$.text')=?").bind('✅ Checked in\n'+ticketInput.title+'\n1 person').all()).results;
+  const queued=await queuedCheckins();assert.ok(checkinMessages().length===1 || queued.length===1);
+  assert.match((checkinMessages()[0]?.params || JSON.parse(queued[0].params)).text,/1 person$/);
   const repeated=await api(`events/${ticketId}/ticket-check`,{code:ticketCode,checkIn:true});assert.equal(repeated.data.ticket.alreadyCheckedIn,true);assert.equal(repeated.data.ticket.checkedInAt,admitted.data.ticket.checkedInAt);
+  const stillQueued=await queuedCheckins();assert.ok(stillQueued.length<=1);assert.ok(checkinMessages().length<=1);
+  assert.ok(checkinMessages().length===1 || stillQueued.length===1);
   const checkedEvent=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(ticketId).first()).data);assert.equal(checkedEvent.checkIns[ticketCode].userId,456);
   await api(`events/${ticketId}/cancel`,{confirm:true});assert.equal((await api(`events/${ticketId}/ticket-check`,{code:ticketCode})).data.ticket.valid,false);
   const namedInput={...ticketInput,title:'Named workflow',invitationMode:'named',guestNames:'Alex Smith\nSam Jones',requestId:'77777777-7777-7777-7777-777777777777'};

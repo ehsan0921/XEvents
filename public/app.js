@@ -81,6 +81,24 @@ function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else wi
 function share(e) { if(e.invitationMode==='named' && e.isOwner)return openNamedLinks(e);openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(`You're invited to ${e.title}!`)}`); }
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
 function action(text, fn, className = 'secondary') { const b = element('button', text, className); b.type = 'button'; b.onclick = async () => { if(b.disabled)return; b.disabled=true; try { await fn(); } catch(error) { notice(error.message); } finally { b.disabled=false; } }; return b; }
+async function openGuestList(id) {
+  const {event:e}=await api(`events/${id}`);
+  if(!e.isOwner)return;
+  const roster=e.guestRoster || [],accepted=roster.filter(g=>g.status==='yes');
+  $('guest-list-title').textContent=e.title+' · Guest list';
+  $('guest-list-summary').textContent=`Accepted: ${accepted.length} responses · ${accepted.reduce((sum,g)=>sum+g.participants,0)} people. Confirmed: ${roster.filter(g=>g.confirmed).reduce((sum,g)=>sum+g.participants,0)} people.`;
+  const filters=$('guest-list-filters');filters.replaceChildren();
+  const render=filter=>{
+    const rows=$('guest-list-rows');rows.replaceChildren();
+    const visible=roster.filter(g=>filter==='all' || (filter==='unanswered' ? ['later','unopened'].includes(g.status) : filter==='pending' ? g.status==='yes' && !g.confirmed : g.status===filter));
+    for(const g of visible)rows.append(element('p',`${g.name} · ${g.status==='yes' ? g.confirmed?'Confirmed':g.approval==='pending'?'Awaiting approval':'Awaiting payment' : {no:'Rejected',maybe:'Maybe',later:'Respond later',unopened:'Not opened'}[g.status] || g.status}${g.participants?' · '+g.participants+' people':''}`,'admin-guest'));
+    if(!visible.length)rows.append(element('p','No guests in this list.','muted'));
+    for(const b of filters.children)b.setAttribute('aria-pressed',String(b.dataset.filter===filter));
+  };
+  for(const [filter,label] of [['all','All'],['yes','Accepted'],['pending','Pending'],['maybe','Maybe'],['no','Rejected'],['unanswered','Unanswered']]){const b=action(label,()=>render(filter));b.dataset.filter=filter;filters.append(b);}
+  $('guest-list-manage').onclick=()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=manage_'+e.id);
+  $('guest-list-close').onclick=()=>$('guest-list-dialog').close();render('all');$('guest-list-dialog').showModal();
+}
 const {openGallery,showQr}=setupGallery({$,api,element,action,go,notice,openTelegram,initData});
 function confirmAction(message, operation) {
   const dialog = $('confirm-dialog');
@@ -128,6 +146,7 @@ function renderEvents() {
     else card.append(element('div', 'Guest list is private to the organiser.', 'counts'));
     const actions = element('div', '', 'event-actions'); actions.append(action('Open event in chat ↗', () => openTelegram(e.inviteUrl), 'primary'));
     if (e.isOwner && !e.cancelled) actions.append(action('Edit event', () => editEvent(e.id)));
+    if(e.isOwner)actions.append(action('Guest list',()=>openGuestList(e.id)));
     if((e.starPrice || ['bank','link'].includes(e.paymentMethod)) && !e.isOwner && e.status==='yes' && e.approval==='approved' && e.paymentStatus!=='paid')actions.append(action(e.starPrice?'⭐ Pay with Stars':'Payment instructions',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=pay_'+e.id)));
     if(e.invitationMode==='named' && e.isOwner)actions.append(action('Guest invitations',()=>openNamedLinks(e)));else actions.append(action('Copy link', async () => { try { await navigator.clipboard.writeText(e.inviteUrl); notice('✓ Event link copied.'); } catch { notice('Could not copy the link. Use Share invite under the three-dot menu.'); } }));
     const more = document.createElement('details'); more.className = 'event-more';

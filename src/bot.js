@@ -36,6 +36,13 @@ export class Bot {
     return reply([menu.cancel]);
   }
   prompt(id, text) { return this.send(id, text, this.inputKeyboard(this.db.sessions[id])); }
+  participantPicker(id,e,more=false) {
+    const start=more?6:1;
+    return this.send(id,'How many people? Include yourself. Max 10.',keyboard(
+      Array.from({length:5},(_,i)=>button(String(start+i),`size:${e.id}:${start+i}`)),
+      [button(more?'1–5':'More · 6–10',`size:${e.id}:${more?'first':'more'}`)],
+      [button('Cancel',`v:${e.id}`)]));
+  }
   hasPending(id) { return Object.values(this.db.events).some(e => e.owner !== id && invitationMode(e)!=='tickets' && !e.cancelled && e.guests[id]?.status === 'later'); }
   home(id, text = 'Welcome to XEvents 🎉\nOpen the app to create events, or tap My events to see your invitations.') { return this.send(id, text, homeKeyboard(this.appUrl)); }
   session(id, value) { if (value) this.db.sessions[id] = value; else delete this.db.sessions[id]; }
@@ -97,7 +104,8 @@ export class Bot {
     if(personal)response.participants=1;
     this.session(id,{event:e.id,step,response});
     if(personal && !e.askParticipantCount)return this.afterIdentity(id,e,this.db.sessions[id]);
-    return this.prompt(id,personal ? step==='participants' ? 'How many people are attending, including you? Enter a whole number from 1 to 10,000.' : `Invitation for ${response.name}. Optionally share your own phone number with the organiser, or tap Skip.` : `${e.requireApproval ? 'Your ticket request needs organiser approval.\n\n' : ''}What name should appear on your ticket? Enter your name, or tap Use Telegram name.`);
+    if(step==='participants')return this.participantPicker(id,e);
+    return this.prompt(id,personal ? 'Share your phone number, or tap Skip.' : 'Name for your ticket? Type it or use your Telegram name.');
   }
   async personalLinks(id,e){
     if(e.owner!==id)return this.send(id,'Only the organiser can see personal invitation links.');
@@ -190,6 +198,8 @@ export class Bot {
     if (m.chat.type !== 'private') return this.send(m.chat.id, `Please use me in a private chat: https://t.me/${this.username}`);
     let text = clean(m.text, 3000);
     if(text === '/start payments')text='/paysupport';
+    const manageLink=text.match(/^\/start(?:@\w+)? manage_([a-f0-9]{16})$/);
+    if(manageLink){this.session(id);return this.callback({from:m.from,data:`a:${manageLink[1]}`});}
     const paymentLink=text.match(/^\/start pay_([a-f0-9]{16})$/);
     if(paymentLink) {const e=this.db.events[paymentLink[1]];return this.allowed(e,id) ? this.paymentInfo(id,e) : this.home(id,'Open your event invitation before paying.');}
     const current = this.db.sessions[id];
@@ -304,13 +314,13 @@ export class Bot {
       s.response.name = command === '/skip' ? name(m.from) : text;
       if (e.askParticipantCount === true) {
         s.step = 'participants';
-        return this.prompt(id, 'How many people are attending with this response, including you? Enter a whole number from 1 to 10,000.');
+        return this.participantPicker(id,e);
       }
       s.response.participants = 1;
       return this.afterIdentity(id,e,s);
     }
     if (s.step === 'participants') {
-      if (!/^[1-9]\d{0,4}$/.test(text) || Number(text) > 10000) return this.prompt(id, 'Enter a whole number from 1 to 10,000, including yourself.');
+      if (!/^(?:[1-9]|10)$/.test(text)) return this.participantPicker(id,e);
       s.response.participants = e.askParticipantCount === true ? Number(text) : 1;
       return this.afterIdentity(id,e,s);
     }
@@ -355,13 +365,13 @@ export class Bot {
     const [next, prompt] = prompts[s.step]; s.step = next; return this.prompt(id, prompt);
   }
   async afterIdentity(id,e,s){
-    if(asksPhone(e)){s.step='phone';return this.prompt(id,'Optionally share your phone number with the organiser only, or tap Skip.');}
+    if(asksPhone(e)){s.step='phone';return this.prompt(id,'Phone number? Only the organiser sees it. Or tap Skip.');}
     s.response.phone ||= '';s.step='question';s.index=0;return this.nextQuestion(id,e,s);
   }
   async nextQuestion(id, e, s) {
     if (s.index < e.questions.length) return this.prompt(id, `Question ${s.index + 1}/${e.questions.length}\n${e.questions[s.index]}\n\nEnter your answer, or tap Skip.`);
     if(!asksComments(e))return this.saveResponse(id,e,s.response);
-    s.step = 'comment'; return this.prompt(id, `Add an ${invitationMode(e)==='tickets' ? 'optional booking note' : 'RSVP comment'} ${permissions(e).guestList ? 'visible in the guest list' : 'for the organiser only'}, or tap Skip to save without a comment.`);
+    s.step = 'comment'; return this.prompt(id, `Comment? ${permissions(e).guestList ? 'Visible in the guest list.' : 'Only the organiser sees it.'} Or tap Skip.`);
   }
   async notify(e, text) {
     for (const uid of Object.keys(e.guests)) if (Number(uid) !== e.owner) await this.send(Number(uid), text).catch(() => {});
@@ -382,7 +392,7 @@ export class Bot {
     const id = q.from.id;
     const [action, eid, arg, version] = (q.data || '').split(':');
     const e = this.db.events[eid];
-    await this.api('answerCallbackQuery', { callback_query_id: q.id }).catch(() => {});
+    if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id }).catch(() => {});
     if (action === 'sr' || action === 'src') {
       const order=orderFor(this.db,eid,arg);
       if (!order || order.owner !== id || !['paid','refund_failed'].includes(order.status)) return this.send(id,'No refundable payment is available.');
@@ -426,6 +436,15 @@ export class Bot {
     const hostActions = ['h', 'a', 'x', 'z', 'edit', 'rotate', 'remove', 'permissions', 'toggle', 'approve', 'reject', 'banner', 'delete', 'delete-confirm'];
     if (hostActions.includes(action) && e.owner !== id) return this.send(id, 'Only the organiser can do that.');
     const required = { g: 'guestList', u: 'uploadMedia', m: 'viewMedia' }[action];
+    if(action==='size') {
+      const session=this.db.sessions[id];
+      if(session?.event!==eid || session.step!=='participants' || responsesClosed(e))return this.card(id,e);
+      await this.clearButtons(id,q.message);
+      if(arg==='more' || arg==='first')return this.participantPicker(id,e,arg==='more');
+      if(!/^(?:[1-9]|10)$/.test(arg))return this.participantPicker(id,e);
+      session.response.participants=e.askParticipantCount ? Number(arg):1;
+      return this.afterIdentity(id,e,session);
+    }
     if (required && !can(e, id, required)) return this.send(id, 'The organiser has not enabled this option for guests.');
     if (action === 'v') { this.session(id); await this.home(id, 'Use the event buttons below.'); return this.card(id, e); }
     if (action === 'details') return this.card(id, e, false);
@@ -513,8 +532,10 @@ export class Bot {
       return this.send(id, 'Guest options — tap to enable or disable. Changes apply immediately to guests, including old buttons.', keyboard(...this.permissionKeyboard(e, `toggle:${eid}`), ...(this.appUrl ? [[this.miniButton('🗓 Deadline & invitation details', `?event=${eid}`)]] : []), [button('Back to organiser tools', `h:${eid}`)]));
     }
     if (action === 'a') {
-      const rows = guests(e).map(g => `${g.name} — ${g.status === 'yes' && !confirmed(e, g) ? '⏳ Awaiting approval' : labels[g.status]}\nPeople: ${g.status === 'yes' ? participantCount(e, g) : 'Not attending'}\nPhone: ${g.phone || 'Not shared'}\n${(g.answers || []).map(a => `${a.question}: ${a.answer || 'Skipped'}`).join('\n')}\nComment: ${g.comment || 'None'}`);
-      await this.long(id, `Private organiser responses — ${e.title}\n\n${rows.join('\n\n') || 'No guests yet.'}`, keyboard([button('Back to organiser tools', `h:${eid}`)]));
+      const counts=responseCounts(e),accepted=guests(e).filter(g=>g.status==='yes');
+      const rows = guests(e).map(g => `${g.name} — ${g.status === 'yes' && !confirmed(e, g) ? g.approval==='pending' ? 'Awaiting approval':'Awaiting payment' : labels[g.status]}${g.status==='yes'?' · '+participantCount(e,g)+' people':''}${g.phone?'\nPhone: '+g.phone:''}${(g.answers || []).map(a=>'\n'+a.question+': '+(a.answer || 'Skipped')).join('')}${g.comment?'\n'+g.comment:''}`);
+      const unopened=Object.values(e.invitees || {}).filter(g=>!g.claimedBy).map(g=>g.name+' — Not opened');
+      await this.long(id, `${e.title}\nAccepted: ${accepted.length} responses · ${accepted.reduce((sum,g)=>sum+participantCount(e,g),0)} people\nConfirmed: ${counts.participants} people · Approval: ${counts.pending} · Payment: ${counts.awaitingPayment}\nMaybe: ${counts.maybe} · Rejected: ${counts.no} · Unanswered: ${counts.later+unopened.length}\n\n${[...rows,...unopened].join('\n\n') || 'No guests yet.'}`, keyboard([button('Back to organiser tools', `h:${eid}`)]));
       if(['bank','link'].includes(paymentMethod(e)))for(const [uid,g] of Object.entries(e.guests)){
         if(g.payment?.status==='reported')await this.send(id,g.name+' — payment reported',keyboard([button('Confirm received',`manual-confirm:${e.id}:${uid}`),button('Clear report',`manual-clear:${e.id}:${uid}`)]));
         if(g.payment?.status==='paid')await this.send(id,g.name+' — payment confirmed',keyboard([button('Clear payment record',`manual-clear:${e.id}:${uid}`)]));

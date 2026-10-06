@@ -19,7 +19,8 @@ Built for sports clubs, friends, community organisers and volunteer groups, XEve
 | Telegram Mini App | Create and edit events with mobile date and time pickers. |
 | Local timezones | Save your timezone and view times locally, with daylight-saving validation. |
 | Flexible schedules | Set a start, duration or finish time, and a response deadline. |
-| Group attendance | Organisers can ask accepted guests how many people are attending, including themselves. Otherwise each response counts as one person. |
+| Group attendance | Choose 1–5 people with buttons, or tap More for 6–10. New responses allow a maximum of 10 people per ticket. Otherwise each response counts as one person. |
+| Organiser guest list | View accepted response and people totals, distinguish confirmed attendance from approval/payment requests, and filter accepted, pending, maybe, rejected and unanswered guests. |
 | Guest information | Collect names, optional phone numbers, comments and custom question answers. |
 | Individual request approval | Approve or reject each acceptance request separately before issuing an invitation ticket. |
 | Location for approved ticket holders only | Enable approval and location privacy to withhold the address and private invitation details until the organiser approves the guest. |

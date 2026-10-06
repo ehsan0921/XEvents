@@ -66,6 +66,7 @@ export function publicEvent(e, id, username) {
   return {
     invitationMode:invitationMode(e),guestName:e.owner!==id ? e.guests[id]?.name || null : null,
     askPhone:asksPhone(e),askComments:asksComments(e),
+    ...(e.owner===id ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,approval:g.approval || null,confirmed:confirmed(e,g),participants:g.status==='yes'?participantCount(e,g):0,paymentStatus:g.payment?.status || null})),...Object.values(e.invitees || {}).filter(g=>!g.claimedBy).map(g=>({id:null,name:g.name,status:'unopened',participants:0,confirmed:false}))]} : {}),
     ...(e.owner===id ? {questions:e.questions || [],invitees:Object.entries(e.invitees || {}).map(([token,g])=>({name:g.name,claimed:!!g.claimedBy,status:g.claimedBy ? e.guests[g.claimedBy]?.status : null,url:namedLink(e,token,username)}))} : {}),
     id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,

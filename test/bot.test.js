@@ -74,7 +74,7 @@ test('optional group size validates whole numbers and separates people from resp
   assert.equal(e.askParticipantCount,true);
   await f.msg(2, `/start e_${e.id}`); await f.cb(2, `r:${e.id}:yes`); await f.msg(2,'Group organiser');
   assert.equal(f.store.data.sessions[2].step,'participants');
-  for (const value of ['0','-1','1.5','10001','abc','/skip']) {
+  for (const value of ['0','-1','1.5','11','10001','abc','/skip']) {
     await f.msg(2,value);
     assert.equal(f.store.data.sessions[2].step,'participants');
     assert.equal(e.guests[2].status,'later');

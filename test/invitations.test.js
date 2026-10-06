@@ -30,6 +30,21 @@ test('completed message buttons clear, notifications deliver, and old request ve
   await press(2,`r:${f.e.id}:yes:3`,13);assert.equal(f.e.guests[2].ticket,ticket);assert.equal(f.e.guests[2].approval,'approved');
   await press(2,`r:${f.e.id}:no:1`,14);assert.equal(f.e.guests[2].status,'yes');
 });
+
+test('group-size buttons show 1–5 then 6–10, reject excess and expose roster only to the organiser',async()=>{
+  const f=fixture('named');Object.assign(f.e,{askPhone:false,askComments:false,askParticipantCount:true},invitationSettings({invitationMode:'named',guestNames:'Alex\nSam'},f.e));
+  await f.msg(2,`/start i_${f.e.id}_${Object.keys(f.e.invitees)[0]}`);await f.cb(2,`r:${f.e.id}:yes`);
+  const sizes=()=>f.calls.at(-1).reply_markup.inline_keyboard[0].map(b=>b.text);
+  assert.deepEqual(sizes(),['1','2','3','4','5']);assert.ok(f.calls.at(-1).text.length<70);
+  await f.cb(2,`size:${f.e.id}:more`);assert.deepEqual(sizes(),['6','7','8','9','10']);
+  await f.cb(2,`size:${f.e.id}:11`);assert.equal(f.data.sessions[2].step,'participants');
+  await f.cb(2,`size:${f.e.id}:10`);assert.equal(f.e.guests[2].participants,10);assert.equal(f.data.sessions[2],undefined);
+  await f.cb(2,`size:${f.e.id}:2`);assert.equal(f.e.guests[2].participants,10);
+  const owner=publicEvent(f.e,1,'ExampleBot');assert.equal(owner.guestRoster.length,2);assert.equal(owner.guestRoster[0].participants,10);assert.equal(owner.guestRoster[1].status,'unopened');
+  assert.equal(publicEvent(f.e,2,'ExampleBot').guestRoster,undefined);
+  await f.msg(1,`/start manage_${f.e.id}`);assert.ok(f.calls.some(c=>c.chat_id===1 && c.text?.includes('Accepted: 1 responses · 10 people')));
+  f.calls.length=0;await f.msg(2,`/start manage_${f.e.id}`);assert.ok(!f.calls.some(c=>c.text?.includes('Sam')));
+});
 test('personal invitation links preserve organiser names, bind to one account and skip the name prompt',async()=>{
   const f=fixture('named');Object.assign(f.e,{askPhone:true,askComments:true},invitationSettings({invitationMode:'named',guestNames:'Alex Smith\nSam Jones'},f.e));
   const token=Object.keys(f.e.invitees)[0],second=Object.keys(f.e.invitees)[1];

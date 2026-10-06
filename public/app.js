@@ -8,6 +8,7 @@ const compactPicker = picker || deadlinePicker;
 const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 let state = { events: [], preference: {} }, activeEvent = null, createdEvent = null, previewSequence = 0;
 let requestId = crypto.randomUUID();
+let formReady=false;
 function priceLabel(e){if(['bank','link'].includes(e.paymentMethod))return 'Paid · '+e.displayPrice;return e.starPrice ? '⭐ '+e.starPrice+' Stars '+(e.starPricing==='person'?'per person':'per group') : 'Free';}
 function priceEstimate(e){const currency=state.preference.currency || state.localCurrency;const rate=state.pricing?.rates?.[currency];return e.starPrice && rate ? '≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code'}).format(e.starPrice*rate)+' · estimated organiser reward; guest purchase cost varies' : '';}
 function priceTag(e){return element('span',priceLabel(e),'tag');}
@@ -277,6 +278,7 @@ async function loadBannerPreview(id,generation){
   }catch(error){if(generation===bannerLoadGeneration)window.reportAppError?.(error,'Banner preview');}
 }
 function setupForm(event = null) {
+  formReady=true;
   activeEvent = event; createdEvent = null; requestId = crypto.randomUUID();
   $('event-form').reset(); $('event-form').hidden = false; $('success').hidden = true; $('form-error').hidden = true;
   $('stars-panel').hidden = compactPicker;
@@ -361,12 +363,14 @@ async function refresh() {
   $('profile-photo-remove').hidden=!state.preference.hasPhoto;
   renderEvents();renderHome(); return data;
 }
+let exploreSequence=0;
 async function loadExplore() {
+  const sequence=++exploreSequence,zone=selectedZone();
   $('explore-refresh').disabled=true; $('explore-error').hidden=true;
-  $('explore-zone').textContent='Public events in '+selectedZone().replaceAll('_',' ');
+  $('explore-zone').textContent='Public events in '+zone.replaceAll('_',' ');
   const list=$('explore-list');list.replaceChildren(element('p','Finding public events…','muted'));
   try {
-    const result=await api('explore?timezone='+encodeURIComponent(selectedZone()));list.replaceChildren();
+    const result=await api('explore?timezone='+encodeURIComponent(zone));if(sequence!==exploreSequence)return;list.replaceChildren();
     if(!result.events.length) list.append(element('div','No public upcoming events in your timezone yet.','empty'));
     for(const event of result.events) {
       const card=element('article','','event-card');
@@ -378,8 +382,8 @@ async function loadExplore() {
       card.append(action('Open invitation in Telegram',()=>openTelegram(event.inviteUrl),'primary'));list.append(card);
     }
     filterExplore();
-  } catch(error) {list.replaceChildren();$('explore-error').textContent=error.message;$('explore-error').hidden=false;}
-  finally {$('explore-refresh').disabled=false;}
+  } catch(error) {if(sequence===exploreSequence){list.replaceChildren();$('explore-error').textContent=error.message;$('explore-error').hidden=false;}}
+  finally {if(sequence===exploreSequence)$('explore-refresh').disabled=false;}
 }
 $('explore-refresh').onclick=loadExplore;
 function filterExplore(){const text=$('explore-search').value.trim().toLowerCase();let count=0;for(const card of $('explore-list').children)if(card.dataset.searchText!==undefined){card.hidden=!card.dataset.searchText.includes(text);if(!card.hidden)count++;}$('explore-zone').textContent='Public events in '+selectedZone().replaceAll('_',' ')+(text ? ' · '+count+' matches':'');}
@@ -431,10 +435,11 @@ $('owner-pricing-form').onsubmit=async event=>{
     await refresh();adminData.pricing=state.pricing;renderEvents();$('owner-pricing-status').textContent='Saved. New events use this default; current event prices are unchanged.';
   }catch(error){$('owner-pricing-status').textContent=error.message;}finally{$('save-owner-pricing').disabled=false;}
 };
-for (const b of document.querySelectorAll('[data-tab]')) b.onclick = () => { notice(''); b.dataset.tab === 'create' ? setupForm() : go(b.dataset.tab); };
+for (const b of document.querySelectorAll('[data-tab]')) b.onclick = () => { notice(''); b.dataset.tab === 'create' && (!formReady || $('event-form').hidden) ? setupForm() : go(b.dataset.tab); };
+$('home-brand').onclick=event=>{event.preventDefault();go('home');};
 $('hero-create').onclick = () => setupForm();
 $('banner').onchange = () => { ++bannerLoadGeneration; if (bannerPreviewUrl) URL.revokeObjectURL(bannerPreviewUrl); const file=$('banner').files[0]; $('banner-preview').hidden=!file; if (file) { bannerPreviewUrl=URL.createObjectURL(file); $('banner-preview').src=bannerPreviewUrl; } };
-$('cancel-edit').onclick = () => go('events');
+$('cancel-edit').onclick = () => {formReady=false;go('events');};
 $('refresh').onclick = async () => { $('refresh').disabled = true; try { await refresh(); notice(''); } catch (e) { notice(e.message); } finally { $('refresh').disabled = false; } };
 for (const id of ['date', 'time', 'event-zone']) $(id).addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(preview, 180); });
 for (const [search, select] of [['event-zone-search', 'event-zone'], ['local-zone-search', 'local-zone']]) $(search).oninput = () => options(select, $(select).value, $(search).value);
@@ -519,12 +524,11 @@ $('bot-icon-reset').onclick=async()=>{
   $('bot-icon-reset').disabled=true;
   try{const r=await fetch('/api/branding/icon',{method:'DELETE',headers:{Authorization:'tma '+initData}});if(!r.ok)throw Error('Could not reset icon.');for(const id of ['home-bot-icon','bot-icon-preview'])$(id).hidden=true;$('bot-icon-fallback').hidden=false;await loadBotIcon();$('bot-icon-status').textContent='Using the Telegram bot photo.';}catch(error){$('bot-icon-status').textContent=error.message;}finally{$('bot-icon-reset').disabled=false;}
 };
-$('profile-events').onclick=()=>go('events');
 $('profile-photo-form').onsubmit=async event=>{
   event.preventDefault();const button=$('profile-photo-save');button.disabled=true;
-  try{const file=$('profile-photo').files[0];if(!file || file.size>5*1024*1024 || !['image/jpeg','image/png','image/webp'].includes(file.type))throw Error('Choose JPG, PNG or WebP under 5 MB.');const form=new FormData();form.set('photo',file);const r=await fetch('/api/profile/photo',{method:'POST',headers:{Authorization:'tma '+initData},body:form});const data=await r.json();if(!r.ok)throw Error(data.error || 'Could not save photo.');await refresh();await loadProfilePhoto();$('profile-photo').value='';notice('✓ Profile photo saved.');}catch(error){notice(error.message);}finally{button.disabled=false;}
+  try{const file=$('profile-photo').files[0];if(!file || file.size>5*1024*1024 || !['image/jpeg','image/png','image/webp'].includes(file.type))throw Error('Choose JPG, PNG or WebP under 5 MB.');const form=new FormData();form.set('photo',file);const r=await fetch('/api/profile/photo',{method:'POST',headers:{Authorization:'tma '+initData},body:form});const data=await r.json();if(!r.ok)throw Error(data.error || 'Could not save photo.');state.preference.hasPhoto=true;$('profile-photo-remove').hidden=false;await loadProfilePhoto();$('profile-photo').value='';$('profile-photo-status').textContent='✓ Profile photo saved.';}catch(error){$('profile-photo-status').textContent=error.message;}finally{button.disabled=false;}
 };
-$('profile-photo-remove').onclick=async()=>{const button=$('profile-photo-remove');button.disabled=true;try{const r=await fetch('/api/profile/photo',{method:'DELETE',headers:{Authorization:'tma '+initData}});if(!r.ok)throw Error('Could not remove photo.');await refresh();await loadProfilePhoto();notice('Photo removed.');}catch(error){notice(error.message);}finally{button.disabled=false;}};
+$('profile-photo-remove').onclick=async()=>{const button=$('profile-photo-remove');button.disabled=true;try{const r=await fetch('/api/profile/photo',{method:'DELETE',headers:{Authorization:'tma '+initData}});if(!r.ok)throw Error('Could not remove photo.');state.preference.hasPhoto=false;button.hidden=true;await loadProfilePhoto();$('profile-photo-status').textContent='Photo removed.';}catch(error){$('profile-photo-status').textContent=error.message;}finally{button.disabled=false;}};
 $('another-event').onclick = () => go('events');
 if (!initData) {
   notice('This launch did not include your Telegram login. Reopen using App in the bot menu or the App button in a message.');

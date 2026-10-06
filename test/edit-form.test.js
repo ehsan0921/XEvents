@@ -31,5 +31,21 @@ test('editing fetches fresh details, fills names/questions and previews the exis
   assert.equal(ids.get('questions').value,'Diet?\nTransport?');assert.equal(ids.get('guest-names').value,'Alex\nSam');
   assert.equal(ids.get('event-details').hidden,false);assert.equal(ids.get('banner-preview').hidden,false);
   assert.match(ids.get('banner-preview').src,/^blob:/);assert.equal(ids.get('payment-terms').validation,'');
+  // Switching footer tabs must preserve a partly edited event.
+  ids.get('title').value='Unfinished event edit';
+  tabs.find(b=>b.dataset.tab==='settings').onclick();
+  tabs.find(b=>b.dataset.tab==='create').onclick();
+  assert.equal(ids.get('title').value,'Unfinished event edit');
+  assert.equal(ids.get('questions').value,'Diet?\nTransport?');
+  // Updating the photo must not overwrite text that has not been saved yet.
+  ids.get('profile-name').value='Unsaved profile name';ids.get('profile-phone').value='+61 400 000 000';
+  const bootstrapCalls=paths.filter(path=>path==='/api/bootstrap').length;
+  await ids.get('profile-photo-remove').onclick();
+  assert.equal(ids.get('profile-name').value,'Unsaved profile name');
+  assert.equal(ids.get('profile-phone').value,'+61 400 000 000');
+  assert.equal(paths.filter(path=>path==='/api/bootstrap').length,bootstrapCalls);
+  assert.equal(ids.has('profile-events'),false);
+  let prevented=false;ids.get('home-brand').onclick({preventDefault(){prevented=true;}});
+  assert.equal(prevented,true);assert.equal(ids.get('home-view').hidden,false);
   URL.revokeObjectURL(ids.get('banner-preview').src);
 });

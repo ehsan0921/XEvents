@@ -163,6 +163,8 @@ npx wrangler secret put SUPER_ADMIN_ID
 
 Administrator access is disabled when this secret is absent. Requests are checked against Telegram’s verified identity, not a username or a client-provided role.
 
+`SUPER_ADMIN_ID` is listed blank in `.env.example` and `.dev.vars.example`; no personal admin ID is included in the public source. For local Worker development, copy `.dev.vars.example` to `.dev.vars` and enter your own values. `.dev.vars` is ignored by Git. Production reads the Cloudflare secret, so editing a sample file does not change the deployed administrator.
+
 ```sh
 npx wrangler d1 migrations apply xevents --remote
 npm run deploy

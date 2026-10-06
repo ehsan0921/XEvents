@@ -280,6 +280,14 @@ try {
   assert.equal((await mf.dispatchFetch('https://test/api/profile/photo',{headers:{Authorization:'tma '+initData(123)}})).status,200);
   assert.equal((await mf.dispatchFetch('https://test/api/profile/photo',{headers:{Authorization:'tma '+initData(789)}})).status,404);
   assert.equal((await mf.dispatchFetch('https://test/api/profile/photo',{method:'DELETE',headers:{Authorization:'tma '+initData(123)}})).status,200);
+  const iconUpload=uid=>mf.dispatchFetch('https://test/api/branding/icon',{method:'POST',headers:{Authorization:'tma '+initData(uid),'Content-Type':photoRequest.headers.get('Content-Type')},body:photoBytes});
+  assert.equal((await iconUpload(123)).status,403);
+  assert.equal((await iconUpload(999001)).status,200);
+  assert.equal((await api('bootstrap')).data.branding.hasIcon,true);
+  assert.equal((await mf.dispatchFetch('https://test/api/branding/icon',{headers:{Authorization:'tma '+initData(789)}})).status,200);
+  assert.equal((await mf.dispatchFetch('https://test/api/branding/icon',{method:'DELETE',headers:{Authorization:'tma '+initData(123)}})).status,403);
+  assert.equal((await mf.dispatchFetch('https://test/api/branding/icon',{method:'DELETE',headers:{Authorization:'tma '+initData(999001)}})).status,200);
+  assert.equal((await api('bootstrap')).data.branding.hasIcon,false);
   assert.equal((await api('bootstrap')).data.preference.hasPhoto,false);
   await callback(6000,`u:${galleryId}`);
   await message(6001,undefined,123,{document:{file_id:'image-document',file_name:'photo.png',mime_type:'image/png',file_size:4,thumbnail:{file_id:'image-thumb'}}});

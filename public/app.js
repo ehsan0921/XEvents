@@ -32,6 +32,7 @@ let listFilter = 'all';
 let adminData = null, adminMode = 'events';
 let bannerPreviewUrl,bannerLoadGeneration=0;
 let profilePhotoUrl,profilePhotoGeneration=0;
+let botIconUrl,botIconGeneration=0;
 const bannerUrls = new Map();
 const initData = tg?.initData || '';
 document.querySelector('[data-tab="pending"]').hidden = true;
@@ -66,7 +67,6 @@ function go(tab) {
   if(tab==='home'){renderHome();loadHomeSuggestions();}
   if (tab === 'explore') loadExplore();
   if (tab === 'admin') loadAdmin();
-  if(tab==='settings')loadProfilePhoto();
   for (const button of document.querySelectorAll('[data-tab]')) {
     if (button.dataset.tab === (tab==='admin'?'settings':tab==='pending'?'events':tab)) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
@@ -349,6 +349,10 @@ async function refresh() {
   document.querySelector('[data-tab="pending"]').hidden = !hasPending;
   if (!hasPending && listFilter === 'pending') go('events');
   $('admin-tab').hidden = !data.user.isSuperAdmin;
+  const profileName=state.preference.profileName || data.user.firstName;
+  $('header-name').textContent=profileName;
+  $('header-initial').textContent=profileName.slice(0,1).toUpperCase();
+  loadProfilePhoto();loadBotIcon();
   $('greeting').textContent = `LET’S MAKE PLANS, ${(state.preference.profileName || data.user.firstName).toUpperCase()}`;
   const currencySelect=$('display-currency');currencySelect.replaceChildren(element('option','Automatic from timezone'));currencySelect.firstChild.value='';for(const code of state.currencyCodes || []){const option=element('option',code);option.value=code;currencySelect.append(option);}currencySelect.value=state.preference.currency || '';
   options('local-zone', selectedZone()); $('device-zone').textContent = `Detected on this device: ${deviceZone}`;
@@ -490,11 +494,31 @@ $('event-form').onsubmit = async event => {
 };
 $('share-event').onclick = () => createdEvent && share(createdEvent);
 async function loadProfilePhoto(){
-  const generation=++profilePhotoGeneration,img=$('profile-photo-preview');img.hidden=true;
+  const generation=++profilePhotoGeneration,img=$('profile-photo-preview'),avatar=$('header-avatar');img.hidden=true;avatar.hidden=true;$('header-initial').hidden=false;
   if(profilePhotoUrl){URL.revokeObjectURL(profilePhotoUrl);profilePhotoUrl=null;}
   if(!state.preference.hasPhoto)return;
-  try{const r=await fetch('/api/profile/photo',{headers:{Authorization:'tma '+initData}});if(!r.ok)throw Error('Could not load your profile photo.');const blob=await r.blob();if(generation!==profilePhotoGeneration)return;profilePhotoUrl=URL.createObjectURL(blob);img.src=profilePhotoUrl;img.hidden=false;}catch(error){if(generation===profilePhotoGeneration)notice(error.message);}
+  try{const r=await fetch('/api/profile/photo',{headers:{Authorization:'tma '+initData}});if(!r.ok)throw Error('Could not load your profile photo.');const blob=await r.blob();if(generation!==profilePhotoGeneration)return;profilePhotoUrl=URL.createObjectURL(blob);img.src=avatar.src=profilePhotoUrl;img.hidden=avatar.hidden=false;$('header-initial').hidden=true;}catch(error){if(generation===profilePhotoGeneration)notice(error.message);}
 }
+$('header-profile').onclick=()=>go('settings');
+async function loadBotIcon(){
+  const generation=++botIconGeneration;
+  try{
+    const r=await fetch('/api/branding/icon',{headers:{Authorization:'tma '+initData}});
+    if(!r.ok){if(r.status!==404)throw Error('Could not load the bot icon.');return;}
+    const blob=await r.blob();if(generation!==botIconGeneration)return;
+    if(botIconUrl)URL.revokeObjectURL(botIconUrl);botIconUrl=URL.createObjectURL(blob);
+    for(const id of ['home-bot-icon','bot-icon-preview']){$(id).src=botIconUrl;$(id).hidden=false;}
+    $('bot-icon-fallback').hidden=true;
+  }catch(error){if(generation===botIconGeneration)notice(error.message);}
+}
+$('bot-icon-form').onsubmit=async event=>{
+  event.preventDefault();$('bot-icon-save').disabled=true;
+  try{const file=$('bot-icon-file').files[0];if(!file || file.size>5*1024*1024 || !['image/jpeg','image/png','image/webp'].includes(file.type))throw Error('Choose JPG, PNG or WebP under 5 MB.');const body=new FormData();body.set('photo',file);const r=await fetch('/api/branding/icon',{method:'POST',headers:{Authorization:'tma '+initData},body});const result=await r.json();if(!r.ok)throw Error(result.error || 'Could not save icon.');await loadBotIcon();$('bot-icon-file').value='';$('bot-icon-status').textContent='Bot icon saved.';}catch(error){$('bot-icon-status').textContent=error.message;}finally{$('bot-icon-save').disabled=false;}
+};
+$('bot-icon-reset').onclick=async()=>{
+  $('bot-icon-reset').disabled=true;
+  try{const r=await fetch('/api/branding/icon',{method:'DELETE',headers:{Authorization:'tma '+initData}});if(!r.ok)throw Error('Could not reset icon.');for(const id of ['home-bot-icon','bot-icon-preview'])$(id).hidden=true;$('bot-icon-fallback').hidden=false;await loadBotIcon();$('bot-icon-status').textContent='Using the Telegram bot photo.';}catch(error){$('bot-icon-status').textContent=error.message;}finally{$('bot-icon-reset').disabled=false;}
+};
 $('profile-events').onclick=()=>go('events');
 $('profile-photo-form').onsubmit=async event=>{
   event.preventDefault();const button=$('profile-photo-save');button.disabled=true;

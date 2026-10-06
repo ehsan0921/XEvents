@@ -50,3 +50,6 @@ fieldset.panel{min-width:0}fieldset legend{font-size:18px;font-weight:700;letter
 .price-input-row input { flex:1 1 110px; width:110px; min-width:0; }
 .price-input-row output { flex:1 1 140px; color:var(--accent); font-weight:650; font-size:14px; }
 #event-price-tag { display:inline-block; margin-bottom:12px; }
+
+.header-profile{display:flex;align-items:center;gap:8px;background:transparent;border:0;color:inherit;padding:4px;max-width:45%;font:inherit}.header-profile img,.avatar-initial{width:36px;height:36px;flex-shrink:0;border-radius:50%;object-fit:cover}.avatar-initial{display:grid;place-items:center;background:var(--accent,#83d6b4);color:#16362a}.header-profile #header-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.home-bot-icon{position:absolute;right:20px;bottom:24px;width:84px;height:84px;object-fit:cover;border-radius:22px}.bot-icon-preview{width:84px;height:84px;object-fit:cover;border-radius:18px;margin-bottom:12px}[hidden]{display:none!important}
+@media(max-width:420px){.home-bot-icon{width:64px;height:64px;right:16px;bottom:28px}.brand a{font-size:18px}.wordmark-note{font-size:7px;letter-spacing:1px}}

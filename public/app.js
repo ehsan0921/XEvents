@@ -99,6 +99,44 @@ async function openGuestList(id) {
   $('guest-list-manage').onclick=()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=manage_'+e.id);
   $('guest-list-close').onclick=()=>$('guest-list-dialog').close();render('all');$('guest-list-dialog').showModal();
 }
+async function openTicket(id) {
+  const {ticket}=await api(`events/${id}/ticket`,{});
+  $('ticket-title').textContent=ticket.title;
+  $('ticket-name').textContent=`${ticket.name} · ${ticket.participants} ${ticket.participants===1?'person':'people'}`;
+  $('ticket-image').src=ticket.image;$('ticket-code').textContent=ticket.code;
+  $('ticket-message').textContent=ticket.checkedInAt?'Already checked in.':'Show this QR code at the event.';
+  $('ticket-copy').onclick=async()=>{try{await navigator.clipboard.writeText(ticket.code);$('ticket-message').textContent='Ticket code copied.';}catch{$('ticket-message').textContent='Select the code to copy it.';}};
+  $('ticket-close').onclick=()=>$('ticket-dialog').close();$('ticket-dialog').showModal();
+}
+let checkinGeneration=0;
+async function openCheckin(id) {
+  const {event}=await api(`events/${id}`);if(!event.isOwner)return;
+  const generation=++checkinGeneration;let busy=false,verifiedCode=null;
+  const input=$('checkin-code'),result=$('checkin-result'),confirm=$('checkin-confirm');
+  input.disabled=false;$('checkin-check').disabled=false;$('checkin-scan').disabled=false;
+  $('checkin-event').textContent=event.title;input.value='';result.textContent='';confirm.hidden=true;
+  input.oninput=()=>{verifiedCode=null;confirm.hidden=true;result.textContent='';};
+  const check=async(mark=false)=>{
+    if(busy)return;busy=true;
+    const code=input.value.trim();confirm.hidden=true;$('checkin-check').disabled=true;$('checkin-scan').disabled=true;input.disabled=true;
+    try{
+      const {ticket}=await api(`events/${id}/ticket-check`,{code,checkIn:mark});
+      if(generation!==checkinGeneration || !$('checkin-dialog').open)return;
+      result.textContent=ticket.valid ? `${ticket.alreadyCheckedIn?'⚠ Already checked in':mark?'✓ Checked in':'✓ Valid ticket'}\n${ticket.name} · ${ticket.participants} ${ticket.participants===1?'person':'people'}${ticket.checkedInAt?'\n'+format({startsAt:ticket.checkedInAt}):''}` : '✕ '+ticket.reason;
+      verifiedCode=ticket.valid && !ticket.checkedInAt ? code:null;confirm.hidden=!verifiedCode;
+      result.className=ticket.valid ? '' : 'error';
+    }catch(error){if(generation===checkinGeneration)result.textContent=error.message;}
+    finally{busy=false;if(generation===checkinGeneration){$('checkin-check').disabled=false;$('checkin-scan').disabled=false;input.disabled=false;}}
+  };
+  $('checkin-check').onclick=()=>check();confirm.onclick=()=>{if(verifiedCode && input.value.trim()===verifiedCode)return check(true);};
+  $('checkin-scan').onclick=()=>{
+    if(!tg?.showScanQrPopup || (tg.isVersionAtLeast && !tg.isVersionAtLeast('6.4'))){result.textContent='QR scanning is unavailable here. Enter the ticket code instead.';return;}
+    try{tg.showScanQrPopup({text:'Scan the guest’s ticket QR.'},text=>{input.value=text;void check();return true;});}catch{result.textContent='Could not open the scanner. Enter the ticket code instead.';}
+  };
+  $('checkin-close').onclick=()=>$('checkin-dialog').close();
+  $('checkin-dialog').onclose=()=>{checkinGeneration++;try{tg?.closeScanQrPopup?.();}catch{}};
+  $('checkin-dialog').showModal();
+}
 const {openGallery,showQr}=setupGallery({$,api,element,action,go,notice,openTelegram,initData});
 function confirmAction(message, operation) {
   const dialog = $('confirm-dialog');
@@ -147,6 +185,8 @@ function renderEvents() {
     const actions = element('div', '', 'event-actions'); actions.append(action('Open event in chat ↗', () => openTelegram(e.inviteUrl), 'primary'));
     if (e.isOwner && !e.cancelled) actions.append(action('Edit event', () => editEvent(e.id)));
     if(e.isOwner)actions.append(action('Guest list',()=>openGuestList(e.id)));
+    if(e.isOwner && !e.cancelled)actions.append(action('Scan tickets',()=>openCheckin(e.id)));
+    if(e.ticket)actions.append(action('Ticket QR',()=>openTicket(e.id)));
     if((e.starPrice || ['bank','link'].includes(e.paymentMethod)) && !e.isOwner && e.status==='yes' && e.approval==='approved' && e.paymentStatus!=='paid')actions.append(action(e.starPrice?'⭐ Pay with Stars':'Payment instructions',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=pay_'+e.id)));
     if(e.invitationMode==='named' && e.isOwner)actions.append(action('Guest invitations',()=>openNamedLinks(e)));else actions.append(action('Copy link', async () => { try { await navigator.clipboard.writeText(e.inviteUrl); notice('✓ Event link copied.'); } catch { notice('Could not copy the link. Use Share invite under the three-dot menu.'); } }));
     const more = document.createElement('details'); more.className = 'event-more';
@@ -431,6 +471,8 @@ if (!initData) {
     else if(query.get('invitations'))await openNamedLinks({id:query.get('invitations')});
     else if (query.get('gallery')) await openGallery(query.get('gallery'));
     else if (query.get('qr')) await showQr(query.get('qr'));
+    else if(query.get('ticket'))await openTicket(query.get('ticket'));
+    else if(query.get('checkin'))await openCheckin(query.get('checkin'));
     else if (query.get('event')) { const event = state.events.find(e => e.id === query.get('event')); if (event?.isOwner && !event.cancelled) await editEvent(event.id); }
   } catch (e) { window.reportAppError?.(e,'Loading planner');notice(e.message); $('event-list').replaceChildren(element('div', 'Could not load your events. Tap Refresh to try again.', 'empty')); }
 }

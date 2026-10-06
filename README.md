@@ -21,6 +21,7 @@ Built for sports clubs, friends, community organisers and volunteer groups, XEve
 | Flexible schedules | Set a start, duration or finish time, and a response deadline. |
 | Group attendance | Choose 1–5 people with buttons, or tap More for 6–10. New responses allow a maximum of 10 people per ticket. Otherwise each response counts as one person. |
 | Organiser guest list | View accepted response and people totals, distinguish confirmed attendance from approval/payment requests, and filter accepted, pending, maybe, rejected and unanswered guests. |
+| Ticket QR and check-in | Confirmed guests get a unique ticket code and QR. The organiser scans it in the Mini App or enters the code to verify current approval and payment, then check in the whole group. Repeat scans flag an existing check-in. Cancelled, revoked and finished tickets fail validation. QR codes contain no hosting URL. |
 | Guest information | Collect names, optional phone numbers, comments and custom question answers. |
 | Individual request approval | Approve or reject each acceptance request separately before issuing an invitation ticket. |
 | Location for approved ticket holders only | Enable approval and location privacy to withhold the address and private invitation details until the organiser approves the guest. |

@@ -1,4 +1,5 @@
 import {parseEventPayment,paymentMethod} from './event-payment.js';
+import {issueTicket,verifyTicket} from './tickets.js';
 import {readOnlinePricing} from './exchange.js';
 import {invitationMode,invitationSettings,namedLink} from './invitations.js';
 import { authenticate } from './mini-auth.js';
@@ -187,6 +188,13 @@ export async function miniApi(request, env) {
     if (path === '/api/preview') return respond(schedule(input));
     const value = await mutateState(env, async (data, bot) => {
       const id = user.id;
+      const ticketMatch=path.match(/^\/api\/events\/([a-f0-9]{16})\/(ticket|ticket-check)$/);
+      if(ticketMatch){
+        const e=data.events[ticketMatch[1]];
+        if(ticketMatch[2]==='ticket')return {ticket:issueTicket(e,id)};
+        if(input.checkIn!==undefined && typeof input.checkIn!=='boolean')throw new InputError('Invalid check-in request.');
+        return {ticket:verifyTicket(e,id,input.code,input.checkIn===true)};
+      }
       if (path === '/api/preferences') {
         if(input.currency!==undefined && input.currency!=='' && !currencyCodes.includes(input.currency))throw new InputError('Choose a supported display currency.');
         data.preferences[id] = { ...data.preferences[id], timezone: timezone(input.timezone) };

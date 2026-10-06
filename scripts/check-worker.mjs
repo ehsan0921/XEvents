@@ -235,6 +235,16 @@ try {
   const ticketId=ticketEvent.data.event.id;
   await message(5000,`/start e_${ticketId}`,456);await callback(5001,`book:${ticketId}`,456);await message(5002,'Ticket Guest',456);await message(5003,'/skip',456);await message(5004,'/skip',456);
   assert.equal((await api(`events/${ticketId}`,null,456)).data.event.approval,'pending');
+  assert.equal((await api(`events/${ticketId}/ticket`,{},456)).status,400);
+  await callback(5005,`approve:${ticketId}:456`);
+  const qrTicket=await api(`events/${ticketId}/ticket`,{},456);assert.equal(qrTicket.status,200);assert.match(qrTicket.data.ticket.image,/^data:image\/gif;base64,/);
+  const ticketCode=qrTicket.data.ticket.code;
+  assert.equal((await api(`events/${ticketId}/ticket-check`,{code:ticketCode},456)).status,400);
+  const validated=await api(`events/${ticketId}/ticket-check`,{code:`XE1:${ticketId}:${ticketCode}`});assert.equal(validated.data.ticket.valid,true);assert.equal(validated.data.ticket.checkedInAt,null);
+  const admitted=await api(`events/${ticketId}/ticket-check`,{code:ticketCode,checkIn:true});assert.equal(admitted.data.ticket.valid,true);assert.equal(admitted.data.ticket.alreadyCheckedIn,false);
+  const repeated=await api(`events/${ticketId}/ticket-check`,{code:ticketCode,checkIn:true});assert.equal(repeated.data.ticket.alreadyCheckedIn,true);assert.equal(repeated.data.ticket.checkedInAt,admitted.data.ticket.checkedInAt);
+  const checkedEvent=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(ticketId).first()).data);assert.equal(checkedEvent.checkIns[ticketCode].userId,456);
+  await api(`events/${ticketId}/cancel`,{confirm:true});assert.equal((await api(`events/${ticketId}/ticket-check`,{code:ticketCode})).data.ticket.valid,false);
   const namedInput={...ticketInput,title:'Named workflow',invitationMode:'named',guestNames:'Alex Smith\nSam Jones',requestId:'77777777-7777-7777-7777-777777777777'};
   const namedEvent=await api('events',namedInput);assert.equal(namedEvent.status,200);assert.equal(namedEvent.data.event.invitees.length,2);
   const namedId=namedEvent.data.event.id,personalUrl=namedEvent.data.event.invitees[0].url;

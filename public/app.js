@@ -62,12 +62,13 @@ function go(tab) {
   const target = tab === 'pending' ? 'events' : tab;
   if (tab === 'events' || tab === 'pending') { listFilter = tab === 'pending' ? 'pending' : 'all'; renderEvents(); }
   if (tab === 'admin' && !state.user?.isSuperAdmin) return;
-  for (const name of ['events', 'create', 'settings', 'admin', 'gallery', 'explore']) $(name + '-view').hidden = name !== target;
+  for (const name of ['home','events', 'create', 'settings', 'admin', 'gallery', 'explore']) $(name + '-view').hidden = name !== target;
+  if(tab==='home'){renderHome();loadHomeSuggestions();}
   if (tab === 'explore') loadExplore();
   if (tab === 'admin') loadAdmin();
   if(tab==='settings')loadProfilePhoto();
   for (const button of document.querySelectorAll('[data-tab]')) {
-    if (button.dataset.tab === tab) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
+    if (button.dataset.tab === (tab==='admin'?'settings':tab==='pending'?'events':tab)) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
   window.scrollTo(0, 0);
 }
@@ -154,10 +155,33 @@ function confirmAction(message, operation) {
     dialog.showModal(); $('confirm-back').focus();
   });
 }
+function renderHome(){
+  const now=Date.now(),events=state.events.filter(e=>!e.cancelled && (e.isOwner || ['yes','maybe'].includes(e.status)) && e.startsAt);
+  for(const [id,active] of [['home-ongoing',true],['home-upcoming',false]]){
+    const list=$(id);list.replaceChildren();
+    const entries=events.filter(e=>active ? Date.parse(e.startsAt)<=now && (e.endsAt ? Date.parse(e.endsAt)>now : dateInZone(e.startsAt,selectedZone())===dateInZone(now,selectedZone())) : Date.parse(e.startsAt)>now).sort((a,b)=>Date.parse(a.startsAt)-Date.parse(b.startsAt));
+    if(!entries.length)list.append(element('p',active?'No ongoing events.':'No upcoming events yet.','muted'));
+    for(const e of entries){const label=e.isOwner?'You’re hosting':e.status==='maybe'?'Maybe':e.approval==='pending'?'Awaiting approval':(e.starPrice || ['bank','link'].includes(e.paymentMethod)) && e.paymentStatus!=='paid'?'Awaiting payment':'You’re attending';const card=element('article','','event-card');card.append(priceTag(e),element('h3',e.title),element('p',format(e)),element('p',label,'small muted'));
+      if(active && !e.endsAt)card.append(element('p','Started today · finish time not set.','small muted'));
+      card.append(action('Open event in chat',()=>openTelegram(e.inviteUrl),'primary'));list.append(card);}
+  }
+}
+let homeSequence=0;
+async function loadHomeSuggestions(){
+  const sequence=++homeSequence,list=$('home-suggestions');list.replaceChildren(element('p','Finding future plans…','muted'));
+  try{
+    const data=await api('explore?timezone='+encodeURIComponent(selectedZone()));if(sequence!==homeSequence)return;
+    list.replaceChildren();const joined=new Set(state.events.map(e=>e.id));
+    const suggested=data.events.filter(e=>Date.parse(e.startsAt)>Date.now() && !e.responsesClosed && !joined.has(e.id)).slice(0,3);
+    for(const e of suggested){const card=element('article','','event-card');card.append(element('span','PUBLIC EVENT','tag'),priceTag(e),element('h3',e.title),element('p',format(e)),action('View event',()=>openTelegram(e.inviteUrl),'primary'));list.append(card);}
+    if(!suggested.length){list.append(element('p','No new public events in your timezone yet. Try planning one:','muted'));for(const title of ['A weekend walk','A sports meetup','Dinner with friends'])list.append(action(title,()=>{setupForm();$('title').value=title;}));}
+  }catch(error){if(sequence===homeSequence){list.replaceChildren(element('p',error.message,'small muted'));list.append(action('Try again',loadHomeSuggestions));}}
+}
+$('home-refresh').onclick=async()=>{try{await refresh();await loadHomeSuggestions();}catch(error){notice(error.message);}};
 function renderEvents() {
   $('zone-note').textContent = `Your local time · ${selectedZone().replaceAll('_', ' ')}`;
   const list = $('event-list'); list.replaceChildren();
-  document.querySelector('.section-heading h2').textContent = listFilter === 'pending' ? 'Pending invitations' : 'Your events';
+  $('events-heading').textContent = listFilter === 'pending' ? 'Pending invitations' : 'Your events';
   const events = [...state.events].filter(e => !e.cancelled && (e.isOwner || e.status !== 'no') && (listFilter !== 'pending' || (!e.isOwner && e.invitationMode!=='tickets' && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
   if (!events.length) { const empty = element('div', '', 'empty'); empty.append(element('strong', listFilter === 'pending' ? 'You’re all caught up.' : 'A calendar full of possibilities.'), element('span', listFilter === 'pending' ? 'No unanswered invitations.' : 'Create your first event, or open an invitation in the bot to join one.')); list.append(empty); }
   let lastGroup;
@@ -325,14 +349,13 @@ async function refresh() {
   document.querySelector('[data-tab="pending"]').hidden = !hasPending;
   if (!hasPending && listFilter === 'pending') go('events');
   $('admin-tab').hidden = !data.user.isSuperAdmin;
-  document.querySelector('.bottom-nav').classList.toggle('with-admin', data.user.isSuperAdmin);
   $('greeting').textContent = `LET’S MAKE PLANS, ${(state.preference.profileName || data.user.firstName).toUpperCase()}`;
   const currencySelect=$('display-currency');currencySelect.replaceChildren(element('option','Automatic from timezone'));currencySelect.firstChild.value='';for(const code of state.currencyCodes || []){const option=element('option',code);option.value=code;currencySelect.append(option);}currencySelect.value=state.preference.currency || '';
   options('local-zone', selectedZone()); $('device-zone').textContent = `Detected on this device: ${deviceZone}`;
   $('profile-name').value=state.preference.profileName || state.user?.firstName || '';
   $('profile-phone').value=state.preference.profilePhone || '';
   $('profile-photo-remove').hidden=!state.preference.hasPhoto;
-  renderEvents(); return data;
+  renderEvents();renderHome(); return data;
 }
 async function loadExplore() {
   $('explore-refresh').disabled=true; $('explore-error').hidden=true;
@@ -347,12 +370,16 @@ async function loadExplore() {
       card.append(element('span','PUBLIC','tag'),priceTag(event),element('h3',event.title),element('p','🗓 '+format(event)),element('p',event.description));
       if(priceEstimate(event))card.append(element('p',priceEstimate(event),'small muted'));
       if(event.responsesClosed)card.append(element('p','Responses are closed.','small muted'));
+      card.dataset.searchText=(event.title+' '+(event.description || '')).toLowerCase();
       card.append(action('Open invitation in Telegram',()=>openTelegram(event.inviteUrl),'primary'));list.append(card);
     }
+    filterExplore();
   } catch(error) {list.replaceChildren();$('explore-error').textContent=error.message;$('explore-error').hidden=false;}
   finally {$('explore-refresh').disabled=false;}
 }
 $('explore-refresh').onclick=loadExplore;
+function filterExplore(){const text=$('explore-search').value.trim().toLowerCase();let count=0;for(const card of $('explore-list').children)if(card.dataset.searchText!==undefined){card.hidden=!card.dataset.searchText.includes(text);if(!card.hidden)count++;}$('explore-zone').textContent='Public events in '+selectedZone().replaceAll('_',' ')+(text ? ' · '+count+' matches':'');}
+$('explore-search').oninput=filterExplore;
 async function loadAdmin() {
   $('admin-refresh').disabled = true; $('admin-error').hidden = true;
   try { adminData = await api('admin/overview');
@@ -480,6 +507,7 @@ if (!initData) {
   const empty=element('div','Your events are private. Use the authenticated App button to load them.','empty');
   empty.append(action('App',()=>{const url='https://t.me/XEvents_bot?start=app';if(tg?.openTelegramLink)tg.openTelegramLink(url);else window.open(url,'_blank','noopener');}));
   $('event-list').replaceChildren(empty);
+  $('home-view').hidden=true;$('events-view').hidden=false;
   $('save-event').disabled = true; $('save-zone').disabled = true; $('refresh').disabled = true;
   options('local-zone', deviceZone); options('event-zone', deviceZone); $('device-zone').textContent = `Detected on this device: ${deviceZone}`;
 } else {
@@ -493,5 +521,6 @@ if (!initData) {
     else if(query.get('ticket'))await openTicket(query.get('ticket'));
     else if(query.get('checkin'))await openCheckin(query.get('checkin'));
     else if (query.get('event')) { const event = state.events.find(e => e.id === query.get('event')); if (event?.isOwner && !event.cancelled) await editEvent(event.id); }
+    else go('home');
   } catch (e) { window.reportAppError?.(e,'Loading planner');notice(e.message); $('event-list').replaceChildren(element('div', 'Could not load your events. Tap Refresh to try again.', 'empty')); }
 }

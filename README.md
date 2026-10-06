@@ -21,7 +21,8 @@ Built for sports clubs, friends, community organisers and volunteer groups, XEve
 | Flexible schedules | Set a start, duration or finish time, and a response deadline. |
 | Group attendance | Choose 1–5 people with buttons, or tap More for 6–10. New responses allow a maximum of 10 people per ticket. Otherwise each response counts as one person. |
 | Organiser guest list | View accepted response and people totals, distinguish confirmed attendance from approval/payment requests, and filter accepted, pending, maybe, rejected and unanswered guests. |
-| Personal profile | Set a name, optional photo and private phone number, timezone and price-display currency. My events is available inside Profile. |
+| Home and navigation | Home shows ongoing and upcoming plans, plus future public events or ideas for your next event. Footer order: Home, Explore with search, Create, My events, Profile. |
+| Personal profile | Set a name, optional photo and private phone number, timezone and price-display currency. Super admin access appears inside Profile only for the configured administrator. |
 | File previews | Images uploaded as documents and videos show gallery previews. Telegram thumbnails load when available; supported image/video files provide a fallback preview. |
 | Ticket QR and check-in | Confirmed guests get a unique ticket code and QR. The organiser scans it in the Mini App or enters the code to verify current approval and payment, then check in the whole group. Repeat scans flag an existing check-in. Cancelled, revoked and finished tickets fail validation. QR codes contain no hosting URL. |
 | Guest information | Collect names, optional phone numbers, comments and custom question answers. |

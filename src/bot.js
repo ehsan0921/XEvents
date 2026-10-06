@@ -15,9 +15,10 @@ const keyboard = (...rows) => ({ inline_keyboard: rows });
 const paired = buttons => Array.from({ length: Math.ceil(buttons.length / 2) }, (_, index) => buttons.slice(index * 2, index * 2 + 2));
 const name = u => [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || 'Guest';
 const clean = (s, max = 1000) => typeof s === 'string' ? s.trim().slice(0, max) : '';
-const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name', app: '📱 Open planner', picker: '🗓 Pick date & time', pending: '⏳ Pending invitations' };
+const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name', app: 'App', picker: '🗓 Pick date & time', pending: '⏳ Pending invitations' };
 const reply = (...rows) => ({ keyboard: rows.map(row => row.map(text => typeof text === 'string' ? { text } : text)), resize_keyboard: true, is_persistent: true });
-const homeKeyboard = appUrl => reply([appUrl ? { text: '📱 Open app', web_app: { url: appUrl } } : '📱 Open app', menu.events]);
+// Reply-keyboard Web Apps omit signed initData. Use an inline launcher for authenticated access.
+const homeKeyboard = () => reply([menu.app, menu.events]);
 
 export class Bot {
   constructor(store, api, username, appUrl) { this.store = store; this.api = api; this.username = username; this.appUrl = appUrl; this.store.data.preferences ||= {}; }
@@ -164,7 +165,7 @@ export class Bot {
       if (canSeeLocation(e, id) && e.location) extras.push(e.location.length <= 256 ? { text: '📋 Copy address', copy_text: { text: e.location } } : button('📋 Copy address', `address:${e.id}`));
       if (this.appUrl && host && shareUploadLink(e, this.username)) extras.push(this.miniButton('Upload QR code', `?qr=${e.id}`));
     }
-    if (this.appUrl && host) extras.push(this.miniButton('📱 Open planner', `?event=${e.id}`));
+    if (this.appUrl && host) extras.push(this.miniButton('App', `?event=${e.id}`));
     if (host) extras.push(button('Delete event', `delete:${e.id}`));
     rows.push(...paired(extras));
     if(!rsvpOnly)rows.push([button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
@@ -200,13 +201,14 @@ export class Bot {
     if (m.chat.type !== 'private') return this.send(m.chat.id, `Please use me in a private chat: https://t.me/${this.username}`);
     let text = clean(m.text, 3000);
     if(text === '/start payments')text='/paysupport';
+    if(text === '/start app')text='/app';
     const manageLink=text.match(/^\/start(?:@\w+)? manage_([a-f0-9]{16})$/);
     if(manageLink){this.session(id);return this.callback({from:m.from,data:`a:${manageLink[1]}`});}
     const paymentLink=text.match(/^\/start pay_([a-f0-9]{16})$/);
     if(paymentLink) {const e=this.db.events[paymentLink[1]];return this.allowed(e,id) ? this.paymentInfo(id,e) : this.home(id,'Open your event invitation before paying.');}
     const current = this.db.sessions[id];
     const navigation = { [menu.new]: '/new', [menu.events]: '/events', [menu.help]: '/help', [menu.home]: '/start', [menu.cancel]: '/cancel', [menu.app]: '/app', [menu.picker]: '/picker', [menu.pending]: '/pending' };
-    if (text === '📱 Open app') text = '/app';
+    if (['📱 Open app','📱 Open planner','📱 Open XEvents planner'].includes(text)) text = '/app';
     if (navigation[text]) text = navigation[text];
     else if (current && text === menu.name && current.step === 'name') text = '/skip';
     else if (current && text === menu.skip && ['phone', 'description', 'questions', 'question', 'comment', 'banner'].includes(current.step)) text = '/skip';
@@ -225,7 +227,10 @@ export class Bot {
       return;
     }
     if (command === '/pending') { this.session(id); return this.pendingInvitations(id); }
-    if (command === '/app' && this.appUrl) return this.send(id, 'Open your planner to create events, pick dates and times, and set your local timezone.', keyboard([this.miniButton('📱 Open XEvents planner')]));
+    if (command === '/app' && this.appUrl) {
+      await this.api('setChatMenuButton',{chat_id:id,menu_button:{type:'web_app',text:'App',web_app:{url:this.appUrl}}}).catch(()=>{});
+      return this.send(id, 'Your events and settings.', keyboard([this.miniButton('App')]));
+    }
     if (command === '/picker' && this.appUrl) {
       if (!current || !(current.step === 'when' || (current.step === 'edit' && current.field === 'when'))) return this.home(id, 'Start creating an event or edit an event’s time first.');
       current.token ||= randomBytes(12).toString('hex');
@@ -233,7 +238,7 @@ export class Bot {
     }
     if (command === '/cancel') { this.session(id); return this.home(id, 'Input cancelled. Choose what you’d like to do next.'); }
     if (command === '/start') {
-      if (this.appUrl) await this.api('setChatMenuButton', { chat_id: id, menu_button: { type: 'web_app', text: 'Planner', web_app: { url: this.appUrl } } });
+      if (this.appUrl) await this.api('setChatMenuButton', { chat_id: id, menu_button: { type: 'web_app', text: 'App', web_app: { url: this.appUrl } } });
       this.session(id);
       const uploadMatch = text.match(/^\/start(?:@\w+)? (u_([a-f0-9]{32})|a_([a-f0-9]{16}))$/);
       if (uploadMatch) {
@@ -261,7 +266,7 @@ export class Bot {
     if (command === '/events') {
       this.session(id);
       const events = Object.values(this.db.events).filter(e => this.allowed(e, id) && !e.cancelled && (e.owner === id || e.guests[id]?.status !== 'no'));
-      if (!events.length) return this.home(id, 'No events yet. Tap Open app to create an event, or open an invitation.');
+      if (!events.length) return this.home(id, 'No events yet. Tap App to create an event, or open an invitation.');
       await this.home(id, '📅 Your events — tap Open event below.');
       for (const group of ['Upcoming events', 'Past events', 'Date not set', 'Cancelled events']) {
         const entries = events.filter(e => eventGroup(e) === group).sort((a,b) => group === 'Past events' ? Date.parse(b.startsAt)-Date.parse(a.startsAt) : Date.parse(a.startsAt)-Date.parse(b.startsAt));
@@ -277,7 +282,7 @@ export class Bot {
     }
     if (text.startsWith('/') && command !== '/skip' && command !== '/done') return this.send(id, 'Choose a menu button, or tap Cancel input to leave this step.', current ? this.inputKeyboard(current) : homeKeyboard(this.appUrl));
     const s = this.db.sessions[id];
-    if (!s) return this.home(id, 'Choose Open app or My events below.');
+    if (!s) return this.home(id, 'Choose App or My events below.');
     if (s.step === 'banner') {
       const target = s.draft || this.db.events[s.event];
       if (!target || (!s.draft && (target.owner !== id || target.cancelled))) { this.session(id); return this.home(id, 'This event is unavailable.'); }

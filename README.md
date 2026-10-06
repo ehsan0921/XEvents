@@ -38,7 +38,9 @@ Built for sports clubs, friends, community organisers and volunteer groups, XEve
 ## How to use XEvents
 
 1. Open **[@XEvents_bot](https://t.me/XEvents_bot)** and press **Start**.
-2. Choose **Open app**, set your timezone and create an event.
+2. Choose **App**, set your timezone and create an event.
+
+Use **App** in Telegram's bot menu or on an inline message button to open the authenticated Mini App. The reply-keyboard **App** shortcut sends an inline launcher first: Telegram's reply-keyboard Web App launch does not include signed identity data, which private database access requires. Every launcher uses the same app and database.
 3. Add the schedule, banner, guest permissions and any custom questions.
 4. Choose **Ticket booking** and share one link, or choose **Named invitations**, enter your guest list and use **Guest invitations** to copy or share each personal link.
 5. Review responses in **My events** and approve guests when required.

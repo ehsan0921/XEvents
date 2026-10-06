@@ -141,7 +141,8 @@ export async function configureMiniApp(env) {
     }
   }
   const setting = await env.DB.prepare("SELECT value FROM app_settings WHERE key='mini-menu'").first();
-  if (setting?.value === env.APP_URL) return;
-  const result = await telegram(env, 'setChatMenuButton', { menu_button: { type: 'web_app', text: 'Planner', web_app: { url: env.APP_URL } } });
-  if (result.ok) await env.DB.prepare("INSERT INTO app_settings(key,value) VALUES ('mini-menu',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(env.APP_URL).run();
+  const menuVersion=`App:${env.APP_URL}`;
+  if (setting?.value === menuVersion) return;
+  const result = await telegram(env, 'setChatMenuButton', { menu_button: { type: 'web_app', text: 'App', web_app: { url: env.APP_URL } } });
+  if (result.ok) await env.DB.prepare("INSERT INTO app_settings(key,value) VALUES ('mini-menu',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(menuVersion).run();
 }

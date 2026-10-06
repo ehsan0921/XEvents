@@ -459,8 +459,10 @@ $('event-form').onsubmit = async event => {
 $('share-event').onclick = () => createdEvent && share(createdEvent);
 $('another-event').onclick = () => go('events');
 if (!initData) {
-  notice('This is the XEvents Telegram planner. Open @XEvents_bot and tap Open planner to create events and save your timezone.');
-  $('event-list').replaceChildren(element('div', 'Your events are private. Open this planner inside Telegram to see them.', 'empty'));
+  notice('This launch did not include your Telegram login. Reopen using App in the bot menu or the App button in a message.');
+  const empty=element('div','Your events are private. Use the authenticated App button to load them.','empty');
+  empty.append(action('App',()=>{const url='https://t.me/XEvents_bot?start=app';if(tg?.openTelegramLink)tg.openTelegramLink(url);else window.open(url,'_blank','noopener');}));
+  $('event-list').replaceChildren(empty);
   $('save-event').disabled = true; $('save-zone').disabled = true; $('refresh').disabled = true;
   options('local-zone', deviceZone); options('event-zone', deviceZone); $('device-zone').textContent = `Detected on this device: ${deviceZone}`;
 } else {

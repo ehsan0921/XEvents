@@ -233,8 +233,10 @@ test('approval gates location/tickets and only the organiser can approve or reje
   const ticket = f.calls.find(c => c.chat_id === 2 && c.text?.includes('YOUR INVITATION'));
   assert.match(ticket.text, /My house/); assert.match(ticket.text, /Private entry instructions/);
   await f.cb(2, `r:${e.id}:yes`);
-  for (const text of ['👤 Use Telegram name', '⏭ Skip', '⏭ Skip', '⏭ Skip', '⏭ Skip']) await f.msg(2, text);
-  await f.cb(1, `reject:${e.id}:2`); assert.equal(e.guests[2].status, 'no'); assert.equal(e.guests[2].ticket, undefined);
+  assert.equal(e.guests[2].approval, 'approved');
+  await f.msg(3, `/start e_${e.id}`); await f.cb(3, `r:${e.id}:yes`);
+  for (const text of ['Guest three', '⏭ Skip', '⏭ Skip', '⏭ Skip', '⏭ Skip']) await f.msg(3, text);
+  await f.cb(1, `reject:${e.id}:3`); assert.equal(e.guests[3].status, 'no'); assert.equal(e.guests[3].ticket, undefined);
 });
 
 test('deadline blocks old RSVP buttons and unfinished responses but permits approval', async () => {
@@ -251,6 +253,7 @@ test('deadline blocks old RSVP buttons and unfinished responses but permits appr
 test('answering again replaces old answers and navigation discards unfinished input', async () => {
   const f = fixture(); const e = await f.create(); await f.msg(2, `/start e_${e.id}`);
   for (const answer of ['Old answer', 'New answer']) {
+    if(answer==='New answer')await f.cb(2, `change:${e.id}`);
     await f.cb(2, `r:${e.id}:yes`);
     for (const text of ['👤 Use Telegram name', '⏭ Skip', answer, '⏭ Skip', '⏭ Skip']) await f.msg(2, text);
   }

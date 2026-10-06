@@ -23,6 +23,7 @@ export class Bot {
   constructor(store, api, username, appUrl) { this.store = store; this.api = api; this.username = username; this.appUrl = appUrl; this.store.data.preferences ||= {}; }
   get db() { return this.store.data; }
   send(id, text, reply_markup, entities) { return this.api('sendMessage', { chat_id: id, text, ...(reply_markup ? { reply_markup } : {}), ...(entities ? { entities } : {}) }); }
+  clearButtons(id,message){if(message?.chat?.id!==id || !Number.isSafeInteger(message.message_id) || message.message_id<=0)return Promise.resolve();return this.api('editMessageReplyMarkup',{chat_id:id,message_id:message.message_id,reply_markup:{inline_keyboard:[]}}).catch(()=>{});}
   async long(id, text, markup) {
     for (let i = 0; i < text.length; i += 3900) await this.send(id, text.slice(i, i + 3900), i + 3900 >= text.length ? markup : undefined);
   }
@@ -103,8 +104,12 @@ export class Bot {
     for(const [token,g] of Object.entries(e.invitees || {}))await this.send(id,`Invitation for ${g.name}${g.claimedBy ? ' — linked to a Telegram account' : ''}\n${namedLink(e,token,this.username)}\nThis link belongs to one guest and binds to the first Telegram account that opens it.`,keyboard([{text:'Share this invitation',url:`https://t.me/share/url?url=${encodeURIComponent(namedLink(e,token,this.username))}&text=${encodeURIComponent(`Invitation for ${g.name}: ${e.title}`)}`} ]));
   }
   async saveResponse(id, e, response) {
+    if(e.guests[id]?.payment?.status==='reported')return this.send(id,'The organiser is reviewing your payment. Ask them to resolve or clear the report before changing your response.');
     if (['paid','processing','refund_pending','refund_failed'].includes(e.guests[id]?.payment?.status)) return this.send(id,'Your paid or processing booking cannot be changed. Contact /paysupport to request a refund first.');
     if (responsesClosed(e)) { this.session(id); await this.home(id, 'The response deadline has passed. Your unfinished response was not saved.'); return this.card(id, e); }
+    const previous=e.guests[id];
+    if(previous?.status===response.status && response.status==='yes' && previous.approval==='approved' && JSON.stringify(previous.answers || [])===JSON.stringify(response.answers || []) && previous.name===response.name && previous.phone===response.phone && previous.comment===response.comment && participantCount(e,previous)===participantCount(e,response)){this.session(id);return this.card(id,e);}
+    response.responseVersion=(previous?.responseVersion || 0)+1;
     if (response.status === 'yes') {
       response.participants = participantCount(e, response);
       response.approval = e.requireApproval ? 'pending' : 'approved';
@@ -113,7 +118,7 @@ export class Bot {
     e.guests[id] = response; this.session(id);
     if (response.status === 'yes') applyDefaultReminder(e, id);
     await this.home(id, invitationMode(e)==='tickets' ? e.requireApproval ? 'Your ticket request is saved. The organiser will send your ticket after approval and any required payment.' : paidEvent(e) ? 'Booking saved. Complete payment to receive your ticket.' : 'Your ticket is booked.' : response.status === 'yes' && e.requireApproval ? '✅ Your acceptance request is saved. The organiser will send your invitation details and ticket after approving your response.' : paidEvent(e) && response.status === 'yes' ? 'Acceptance saved. Complete payment to confirm your ticket.' : '✅ Response saved.');
-    await this.send(e.owner, `${e.title}\n${response.name}: ${response.approval === 'pending' ? '⏳ Awaiting approval' : labels[response.status]}${response.status === 'yes' ? '\nPeople: ' + participantCount(e, response) : ''}${response.comment ? '\nComment: ' + response.comment : ''}`, response.approval === 'pending' ? keyboard([button('✅ Approve', `approve:${e.id}:${id}`), button('❌ Reject', `reject:${e.id}:${id}`)]) : undefined).catch(() => {});
+    await this.send(e.owner, `${e.title}\n${response.name}: ${response.approval === 'pending' ? '⏳ Awaiting approval' : labels[response.status]}${response.status === 'yes' ? '\nPeople: ' + participantCount(e, response) : ''}${response.comment ? '\nComment: ' + response.comment : ''}`, response.approval === 'pending' ? keyboard([button('✅ Approve', `approve:${e.id}:${id}:${response.responseVersion || 0}`), button('❌ Reject', `reject:${e.id}:${id}:${response.responseVersion || 0}`)]) : undefined).catch(() => {});
     if (confirmed(e, response) && (e.requireApproval || invitationMode(e)==='tickets')) await this.ticket(id, e);
     if (paidEvent(e) && response.status === 'yes' && response.approval === 'approved') await this.paymentInfo(id,e);
     return this.card(id, e);
@@ -133,8 +138,8 @@ export class Bot {
     const accepted = !host && e.guests[id]?.status === 'yes';
     const rsvpOnly=!host && !accepted && mode!=='tickets';
     const rows = e.cancelled || host || closed ? [] : mode==='tickets' ? accepted ? [] : [[button(e.requireApproval ? 'Request ticket' : 'Get ticket',`book:${e.id}`)]] : accepted ? [[button('Change response', `change:${e.id}`)]] : [
-      [button('✅ Accept', `r:${e.id}:yes`), button('❌ Reject', `r:${e.id}:no`)],
-      [button('🤔 Maybe', `r:${e.id}:maybe`), button('⏳ Respond later', `r:${e.id}:later`)]
+      [button('✅ Accept', `r:${e.id}:yes:${e.guests[id]?.responseVersion || 0}`), button('❌ Reject', `r:${e.id}:no:${e.guests[id]?.responseVersion || 0}`)],
+      [button('🤔 Maybe', `r:${e.id}:maybe:${e.guests[id]?.responseVersion || 0}`), button('⏳ Respond later', `r:${e.id}:later:${e.guests[id]?.responseVersion || 0}`)]
     ];
     const extras = [];
     if (!e.cancelled && (host || accepted)) {
@@ -375,7 +380,7 @@ export class Bot {
   }
   async callback(q) {
     const id = q.from.id;
-    const [action, eid, arg] = (q.data || '').split(':');
+    const [action, eid, arg, version] = (q.data || '').split(':');
     const e = this.db.events[eid];
     await this.api('answerCallbackQuery', { callback_query_id: q.id }).catch(() => {});
     if (action === 'sr' || action === 'src') {
@@ -425,20 +430,24 @@ export class Bot {
     if (action === 'v') { this.session(id); await this.home(id, 'Use the event buttons below.'); return this.card(id, e); }
     if (action === 'details') return this.card(id, e, false);
     if(action==='invite-links')return this.personalLinks(id,e);
-    if(action==='book')return invitationMode(e)==='tickets' ? this.beginAcceptance(id,e,q.from) : this.card(id,e);
+    if(action==='book'){await this.clearButtons(id,q.message);if(e.guests[id]?.status==='yes')return this.card(id,e);return invitationMode(e)==='tickets' ? this.beginAcceptance(id,e,q.from) : this.card(id,e);}
     if (action === 'banner') { this.session(id, { step: 'banner', event: eid }); return this.prompt(id, 'Send a photo for your event banner, or tap Skip.'); }
     if (action === 'address') { if (!canSeeLocation(e, id)) return this.send(id, 'The address is not available yet.'); return this.send(id, e.location, keyboard([button('Back to event', `v:${eid}`)]), [{ type: 'code', offset: 0, length: e.location.length }]); }
     if (action === 'status') { if (e.owner === id || (!e.requireApproval && invitationMode(e)!=='tickets')) return this.card(id, e); if (confirmed(e, e.guests[id])) return this.ticket(id, e); return this.send(id, e.guests[id]?.status === 'yes' ? '⏳ Awaiting organiser approval. The organiser will send your invitation details after approving your response.' : 'You have not submitted an acceptance request.', keyboard([button('Back to event', `v:${eid}`)])); }
-    if (action === 'change') { if (invitationMode(e)==='tickets')return this.card(id,e); if (e.owner === id || responsesClosed(e)) return this.card(id, e); return this.send(id, 'Choose your new response. Your saved response stays unchanged until you finish.', keyboard([button('✅ Accept', `r:${eid}:yes`), button('❌ Decline', `r:${eid}:no`)], [button('🤔 Tentative', `r:${eid}:maybe`), button('⏳ Later', `r:${eid}:later`)], [button('Back to event', `v:${eid}`)])); }
+    if (action === 'change') { if (invitationMode(e)==='tickets')return this.card(id,e); if (e.owner === id || responsesClosed(e)) return this.card(id, e); this.session(id,{event:eid,step:'responseChoice'}); return this.send(id, 'Choose your new response. Your saved response stays unchanged until you finish.', keyboard([button('✅ Accept', `r:${eid}:yes:${e.guests[id]?.responseVersion || 0}`), button('❌ Decline', `r:${eid}:no:${e.guests[id]?.responseVersion || 0}`)], [button('🤔 Tentative', `r:${eid}:maybe:${e.guests[id]?.responseVersion || 0}`), button('⏳ Later', `r:${eid}:later:${e.guests[id]?.responseVersion || 0}`)], [button('Back to event', `v:${eid}`)])); }
     if (action === 'reminder') { if (!upcoming(e)) return this.send(id, 'Reminders need an upcoming event with an exact date and timezone.'); const minutes = e.reminders?.[id]?.minutes; return this.send(id, `Event reminder${minutes ? ': ' + minutes + ' minutes before' : ': off'}`, keyboard(...reminderOptions.filter(n => n > 0).map(n => [button(reminderLabel(n), `remind:${eid}:${n}`)]), [button('Turn off', `remind:${eid}:0`)], [button('Back to event', `v:${eid}`)])); }
     if (action === 'remind') { try { setReminder(e, id, Number(arg)); return this.send(id, Number(arg) ? '🔔 Reminder saved. You’ll receive a Telegram message before the event.' : 'Reminder turned off.', keyboard([button('Back to event', `v:${eid}`)])); } catch (err) { return this.send(id, err.message); } }
     if (action === 'r' && labels[arg]) {
       if(invitationMode(e)==='tickets')return this.card(id,e);
+      if(e.guests[id]?.payment?.status==='reported')return this.send(id,'The organiser is reviewing your payment. Ask them to resolve or clear the report before changing your response.');
       if (['paid','processing','refund_pending','refund_failed'].includes(e.guests[id]?.payment?.status)) return this.send(id,'Contact /paysupport to refund your booking before changing your response.');
       if (e.owner === id) { this.session(id); return this.card(id, e); }
+      await this.clearButtons(id,q.message);
+      if(version!==undefined && version!==String(e.guests[id]?.responseVersion || 0))return this.send(id,'This RSVP message is out of date. Open the event in My events for your current response.',keyboard([button('Open event',`v:${e.id}`)]));
       if (responsesClosed(e)) return this.card(id, e);
+      if(arg===e.guests[id]?.status && !(this.db.sessions[id]?.step==='responseChoice' && this.db.sessions[id]?.event===eid))return arg==='later' ? this.pendingInvitations(id) : this.card(id,e);
       if (arg === 'later') {
-        e.guests[id] = { ...e.guests[id], status: 'later' }; delete e.guests[id].approval; delete e.guests[id].ticket; this.session(id);
+        e.guests[id] = { ...e.guests[id], status: 'later',responseVersion:(e.guests[id]?.responseVersion || 0)+1 }; delete e.guests[id].approval; delete e.guests[id].ticket; this.session(id);
         return this.pendingInvitations(id);
       }
       if(arg==='yes' && invitationMode(e)==='named')return this.beginAcceptance(id,e,q.from);
@@ -461,11 +470,14 @@ export class Bot {
     if (action === 'ticket') return this.ticket(id, e);
     if (action === 'approve' || action === 'reject') {
       const guestId = Number(arg); const guest = e.guests[guestId];
+      await this.clearButtons(id,q.message);
       if (!Number.isSafeInteger(guestId) || guestId === e.owner || !guest || guest.status !== 'yes' || guest.approval !== 'pending') return this.send(id, 'There is no pending acceptance request for this guest.');
+      if(version!==undefined && version!==String(guest.responseVersion || 0))return this.send(id,'This approval request is out of date. Open Guest responses to review the current request.');
       if (action === 'approve') {
         guest.approval = 'approved'; if(!paidEvent(e))guest.ticket = randomBytes(6).toString('hex').toUpperCase();
         await this.send(guestId, `✅ The organiser approved your response for ${e.title}.`);
         if(paidEvent(e))await this.paymentInfo(guestId,e);else await this.ticket(guestId,e);
+        await this.card(guestId,e);
       } else {
         guest.approval = 'rejected'; guest.status = 'no'; delete guest.ticket;
         await this.home(guestId, `Your acceptance request for ${e.title} was not approved by the organiser. Contact them if you have questions.`);
@@ -507,7 +519,7 @@ export class Bot {
         if(g.payment?.status==='reported')await this.send(id,g.name+' — payment reported',keyboard([button('Confirm received',`manual-confirm:${e.id}:${uid}`),button('Clear report',`manual-clear:${e.id}:${uid}`)]));
         if(g.payment?.status==='paid')await this.send(id,g.name+' — payment confirmed',keyboard([button('Clear payment record',`manual-clear:${e.id}:${uid}`)]));
       }
-      for (const [uid, guest] of Object.entries(e.guests)) if (Number(uid) !== e.owner && guest.status === 'yes' && guest.approval === 'pending') await this.send(id, `⏳ ${guest.name} — awaiting approval`, keyboard([button('✅ Approve', `approve:${eid}:${uid}`), button('❌ Reject', `reject:${eid}:${uid}`)]));
+      for (const [uid, guest] of Object.entries(e.guests)) if (Number(uid) !== e.owner && guest.status === 'yes' && guest.approval === 'pending') await this.send(id, `⏳ ${guest.name} — awaiting approval`, keyboard([button('✅ Approve', `approve:${eid}:${uid}:${guest.responseVersion || 0}`), button('❌ Reject', `reject:${eid}:${uid}:${guest.responseVersion || 0}`)]));
       return;
     }
     if (action === 'edit' && ['title', 'when', 'location', 'description'].includes(arg)) { this.session(id, { event: eid, step: 'edit', field: arg }); return this.prompt(id, `Enter the new ${arg}.`); }

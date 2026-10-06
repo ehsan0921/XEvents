@@ -12,6 +12,24 @@ function fixture(mode){
   const cb=(id,text)=>bot.handle({callback_query:{id:'q',from:{id,first_name:'Telegram name'},data:text}});
   return {e,data,calls,bot,msg,cb};
 }
+
+test('completed message buttons clear, notifications deliver, and old request versions cannot change newer responses',async()=>{
+  const f=fixture('named');Object.assign(f.e,{askPhone:false,askComments:false},invitationSettings({invitationMode:'named',guestNames:'Alex'},f.e));
+  const token=Object.keys(f.e.invitees)[0];await f.msg(2,`/start i_${f.e.id}_${token}`);
+  const press=(id,data,message_id)=>f.bot.handle({callback_query:{id:'q',from:{id,first_name:'Alex'},data,message:{chat:{id},message_id}}});
+  await press(2,`r:${f.e.id}:yes:0`,10);
+  assert.ok(f.calls.some(c=>c.method==='editMessageReplyMarkup' && c.chat_id===2 && c.message_id===10 && c.reply_markup.inline_keyboard.length===0));
+  assert.ok(f.calls.some(c=>c.chat_id===1 && c.reply_markup?.inline_keyboard.flat().some(b=>b.callback_data===`approve:${f.e.id}:2:1`)));
+  await press(2,`r:${f.e.id}:maybe:1`,11);assert.equal(f.e.guests[2].status,'maybe');
+  await press(2,`r:${f.e.id}:yes:2`,12);assert.equal(f.e.guests[2].responseVersion,3);
+  await press(1,`approve:${f.e.id}:2:1`,20);assert.equal(f.e.guests[2].approval,'pending');
+  await press(1,`approve:${f.e.id}:2:3`,21);assert.equal(f.e.guests[2].approval,'approved');
+  const ticket=f.e.guests[2].ticket;
+  assert.ok(f.calls.some(c=>c.chat_id===2 && c.text?.includes('organiser approved')));
+  assert.ok(f.calls.some(c=>c.method==='editMessageReplyMarkup' && c.chat_id===1 && c.message_id===21));
+  await press(2,`r:${f.e.id}:yes:3`,13);assert.equal(f.e.guests[2].ticket,ticket);assert.equal(f.e.guests[2].approval,'approved');
+  await press(2,`r:${f.e.id}:no:1`,14);assert.equal(f.e.guests[2].status,'yes');
+});
 test('personal invitation links preserve organiser names, bind to one account and skip the name prompt',async()=>{
   const f=fixture('named');Object.assign(f.e,{askPhone:true,askComments:true},invitationSettings({invitationMode:'named',guestNames:'Alex Smith\nSam Jones'},f.e));
   const token=Object.keys(f.e.invitees)[0],second=Object.keys(f.e.invitees)[1];

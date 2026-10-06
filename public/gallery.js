@@ -1,5 +1,6 @@
 export function setupGallery({ $, api, element, action, go, notice, openTelegram, initData }) {
   let galleryEvent = null;
+  let generation=0;
   const urls = new Set();
   const filename = file => file.filename==='photo'?'photo.jpg':file.filename==='video'?'video.mp4':file.filename;
   function showMedia(id,file,blob,url) {
@@ -17,10 +18,11 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
     if(!response.ok){const data=await response.json();throw new Error(data.error || 'Could not download this file.');}return response.blob();
   }
   async function openGallery(id) {
+    const current=++generation;
     galleryEvent=id;go('gallery');$('gallery-error').hidden=true;$('gallery-list').replaceChildren(element('p','Loading files…','muted'));
     for(const url of urls) URL.revokeObjectURL(url);urls.clear();
     try {
-      const gallery=await api(`events/${id}/gallery`);if(galleryEvent!==id)return;
+      const gallery=await api(`events/${id}/gallery`);if(current!==generation)return;
       $('gallery-title').textContent=gallery.title;$('gallery-summary').textContent=`${gallery.media.length} shared files. Download here or send a file to your Telegram chat.`;
       $('gallery-upload').hidden=!gallery.canUpload;$('gallery-upload').onclick=()=>openTelegram(gallery.uploadUrl);
       const list=$('gallery-list');list.replaceChildren();if(!gallery.media.length)list.append(element('p','No files have been shared yet.','muted'));
@@ -37,7 +39,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
         if(file.type==='video')buttons.append(action('Play video',async()=>{try{const blob=await mediaBlob(id,file.id);const url=URL.createObjectURL(blob);urls.add(url);showMedia(id,file,blob,url);}catch(error){notice(error.message);}}));
         body.append(buttons);card.append(body);list.append(card);
       }
-    }catch(error){$('gallery-list').replaceChildren();$('gallery-error').textContent=error.message;$('gallery-error').hidden=false;}
+    }catch(error){if(current!==generation)return;$('gallery-list').replaceChildren();$('gallery-error').textContent=error.message;$('gallery-error').hidden=false;}
   }
   async function showQr(id) {
     try{const qr=await api(`events/${id}/upload-qr`);$('upload-qr').src=qr.image; $('qr-description').textContent=qr.anyone ? 'Anyone with this link can add media without an RSVP. They can view Shared media if you enable viewing. Private event details stay hidden.' : 'Existing event guests can scan this code to add media. Enable uploads by link in event settings to let anyone contribute without an RSVP.';

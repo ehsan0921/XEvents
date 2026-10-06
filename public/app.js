@@ -15,6 +15,11 @@ function updatePricePreview(){
   const value=Number($('stars-price').value);
   const method=$('stars-enabled').checked ? $('payment-method').value : 'free';
   $('payment-terms').required=method!=='free' && !compactPicker;
+  $('payment-terms').disabled=method==='free' || compactPicker;
+  $('stars-price').disabled=method!=='stars' || compactPicker;
+  for (const [id, active] of [['display-price',['bank','link'].includes(method)],['payment-url',method==='link'],['payment-instructions',method==='bank']]) {
+    const input=$(id); if(input) { input.required=active && !compactPicker; input.disabled=!(id==='payment-instructions' ? ['bank','link'].includes(method) : active) || compactPicker; }
+  }
   $('payment-terms').setCustomValidity($('payment-terms').required && !$('payment-terms').value.trim() ? 'Enter payment and refund terms for this paid event.' : '');
   $('manual-price-fields').hidden=method==='stars' || method==='free';$('stars-price-fields').hidden=method!=='stars';$('payment-link-fields').hidden=method!=='link';
   const e={paymentMethod:method,displayPrice:$('display-price').value || 'Set a price',starPrice:method==='stars' && Number.isFinite(value) && value>0?value:0,starPricing:$('stars-pricing').value};
@@ -75,7 +80,7 @@ function format(e, zone = selectedZone()) {
 function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener'); }
 function share(e) { if(e.invitationMode==='named' && e.isOwner)return openNamedLinks(e);openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(`You're invited to ${e.title}!`)}`); }
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
-function action(text, fn, className = 'secondary') { const b = element('button', text, className); b.type = 'button'; b.onclick = fn; return b; }
+function action(text, fn, className = 'secondary') { const b = element('button', text, className); b.type = 'button'; b.onclick = async () => { if(b.disabled)return; b.disabled=true; try { await fn(); } catch(error) { notice(error.message); } finally { b.disabled=false; } }; return b; }
 const {openGallery,showQr}=setupGallery({$,api,element,action,go,notice,openTelegram,initData});
 function confirmAction(message, operation) {
   const dialog = $('confirm-dialog');
@@ -95,7 +100,7 @@ function renderEvents() {
   $('zone-note').textContent = `Your local time · ${selectedZone().replaceAll('_', ' ')}`;
   const list = $('event-list'); list.replaceChildren();
   document.querySelector('.section-heading h2').textContent = listFilter === 'pending' ? 'Pending invitations' : 'Your events';
-  const events = [...state.events].filter(e => !e.cancelled && (e.isOwner || e.status !== 'no') && (listFilter !== 'pending' || (!e.isOwner && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
+  const events = [...state.events].filter(e => !e.cancelled && (e.isOwner || e.status !== 'no') && (listFilter !== 'pending' || (!e.isOwner && e.invitationMode!=='tickets' && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
   if (!events.length) { const empty = element('div', '', 'empty'); empty.append(element('strong', listFilter === 'pending' ? 'You’re all caught up.' : 'A calendar full of possibilities.'), element('span', listFilter === 'pending' ? 'No unanswered invitations.' : 'Create your first event, or open an invitation in the bot to join one.')); list.append(empty); }
   let lastGroup;
   events.sort((a,b) => ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(a.group) - ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(b.group) || (a.group === 'Past events' ? (b.startsAt || '').localeCompare(a.startsAt || '') : (a.startsAt || '').localeCompare(b.startsAt || '')));
@@ -130,7 +135,7 @@ function renderEvents() {
     const extraActions = element('div','','event-more-panel'); more.append(moreToggle,extraActions);
     extraActions.append(action('Share invite', () => share(e)));
     if(e.starPrice || ['bank','link'].includes(e.paymentMethod))extraActions.append(action(e.isOwner?'Payments & refunds':'Payment support',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=payments')));
-    if (e.isOwner || e.permissions.viewMedia) {
+    if (e.isOwner || (e.status==='yes' && e.permissions.viewMedia)) {
       actions.append(action('🗂 Shared media', () => openGallery(e.id)));
     }
     if (e.isOwner && e.uploadLink) extraActions.append(action('Upload link & QR code', () => showQr(e.id)));
@@ -143,7 +148,7 @@ function renderEvents() {
       }));
     }
     if (e.location) extraActions.append(action('Copy address', async () => { try { await navigator.clipboard.writeText(e.location); notice('✓ Address copied.'); } catch { notice('Select and copy the address shown on the event.'); } }));
-    if (e.upcoming) {
+    if (e.upcoming && (e.isOwner || e.status==='yes')) {
       const label = element('label', 'Event reminder'); const select = document.createElement('select'); select.setAttribute('aria-label', `Reminder for ${e.title}`);
       for (const [minutes,text] of [[0,'Off'],[15,'15 minutes before'],[60,'1 hour before'],[120,'2 hours before'],[180,'3 hours before'],[240,'4 hours before'],[1440,'1 day before']]) { const option = element('option',text); option.value=minutes; option.disabled=minutes > 0 && Date.parse(e.startsAt)-minutes*60000 <= Date.now(); select.append(option); }
       select.value=e.reminder || 0;

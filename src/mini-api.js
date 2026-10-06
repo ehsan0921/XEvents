@@ -1,5 +1,6 @@
 import {parseEventPayment,paymentMethod} from './event-payment.js';
 import {issueTicket,verifyTicket} from './tickets.js';
+import {profileFields,profilePreference,profilePhotoApi} from './profile.js';
 import {readOnlinePricing} from './exchange.js';
 import {invitationMode,invitationSettings,namedLink} from './invitations.js';
 import { authenticate } from './mini-auth.js';
@@ -99,6 +100,7 @@ export async function miniApi(request, env) {
   const user = authenticate(request.headers.get('Authorization')?.replace(/^tma /, ''), env.TELEGRAM_BOT_TOKEN);
   if (!user) return respond({ error: 'Open the planner inside Telegram. If it was open for a while, close and reopen it.' }, 401);
   const path = new URL(request.url).pathname;
+  const profileResponse=await profilePhotoApi(request,env,user);if(profileResponse)return profileResponse;
   const eventMatch=path.match(/^\/api\/events\/([a-f0-9]{16})$/);
   if(eventMatch && request.method==='GET'){
     const row=await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(eventMatch[1]).first();const e=row && JSON.parse(row.data);
@@ -176,7 +178,7 @@ export async function miniApi(request, env) {
     const pickerSession = s && (s.step === 'when' || s.step === 'permissions' || (s.step === 'edit' && s.field === 'when')) ? { token: s.token, event: s.event || null, deadlineDate: s.draft?.deadlineDate || '', deadlineTime: s.draft?.deadlineTime || '', timezone: s.draft?.deadlineTimezone || s.draft?.timezone || null } : null;
     const pricing=await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id='_pricing'").first();
     const pref=preference ? JSON.parse(preference.data) : {};
-    return respond({pricing:await readOnlinePricing(env,pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { id: user.id, firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: {timezone:pref.timezone,currency:pref.currency || ''}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
+    return respond({pricing:await readOnlinePricing(env,pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { id: user.id, firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: profilePreference(pref), session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
   }
   if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
   const raw = await request.text();
@@ -204,7 +206,8 @@ export async function miniApi(request, env) {
         if(input.currency!==undefined && input.currency!=='' && !currencyCodes.includes(input.currency))throw new InputError('Choose a supported display currency.');
         data.preferences[id] = { ...data.preferences[id], timezone: timezone(input.timezone) };
         if(input.currency!==undefined)data.preferences[id].currency=input.currency;
-        return { preference: { timezone: data.preferences[id].timezone,currency:data.preferences[id].currency || '' } };
+        Object.assign(data.preferences[id],profileFields(input));
+        return { preference: profilePreference(data.preferences[id]) };
       }
       if (path === '/api/events') {
         if (!/^[a-f0-9-]{36}$/.test(input.requestId || '')) throw new InputError('Refresh the planner and try again.');

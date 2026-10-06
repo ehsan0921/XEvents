@@ -31,6 +31,8 @@ fieldset.panel{min-width:0}fieldset legend{font-size:18px;font-weight:700;letter
 #ticket-image { display:block; width:100%; max-width:300px; margin:16px auto; image-rendering:pixelated; }
 #ticket-code { display:block; text-align:center; font-size:22px; letter-spacing:2px; user-select:all; }
 #checkin-result { white-space:pre-line; }
+#profile-photo-preview { width:110px; height:110px; object-fit:cover; border-radius:50%; display:block; margin:0 auto 16px; }
+.gallery-item video { width:100%; height:180px; object-fit:cover; background:#111; cursor:pointer; }
 #upload-qr { display:block; max-width:100%; margin:20px auto; image-rendering:pixelated; }
 #photo-full { display:block; max-width:100%; max-height:75vh; margin:12px auto; object-fit:contain; }
 @media(max-width:360px) { .gallery-grid { grid-template-columns:1fr; } }

@@ -269,5 +269,27 @@ try {
   assert.equal(freshNamed.title,'Edited title');assert.equal(freshNamed.location,'Edited address');assert.deepEqual(freshNamed.questions,['New question?']);
   assert.equal((await api(`events/${namedId}/schedule`,{...namedInput,invitationMode:'tickets'})).status,400);
   assert.equal((await api(`events/${namedId}/schedule`,{...namedInput,guestNames:'Sam Jones'})).status,400);
-  console.log('Worker integration passed: ticket bookings, personal RSVP links, owner-only edit loading, approvals, Stars checkout, durable refunds and media. Telegram mocked.');
+  const profileSaved=await api('preferences',{timezone:'Australia/Sydney',profileName:'Profile name',profilePhone:'+61 400 123 456'});assert.equal(profileSaved.status,200);
+  assert.equal((await api('bootstrap')).data.preference.profileName,'Profile name');assert.equal((await api('bootstrap',null,789)).data.preference.profilePhone,'');
+  assert.equal((await api('preferences',{timezone:'UTC',profilePhone:'invalid'})).status,400);
+  assert.equal((await api('bootstrap')).data.preference.timezone,'Australia/Sydney');
+  const photoForm=new FormData();photoForm.set('photo',new File([new Uint8Array([255,216,255])],'profile.jpg',{type:'image/jpeg'}));
+  const photoRequest=new Request('https://test/upload',{method:'POST',body:photoForm}),photoBytes=await photoRequest.arrayBuffer();
+  assert.equal((await mf.dispatchFetch('https://test/api/profile/photo',{method:'POST',headers:{Authorization:'tma '+initData(123),'Content-Type':photoRequest.headers.get('Content-Type')},body:photoBytes})).status,200);
+  assert.equal((await api('bootstrap')).data.preference.hasPhoto,true);assert.equal((await api('bootstrap')).data.preference.profilePhoto,undefined);
+  assert.equal((await mf.dispatchFetch('https://test/api/profile/photo',{headers:{Authorization:'tma '+initData(123)}})).status,200);
+  assert.equal((await mf.dispatchFetch('https://test/api/profile/photo',{headers:{Authorization:'tma '+initData(789)}})).status,404);
+  assert.equal((await mf.dispatchFetch('https://test/api/profile/photo',{method:'DELETE',headers:{Authorization:'tma '+initData(123)}})).status,200);
+  assert.equal((await api('bootstrap')).data.preference.hasPhoto,false);
+  await callback(6000,`u:${galleryId}`);
+  await message(6001,undefined,123,{document:{file_id:'image-document',file_name:'photo.png',mime_type:'image/png',file_size:4,thumbnail:{file_id:'image-thumb'}}});
+  await message(6002,undefined,123,{video:{file_id:'video-file',file_size:30000000,thumbnail:{file_id:'video-thumb'}}});
+  const previewGallery=(await api(`events/${galleryId}/gallery`)).data.media;
+  const documentPreview=previewGallery.find(f=>f.filename==='photo.png'),videoPreview=previewGallery.find(f=>f.type==='video');
+  assert.equal(documentPreview.previewKind,'photo');assert.equal(videoPreview.previewKind,'video');assert.equal(videoPreview.hasThumbnail,true);
+  assert.doesNotMatch(JSON.stringify(previewGallery),/image-thumb|video-thumb|image-document/);
+  assert.equal((await mf.dispatchFetch(`https://test/api/events/${galleryId}/media/${documentPreview.id}`,{headers:{Authorization:'tma '+initData(123)}})).headers.get('Content-Type'),'image/png');
+  assert.equal((await mf.dispatchFetch(`https://test/api/events/${galleryId}/media/${videoPreview.id}/thumbnail`,{headers:{Authorization:'tma '+initData(123)}})).status,200);
+  assert.equal((await mf.dispatchFetch(`https://test/api/events/${galleryId}/media/${videoPreview.id}`,{headers:{Authorization:'tma '+initData(123)}})).status,413);
+  console.log('Worker integration passed: profiles, private photos, ticket bookings, personal RSVP links, approvals, payments, durable refunds and media. Telegram mocked.');
 } finally { await mf.dispose(); }

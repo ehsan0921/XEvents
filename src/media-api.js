@@ -1,11 +1,12 @@
 import qrcode from 'qrcode-generator';
+import {mediaPreview,previewMime} from './media-preview.js';
 import { can, shareUploadLink, uploadLink } from './permissions.js';
 import { mutateState } from './worker-store.js';
 
 
 export async function mediaApi(request, env, user) {
   const url = new URL(request.url);
-  const match = url.pathname.match(/^\/api\/events\/([a-f0-9]{16})\/(gallery|upload-qr|media\/([a-f0-9]{12})(?:\/(send))?)$/);
+  const match = url.pathname.match(/^\/api\/events\/([a-f0-9]{16})\/(gallery|upload-qr|media\/([a-f0-9]{12})(?:\/(send|thumbnail))?)$/);
   if (!match) return null;
   const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
   const json = (value, status = 200) => Response.json(value, { status, headers });
@@ -22,7 +23,7 @@ export async function mediaApi(request, env, user) {
     return json({ link, anyone: !!e.allowLinkUploads, image: qr.createDataURL(6, 24) });
   }
   if (!can(e, user.id, 'viewMedia')) return json({ error: 'The organiser has not enabled the gallery for guests.' }, 403);
-  if (match[2] === 'gallery' && request.method === 'GET') return json({ id: e.id, title: e.title, cancelled: !!e.cancelled, canUpload: !e.cancelled && can(e, user.id, 'uploadMedia'), uploadUrl: `https://t.me/${env.BOT_USERNAME}?start=a_${e.id}`, media: (e.media || []).map(f => ({ id: f.id, type: f.type, filename: f.filename, caption: f.caption, name: f.name, at: f.at, size: f.size || null })) });
+  if (match[2] === 'gallery' && request.method === 'GET') return json({ id: e.id, title: e.title, cancelled: !!e.cancelled, canUpload: !e.cancelled && can(e, user.id, 'uploadMedia'), uploadUrl: `https://t.me/${env.BOT_USERNAME}?start=a_${e.id}`, media: (e.media || []).map(f => ({ id: f.id, type: f.type, previewKind:mediaPreview(f),hasThumbnail:!!f.thumbnail,filename: f.filename, caption: f.caption, name: f.name, at: f.at, size: f.size || null })) });
   const f = e.media?.find(item => item.id === match[3]);
   if (!f) return json({ error: 'This file is no longer in the event.' }, 404);
   if (match[4] === 'send' && request.method === 'POST') {
@@ -34,12 +35,14 @@ export async function mediaApi(request, env, user) {
     });
     return json({ sent: true });
   }
-  if (request.method !== 'GET' || match[4]) return json({ error: 'Not found.' }, 404);
-  if (f.size > 20 * 1024 * 1024) return json({ error: 'This file is larger than 20 MB. Use Send to Telegram to download it in chat.' }, 413);
-  const lookup = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getFile`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file_id: f.fileId }), signal: AbortSignal.timeout(10000) });
+  if (request.method !== 'GET' || (match[4] && match[4]!=='thumbnail')) return json({ error: 'Not found.' }, 404);
+  const thumbnail=match[4]==='thumbnail';if(thumbnail && !f.thumbnail)return json({error:'No thumbnail.'},404);
+  if (!thumbnail && f.size > 20 * 1024 * 1024) return json({ error: 'This file is larger than 20 MB. Use Send to Telegram to download it in chat.' }, 413);
+  const lookup = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getFile`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file_id: thumbnail ? f.thumbnail:f.fileId }), signal: AbortSignal.timeout(10000) });
   const result = await lookup.json();
   if (!result.ok || !result.result?.file_path) return json({ error: 'Could not load the file. Use Send to Telegram instead.' }, 502);
   const download = await fetch(`https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${result.result.file_path}`, { signal: AbortSignal.timeout(15000) });
   if (!download.ok) return json({ error: 'Could not load this file. Try again.' }, 502);
-  return new Response(download.body, { headers: { ...headers, 'Content-Type': f.type === 'photo' ? 'image/jpeg' : f.type === 'video' ? 'video/mp4' : 'application/octet-stream', ...(url.searchParams.has('download') ? { 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(f.filename === 'photo' ? 'photo.jpg' : f.filename === 'video' ? 'video.mp4' : f.filename)}` } : {}) } });
+  const mime=thumbnail || f.type==='photo' ? 'image/jpeg':previewMime(f);
+  return new Response(download.body, { headers: { ...headers, 'Content-Type': mime, ...(url.searchParams.has('download') ? { 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(f.filename === 'photo' ? 'photo.jpg' : f.filename === 'video' ? 'video.mp4' : f.filename)}` } : {}) } });
 }

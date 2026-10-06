@@ -31,6 +31,7 @@ function updatePricePreview(){
 let listFilter = 'all';
 let adminData = null, adminMode = 'events';
 let bannerPreviewUrl,bannerLoadGeneration=0;
+let profilePhotoUrl,profilePhotoGeneration=0;
 const bannerUrls = new Map();
 const initData = tg?.initData || '';
 document.querySelector('[data-tab="pending"]').hidden = true;
@@ -64,6 +65,7 @@ function go(tab) {
   for (const name of ['events', 'create', 'settings', 'admin', 'gallery', 'explore']) $(name + '-view').hidden = name !== target;
   if (tab === 'explore') loadExplore();
   if (tab === 'admin') loadAdmin();
+  if(tab==='settings')loadProfilePhoto();
   for (const button of document.querySelectorAll('[data-tab]')) {
     if (button.dataset.tab === tab) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
@@ -324,9 +326,12 @@ async function refresh() {
   if (!hasPending && listFilter === 'pending') go('events');
   $('admin-tab').hidden = !data.user.isSuperAdmin;
   document.querySelector('.bottom-nav').classList.toggle('with-admin', data.user.isSuperAdmin);
-  $('greeting').textContent = `LET’S MAKE PLANS, ${data.user.firstName.toUpperCase()}`;
+  $('greeting').textContent = `LET’S MAKE PLANS, ${(state.preference.profileName || data.user.firstName).toUpperCase()}`;
   const currencySelect=$('display-currency');currencySelect.replaceChildren(element('option','Automatic from timezone'));currencySelect.firstChild.value='';for(const code of state.currencyCodes || []){const option=element('option',code);option.value=code;currencySelect.append(option);}currencySelect.value=state.preference.currency || '';
   options('local-zone', selectedZone()); $('device-zone').textContent = `Detected on this device: ${deviceZone}`;
+  $('profile-name').value=state.preference.profileName || state.user?.firstName || '';
+  $('profile-phone').value=state.preference.profilePhone || '';
+  $('profile-photo-remove').hidden=!state.preference.hasPhoto;
   renderEvents(); return data;
 }
 async function loadExplore() {
@@ -423,7 +428,7 @@ $('require-approval').onchange = () => { if ($('require-approval').checked) $('h
 $('clear-draft-deadline').onclick = async () => { try { await api('draft-deadline', { clear: true, sessionToken: query.get('session') }); notice('✓ Response deadline removed. Continue creating your event in chat.'); tg?.close(); } catch (e) { notice(e.message); } };
 $('timezone-form').onsubmit = async event => {
   event.preventDefault(); $('save-zone').disabled = true;
-  try { const result = await api('preferences', { timezone: $('local-zone').value,currency:$('display-currency').value }); state.preference = result.preference; await refresh(); notice('✓ Your timezone is saved. Event times now show in your local time.'); tg?.HapticFeedback?.notificationOccurred('success'); }
+  try { const result = await api('preferences', { profileName:$('profile-name').value,profilePhone:$('profile-phone').value,timezone: $('local-zone').value,currency:$('display-currency').value }); state.preference = result.preference; await refresh(); notice('✓ Profile saved.'); tg?.HapticFeedback?.notificationOccurred('success'); }
   catch (e) { notice(e.message); } finally { $('save-zone').disabled = false; }
 };
 $('event-form').onsubmit = async event => {
@@ -457,6 +462,18 @@ $('event-form').onsubmit = async event => {
   finally { $('save-event').disabled = false; }
 };
 $('share-event').onclick = () => createdEvent && share(createdEvent);
+async function loadProfilePhoto(){
+  const generation=++profilePhotoGeneration,img=$('profile-photo-preview');img.hidden=true;
+  if(profilePhotoUrl){URL.revokeObjectURL(profilePhotoUrl);profilePhotoUrl=null;}
+  if(!state.preference.hasPhoto)return;
+  try{const r=await fetch('/api/profile/photo',{headers:{Authorization:'tma '+initData}});if(!r.ok)throw Error('Could not load your profile photo.');const blob=await r.blob();if(generation!==profilePhotoGeneration)return;profilePhotoUrl=URL.createObjectURL(blob);img.src=profilePhotoUrl;img.hidden=false;}catch(error){if(generation===profilePhotoGeneration)notice(error.message);}
+}
+$('profile-events').onclick=()=>go('events');
+$('profile-photo-form').onsubmit=async event=>{
+  event.preventDefault();const button=$('profile-photo-save');button.disabled=true;
+  try{const file=$('profile-photo').files[0];if(!file || file.size>5*1024*1024 || !['image/jpeg','image/png','image/webp'].includes(file.type))throw Error('Choose JPG, PNG or WebP under 5 MB.');const form=new FormData();form.set('photo',file);const r=await fetch('/api/profile/photo',{method:'POST',headers:{Authorization:'tma '+initData},body:form});const data=await r.json();if(!r.ok)throw Error(data.error || 'Could not save photo.');await refresh();await loadProfilePhoto();$('profile-photo').value='';notice('✓ Profile photo saved.');}catch(error){notice(error.message);}finally{button.disabled=false;}
+};
+$('profile-photo-remove').onclick=async()=>{const button=$('profile-photo-remove');button.disabled=true;try{const r=await fetch('/api/profile/photo',{method:'DELETE',headers:{Authorization:'tma '+initData}});if(!r.ok)throw Error('Could not remove photo.');await refresh();await loadProfilePhoto();notice('Photo removed.');}catch(error){notice(error.message);}finally{button.disabled=false;}};
 $('another-event').onclick = () => go('events');
 if (!initData) {
   notice('This launch did not include your Telegram login. Reopen using App in the bot menu or the App button in a message.');

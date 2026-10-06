@@ -52,6 +52,9 @@ function eventSettings(input, event = {}) {
     if (input[key] !== undefined || !event.id) result[key] = input[key] === true;
   }
   if (input.ticketInfo !== undefined || !event.id) result.ticketInfo = field(input.ticketInfo ?? '', 'Invitation details', 1000);
+  if(input.inviteMessage!==undefined || !event.id)result.inviteMessage=field(input.inviteMessage ?? '', 'Invitation message',1000);
+  if(input.qrEnabled!==undefined && typeof input.qrEnabled!=='boolean')throw new InputError('QR codes must be checked or unchecked.');
+  if(input.qrEnabled!==undefined || !event.id)result.qrEnabled=input.qrEnabled===true;
   if (input.deadlineDate !== undefined || input.deadlineTime !== undefined) {
     if (!input.deadlineDate && !input.deadlineTime) Object.assign(result, { responseDeadline: null, deadlineDate: '', deadlineTime: '', deadlineTimezone: '' });
     else {
@@ -69,7 +72,8 @@ export function publicEvent(e, id, username) {
     invitationMode:invitationMode(e),guestName:e.owner!==id ? e.guests[id]?.name || null : null,
     askPhone:asksPhone(e),askComments:asksComments(e),
     ...(e.owner===id ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,approval:g.approval || null,confirmed:confirmed(e,g),participants:g.status==='yes'?participantCount(e,g):0,paymentStatus:g.payment?.status || null})),...Object.values(e.invitees || {}).filter(g=>!g.claimedBy).map(g=>({id:null,name:g.name,status:'unopened',participants:0,confirmed:false}))]} : {}),
-    ...(e.owner===id ? {questions:e.questions || [],invitees:Object.entries(e.invitees || {}).map(([token,g])=>({name:g.name,claimed:!!g.claimedBy,status:g.claimedBy ? e.guests[g.claimedBy]?.status : null,url:namedLink(e,token,username)}))} : {}),
+    inviteMessage:e.inviteMessage || '',qrEnabled:e.qrEnabled!==false,
+    ...(e.owner===id ? {invitees:Object.entries(e.invitees || {}).map(([token,g])=>({name:g.name,participants:g.participants || null,claimed:!!g.claimedBy,status:g.claimedBy ? e.guests[g.claimedBy]?.status : null,url:namedLink(e,token,username)}))} : {}),
     id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
     endsAt: e.endsAt || null, durationMinutes: e.durationMinutes || null, endMode: e.endMode || 'none', endDate: e.endDate || '', endTime: e.endTime || '',
@@ -217,8 +221,7 @@ export async function miniApi(request, env) {
         const title = field(input.title, 'Event name', 100, true);
         const location = field(input.location, 'Location', 300, true);
         const description = field(input.description ?? '', 'Description', 1500);
-        const questions = field(input.questions ?? '', 'Questions', 2200).split('\n').map(q => q.trim()).filter(Boolean);
-        if (questions.length > 10 || questions.some(q => q.length > 200)) throw new InputError('Use up to 10 questions, each at most 200 characters.');
+        const questions = [];
         const e = { ...schedule(input), id: randomBytes(8).toString('hex'), title, location, description, questions, permissions: parsePermissions(input.permissions), owner: id, guests: {}, media: [], cancelled: false, createdAt: new Date().toISOString(), createRequestId: input.requestId };
         Object.assign(e, eventSettings(input, { ...e, id: undefined }));
         Object.assign(e,invitationSettings(input,{...e,id:undefined,invitationMode:input.invitationMode || 'tickets'}));
@@ -273,7 +276,6 @@ export async function miniApi(request, env) {
         if(input.title!==undefined)e.title=field(input.title,'Event name',100,true);
         if(input.location!==undefined)e.location=field(input.location,'Location',300,true);
         if(input.description!==undefined)e.description=field(input.description,'Description',1500);
-        if(input.questions!==undefined){const questions=field(input.questions,'Questions',2200).split('\n').map(q=>q.trim()).filter(Boolean);if(questions.length>10 || questions.some(q=>q.length>200))throw new InputError('Use up to 10 questions, each at most 200 characters.');e.questions=questions;}
         Object.assign(e, schedule({ endMode: e.endMode || 'none', durationMinutes: e.durationMinutes, endDate: e.endDate, endTime: e.endTime, ...input }));
         Object.assign(e, eventSettings(input, e));
         Object.assign(e,inviteSettings);

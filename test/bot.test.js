@@ -17,7 +17,7 @@ function fixture() {
   const msg = (id, text, extra = {}) => bot.handle({ message: { chat: { id, type: 'private' }, from: { id, first_name: `User ${id}` }, text, ...extra } });
   const cb = (id, data) => bot.handle({ callback_query: { id: 'query', from: { id, first_name: `User ${id}` }, data } });
   async function create(settings = { guestList: true, uploadMedia: true, viewMedia: true }) {
-    for (const text of ['/new', 'Birthday', '24 October 2026, 6pm Sydney', 'My house', 'Bring a friend', 'Dietary needs?\nWhat will you bring?']) await msg(1, text);
+    for (const text of ['/new', 'Birthday', '24 October 2026, 6pm Sydney', 'My house', 'Bring a friend', 'Come celebrate with us!']) await msg(1, text);
     const token = store.data.sessions[1].token;
     for (const [key, enabled] of Object.entries(settings)) if (enabled) await cb(1, `pc:${token}:${key}`);
     await cb(1, `pd:${token}`);
@@ -108,20 +108,23 @@ test('optional group size validates whole numbers and separates people from resp
   assert.equal(participantCount({askParticipantCount:true}, {}),1);
 });
 
-test('create, invite, accept, custom name, private phone/questions, comment, change response', async () => {
+test('create, invite, accept, custom name, private phone, comment, change response', async () => {
   const f = fixture(); const e = await f.create();
   assert.match(f.bot.link(e), /^https:\/\/t.me\/XEvents_bot\?start=e_[a-f0-9]{16}$/);
   await f.msg(2, `/start e_${e.id}`);
   assert.equal(e.guests[2].status, 'later');
   await f.cb(2, `r:${e.id}:yes`);
   await f.msg(2, 'Party guest'); await f.msg(2, '+61412345678');
-  await f.msg(2, 'Vegetarian'); await f.msg(2, 'Cake'); await f.msg(2, 'Looking forward to it');
+  assert.equal(f.store.data.sessions[2].step,'comment');
+  await f.msg(2, 'Looking forward to it');
   assert.equal(e.guests[2].status, 'yes'); assert.equal(e.guests[2].name, 'Party guest');
-  assert.equal(e.guests[2].answers[1].answer, 'Cake');
+  assert.deepEqual(e.guests[2].answers, []);
+  assert.equal(e.guests[2].comment,'Looking forward to it');
+  assert.equal(f.store.data.sessions[2],undefined);
   f.calls.length = 0; await f.cb(2, `g:${e.id}`);
   const publicText = f.calls.map(c => c.text || '').join('\n');
   assert.match(publicText, /Party guest/); assert.match(publicText, /Looking forward/);
-  assert.doesNotMatch(publicText, /61412345678|Vegetarian|Cake/);
+  assert.doesNotMatch(publicText, /61412345678/);
   f.calls.length = 0; await f.cb(2, `a:${e.id}`);
   assert.doesNotMatch(f.calls.map(c => c.text || '').join(''), /61412345678/);
   await f.cb(1, `a:${e.id}`); assert.match(f.calls.at(-1).text, /61412345678/);
@@ -261,14 +264,15 @@ test('deadline blocks old RSVP buttons and unfinished responses but permits appr
   await f.cb(1, `approve:${e.id}:2`); assert.equal(e.guests[2].approval, 'approved');
 });
 
-test('answering again replaces old answers and navigation discards unfinished input', async () => {
+test('answering again replaces comments without questions and navigation discards unfinished input', async () => {
   const f = fixture(); const e = await f.create(); await f.msg(2, `/start e_${e.id}`);
   for (const answer of ['Old answer', 'New answer']) {
     if(answer==='New answer')await f.cb(2, `change:${e.id}`);
     await f.cb(2, `r:${e.id}:yes`);
-    for (const text of ['👤 Use Telegram name', '⏭ Skip', answer, '⏭ Skip', '⏭ Skip']) await f.msg(2, text);
+    for (const text of ['👤 Use Telegram name', '⏭ Skip', answer]) await f.msg(2, text);
+    assert.equal(f.store.data.sessions[2],undefined);
   }
-  assert.equal(e.guests[2].answers.length, 2); assert.equal(e.guests[2].answers[0].answer, 'New answer');
+  assert.deepEqual(e.guests[2].answers, []);assert.equal(e.guests[2].comment,'New answer');
   await f.cb(2, `r:${e.id}:no`); await f.cb(2, `v:${e.id}`);
   assert.equal(f.store.data.sessions[2], undefined); assert.equal(e.guests[2].status, 'yes');
 });
@@ -276,7 +280,7 @@ test('answering again replaces old answers and navigation discards unfinished in
 test('accepted view uses change response and approval-only status with enabled extras', async () => {
   const f = fixture(); const e = await f.create({ guestList: true, viewMedia: true });
   await f.msg(2, `/start e_${e.id}`); await f.cb(2, `r:${e.id}:yes`);
-  for (const text of ['Guest','/skip','/skip','/skip','/skip']) await f.msg(2,text);
+  for (const text of ['Guest','/skip','/skip']) await f.msg(2,text);
   let buttons=f.calls.at(-1).reply_markup.inline_keyboard.flat();
   assert.match(f.calls.at(-1).text,/✅ Accepted/);
   assert.ok(buttons.some(b=>b.callback_data===`change:${e.id}`));

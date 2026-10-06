@@ -62,6 +62,7 @@ try {
   assert.equal((await api('preferences', { timezone: 'America/New_York' })).status, 200);
   const input = { askPhone:true,askComments:true,invitationMode:'legacy',title: 'Mini app event', location: 'Cafe', description: '', questions: 'Diet?', date: '2026-10-24', time: '18:00', timezone: 'Australia/Sydney', requestId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' };
   const made = await api('events', input); assert.equal(made.status, 200); assert.equal(made.data.event.startsAt, '2026-10-24T07:00:00Z');
+  assert.equal(made.data.event.qrEnabled,false);assert.equal(made.data.event.questions,undefined);
   assert.equal((await api('events', input)).data.event.id, made.data.event.id);
   assert.equal((await api('bootstrap')).data.events.length, 2);
   assert.equal((await api('bootstrap')).data.preference.timezone, 'America/New_York');
@@ -140,7 +141,7 @@ try {
   const finished=await api(durationPath,{...input,endMode:'finish',endDate:'2026-10-25',endTime:'01:00'});
   assert.equal(finished.data.event.endsAt,'2026-10-24T14:00:00Z');
   assert.equal((await api(durationPath,{...input,endMode:'none'})).data.event.endsAt,null);
-  const galleryMade=await api('events',{...input,requestId:'ffffffff-ffff-ffff-ffff-ffffffffffff',allowLinkUploads:true,permissions:{uploadMedia:true,viewMedia:true}});
+  const galleryMade=await api('events',{...input,qrEnabled:true,requestId:'ffffffff-ffff-ffff-ffff-ffffffffffff',allowLinkUploads:true,permissions:{uploadMedia:true,viewMedia:true}});
   const galleryId=galleryMade.data.event.id;
   assert.match(galleryMade.data.event.uploadLink,/https:\/\/t.me\/XEvents_bot\?start=u_[a-f0-9]{32}/);
   const qr=await api(`events/${galleryId}/upload-qr`);assert.equal(qr.status,200);assert.match(qr.data.image,/^data:image\/gif;base64,/);assert.equal(qr.data.link,galleryMade.data.event.uploadLink);
@@ -230,7 +231,7 @@ try {
   const durablePref=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='preferences' AND id='456'").first()).data);
   assert.ok(['refund_pending','refunded'].includes(durablePref.starOrders[starOrder.id].status));
   assert.equal((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(starsId).first()),null);
-  const ticketInput={...input,title:'Ticket workflow',questions:'',date:'2099-10-24',requestId:'66666666-6666-6666-6666-666666666666',requireApproval:true};delete ticketInput.invitationMode;
+  const ticketInput={...input,qrEnabled:true,title:'Ticket workflow',date:'2099-10-24',requestId:'66666666-6666-6666-6666-666666666666',requireApproval:true};delete ticketInput.invitationMode;
   const ticketEvent=await api('events',ticketInput);assert.equal(ticketEvent.status,200);assert.equal(ticketEvent.data.event.invitationMode,'tickets');
   const ticketId=ticketEvent.data.event.id;
   await message(5000,`/start e_${ticketId}`,456);await callback(5001,`book:${ticketId}`,456);await message(5002,'Ticket Guest',456);await message(5003,'/skip',456);await message(5004,'/skip',456);
@@ -253,7 +254,7 @@ try {
   assert.ok(checkinMessages().length===1 || stillQueued.length===1);
   const checkedEvent=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(ticketId).first()).data);assert.equal(checkedEvent.checkIns[ticketCode].userId,456);
   await api(`events/${ticketId}/cancel`,{confirm:true});assert.equal((await api(`events/${ticketId}/ticket-check`,{code:ticketCode})).data.ticket.valid,false);
-  const namedInput={...ticketInput,title:'Named workflow',invitationMode:'named',guestNames:'Alex Smith\nSam Jones',requestId:'77777777-7777-7777-7777-777777777777'};
+  const namedInput={...ticketInput,title:'Named workflow',invitationMode:'named',askParticipantCount:true,inviteMessage:'Join our club celebration!',guestNames:'Alex Smith = 3\nSam Jones',requestId:'77777777-7777-7777-7777-777777777777'};
   const namedEvent=await api('events',namedInput);assert.equal(namedEvent.status,200);assert.equal(namedEvent.data.event.invitees.length,2);
   const namedId=namedEvent.data.event.id,personalUrl=namedEvent.data.event.invitees[0].url;
   await message(5010,'/start '+new URL(personalUrl).searchParams.get('start'),456);
@@ -263,10 +264,14 @@ try {
   await callback(5012,`r:${namedId}:yes`,456);
   assert.equal(JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='sessions' AND id='456'").first()).data).step,'phone');
   await message(5013,'/skip',456);await message(5014,'/skip',456);
-  const editedNamed=await api(`events/${namedId}/schedule`,{...namedInput,title:'Edited title',location:'Edited address',description:'Edited description',questions:'New question?',guestNames:'Alex Smith\nSam Jones\nTaylor'});
+  assert.equal((await api(`events/${namedId}`,null,456)).data.event.participants,3);
+  const editedNamed=await api(`events/${namedId}/schedule`,{...namedInput,title:'Edited title',location:'Edited address',description:'Edited description',inviteMessage:'Updated welcome message',guestNames:'Alex Smith = 3\nSam Jones\nTaylor'});
   assert.equal(editedNamed.status,200);assert.equal(editedNamed.data.event.invitees[0].url,personalUrl);
   const freshNamed=(await api(`events/${namedId}`)).data.event;
-  assert.equal(freshNamed.title,'Edited title');assert.equal(freshNamed.location,'Edited address');assert.deepEqual(freshNamed.questions,['New question?']);
+  assert.equal(freshNamed.title,'Edited title');assert.equal(freshNamed.location,'Edited address');assert.equal(freshNamed.inviteMessage,'Updated welcome message');assert.equal(freshNamed.questions,undefined);assert.equal(freshNamed.invitees[0].participants,3);
+  assert.equal((await api(`events/${namedId}/schedule`,{...namedInput,guestNames:'Alex Smith = 4\nSam Jones'})).status,400);
+  assert.equal((await api(`events/${namedId}/schedule`,{...namedInput,qrEnabled:'no'})).status,400);
+  assert.equal((await api(`events/${namedId}/schedule`,{...namedInput,inviteMessage:'X'.repeat(1001)})).status,400);
   assert.equal((await api(`events/${namedId}/schedule`,{...namedInput,invitationMode:'tickets'})).status,400);
   assert.equal((await api(`events/${namedId}/schedule`,{...namedInput,guestNames:'Sam Jones'})).status,400);
   const profileSaved=await api('preferences',{timezone:'Australia/Sydney',profileName:'Profile name',profilePhone:'+61 400 123 456'});assert.equal(profileSaved.status,200);

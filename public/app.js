@@ -82,7 +82,8 @@ function format(e, zone = selectedZone()) {
   return new Intl.DateTimeFormat('en-AU', { timeZone: zone, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(e.startsAt)) + ` (${zone})` + (e.endsAt ? '\nFinishes: ' + format({ startsAt: e.endsAt }, zone) : '');
 }
 function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener'); }
-function share(e) { if(e.invitationMode==='named' && e.isOwner)return openNamedLinks(e);openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(`You're invited to ${e.title}!`)}`); }
+function inviteText(e,guest){return [guest ? `Invitation for ${guest.name}: ${e.title}` : `You're invited to ${e.title}!`,guest?.participants ? `People: ${guest.participants}` : '',e.inviteMessage].filter(Boolean).join('\n\n');}
+function share(e) { if(e.invitationMode==='named' && e.isOwner)return openNamedLinks(e);openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(inviteText(e))}`); }
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
 function action(text, fn, className = 'secondary') { const b = element('button', text, className); b.type = 'button'; b.onclick = async () => { if(b.disabled)return; b.disabled=true; try { await fn(); } catch(error) { notice(error.message); } finally { b.disabled=false; } }; return b; }
 async function openGuestList(id) {
@@ -107,8 +108,8 @@ async function openTicket(id) {
   const {ticket}=await api(`events/${id}/ticket`,{});
   $('ticket-title').textContent=ticket.title;
   $('ticket-name').textContent=`${ticket.name} · ${ticket.participants} ${ticket.participants===1?'person':'people'}`;
-  $('ticket-image').src=ticket.image;$('ticket-code').textContent=ticket.code;
-  $('ticket-message').textContent=ticket.checkedInAt?'Already checked in.':'Show this QR code at the event.';
+  $('ticket-image').hidden=!ticket.image;if(ticket.image)$('ticket-image').src=ticket.image;else $('ticket-image').removeAttribute('src');$('ticket-code').textContent=ticket.code;
+  $('ticket-message').textContent=ticket.checkedInAt?'Already checked in.':ticket.image?'Show this QR code at the event.':'Show this ticket code at the event.';
   $('ticket-copy').onclick=async()=>{try{await navigator.clipboard.writeText(ticket.code);$('ticket-message').textContent='Ticket code copied.';}catch{$('ticket-message').textContent='Select the code to copy it.';}};
   $('ticket-close').onclick=()=>$('ticket-dialog').close();$('ticket-dialog').showModal();
 }
@@ -118,6 +119,7 @@ async function openCheckin(id) {
   const generation=++checkinGeneration;let busy=false,verifiedCode=null;
   const input=$('checkin-code'),result=$('checkin-result'),confirm=$('checkin-confirm');
   input.disabled=false;$('checkin-check').disabled=false;$('checkin-scan').disabled=false;
+  $('checkin-scan').hidden=event.qrEnabled===false;
   $('checkin-event').textContent=event.title;input.value='';result.textContent='';confirm.hidden=true;
   input.oninput=()=>{verifiedCode=null;confirm.hidden=true;result.textContent='';};
   const check=async(mark=false)=>{
@@ -212,8 +214,8 @@ function renderEvents() {
     const actions = element('div', '', 'event-actions'); actions.append(action('Open event in chat ↗', () => openTelegram(e.inviteUrl), 'primary'));
     if (e.isOwner && !e.cancelled) actions.append(action('Edit event', () => editEvent(e.id)));
     if(e.isOwner)actions.append(action('Guest list',()=>openGuestList(e.id)));
-    if(e.isOwner && !e.cancelled)actions.append(action('Scan tickets',()=>openCheckin(e.id)));
-    if(e.ticket)actions.append(action('Ticket QR',()=>openTicket(e.id)));
+    if(e.isOwner && !e.cancelled)actions.append(action(e.qrEnabled!==false?'Scan tickets':'Check tickets',()=>openCheckin(e.id)));
+    if(e.ticket && e.qrEnabled!==false)actions.append(action('Ticket QR',()=>openTicket(e.id)));
     if((e.starPrice || ['bank','link'].includes(e.paymentMethod)) && !e.isOwner && e.status==='yes' && e.approval==='approved' && e.paymentStatus!=='paid')actions.append(action(e.starPrice?'⭐ Pay with Stars':'Payment instructions',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=pay_'+e.id)));
     if(e.invitationMode==='named' && e.isOwner)actions.append(action('Guest invitations',()=>openNamedLinks(e)));else actions.append(action('Copy link', async () => { try { await navigator.clipboard.writeText(e.inviteUrl); notice('✓ Event link copied.'); } catch { notice('Could not copy the link. Use Share invite under the three-dot menu.'); } }));
     const more = document.createElement('details'); more.className = 'event-more';
@@ -224,7 +226,7 @@ function renderEvents() {
     if (e.isOwner || (e.status==='yes' && e.permissions.viewMedia)) {
       actions.append(action('🗂 Shared media', () => openGallery(e.id)));
     }
-    if (e.isOwner && e.uploadLink) extraActions.append(action('Upload link & QR code', () => showQr(e.id)));
+    if (e.isOwner && e.uploadLink) extraActions.append(e.qrEnabled!==false ? action('Upload link & QR code', () => showQr(e.id)) : action('Share upload link',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.uploadLink)}`)));
     if (e.isOwner && !e.cancelled) {
       for (const operation of ['cancel','delete']) extraActions.append(action(operation === 'cancel' ? 'Cancel event' : 'Delete event', async () => {
         const text = operation === 'delete' ? `Permanently delete “${e.title}”, including saved responses and media references? Accepted and tentative guests will be notified. Previously sent Telegram copies remain.` : `Cancel “${e.title}”? Accepted and tentative guests will be notified.`;
@@ -263,8 +265,8 @@ async function openNamedLinks(event){
     if(!e.isOwner)throw Error('Only the organiser can see invitation links.');
     const list=$('invitation-links-list');list.replaceChildren();
     for(const guest of e.invitees || []){
-      const row=element('article','','panel');row.append(element('h3',guest.name),element('p',guest.claimed ? 'Linked to a Telegram account · '+(guest.status || 'Not responded') : 'Not opened yet','small muted'),element('p',guest.url,'small'));
-      row.append(action('Copy personal link',async()=>{try{await navigator.clipboard.writeText(guest.url);notice('Personal invitation copied for '+guest.name);}catch{notice('Select and copy the link shown for '+guest.name);}}),action('Share invitation',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(guest.url)}&text=${encodeURIComponent(`Invitation for ${guest.name}: ${e.title}`)}`)));list.append(row);
+      const row=element('article','','panel');row.append(element('h3',guest.name),element('p',(guest.participants ? guest.participants+' attendees · ' : '')+(guest.claimed ? 'Linked to a Telegram account · '+(guest.status || 'Not responded') : 'Not opened yet'),'small muted'),element('p',inviteText(e,guest),'invite-message'),element('p',guest.url,'invite-link'));
+      row.append(action('Copy personal link',async()=>{try{await navigator.clipboard.writeText(guest.url);notice('Personal invitation copied for '+guest.name);}catch{notice('Select and copy the link shown for '+guest.name);}}),action('Share invitation',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(guest.url)}&text=${encodeURIComponent(inviteText(e,guest))}`)));list.append(row);
     }
     $('invitation-links-dialog').showModal();
   }catch(error){notice(error.message);}
@@ -296,8 +298,8 @@ function setupForm(event = null) {
   $('finish-date').value = event?.endDate || event?.localDate || dateInZone(Date.now(), selectedZone()); $('finish-time').value = event?.endTime || '20:00';
   updateEnding();
   const scheduleOnly = compactPicker;
-  $('title').value=event?.title || '';$('location').value=event?.location || '';$('description').value=event?.description || '';$('questions').value=(event?.questions || []).join('\n');
-  $('invitation-mode-panel').hidden=compactPicker;$('legacy-invitation-mode').hidden=event?.invitationMode!=='legacy';$('invitation-mode').value=event?.invitationMode || 'tickets';$('guest-names').value=(event?.invitees || []).map(g=>g.name).join('\n');updateInvitationMode();
+  $('title').value=event?.title || '';$('location').value=event?.location || '';$('description').value=event?.description || '';$('invite-message').value=event?.inviteMessage || '';
+  $('invitation-mode-panel').hidden=compactPicker;$('legacy-invitation-mode').hidden=event?.invitationMode!=='legacy';$('invitation-mode').value=event?.invitationMode || 'tickets';$('guest-names').value=(event?.invitees || []).map(g=>g.name+(g.participants ? ' = '+g.participants : '')).join('\n');updateInvitationMode();
   $('event-details').hidden = scheduleOnly; $('optional-details').hidden = scheduleOnly;
   $('banner-panel').hidden = compactPicker; $('banner-preview').hidden = true;
   const bannerGeneration=++bannerLoadGeneration;if(bannerPreviewUrl){URL.revokeObjectURL(bannerPreviewUrl);bannerPreviewUrl=null;}
@@ -308,6 +310,7 @@ function setupForm(event = null) {
   $('clear-draft-deadline').hidden = !deadlinePicker;
   $('ask-participant-count').checked = event?.askParticipantCount === true;
   $('ask-phone').checked=event?.askPhone===true;$('ask-comments').checked=event?.askComments===true;
+  $('qr-enabled').checked=event ? event.qrEnabled!==false : false;
   $('require-approval').checked = event?.requireApproval === true;
   $('hide-location').checked = event?.hideLocation === true || event?.requireApproval === true;
   $('hide-location').disabled = $('require-approval').checked;
@@ -469,7 +472,7 @@ $('timezone-form').onsubmit = async event => {
 };
 $('event-form').onsubmit = async event => {
   event.preventDefault(); $('save-event').disabled = true; $('form-error').hidden = true;
-  const payload = { askPhone:document.getElementById('ask-phone').checked,askComments:document.getElementById('ask-comments').checked,invitationMode:$('invitation-mode').value,guestNames:$('invitation-mode').value==='named' ? $('guest-names').value : undefined,paymentMethod:$('stars-enabled').checked ? $('payment-method').value : 'free',displayPrice:$('display-price').value,paymentInstructions:$('payment-instructions').value,paymentUrl:$('payment-url').value,starPrice:$('stars-enabled').checked && $('payment-method').value==='stars' ? Number($('stars-price').value) : 0,starPricing:$('stars-pricing').value,paymentTerms:$('payment-terms').value, askParticipantCount: $('ask-participant-count').checked, isPublic: $('event-visibility').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
+  const payload = { inviteMessage:$('invite-message').value,qrEnabled:$('qr-enabled').checked,askPhone:document.getElementById('ask-phone').checked,askComments:document.getElementById('ask-comments').checked,invitationMode:$('invitation-mode').value,guestNames:$('invitation-mode').value==='named' ? $('guest-names').value : undefined,paymentMethod:$('stars-enabled').checked ? $('payment-method').value : 'free',displayPrice:$('display-price').value,paymentInstructions:$('payment-instructions').value,paymentUrl:$('payment-url').value,starPrice:$('stars-enabled').checked && $('payment-method').value==='stars' ? Number($('stars-price').value) : 0,starPricing:$('stars-pricing').value,paymentTerms:$('payment-terms').value, askParticipantCount: $('ask-participant-count').checked, isPublic: $('event-visibility').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
   try {
     const banner = $('banner').files[0];
     if (!compactPicker && banner && (banner.size > 5 * 1024 * 1024 || !['image/jpeg','image/png','image/webp'].includes(banner.type))) throw new Error('Choose a JPG, PNG, or WebP banner smaller than 5 MB.');
@@ -480,7 +483,7 @@ $('event-form').onsubmit = async event => {
       $('open-chat').textContent = 'Continue in Telegram'; $('open-chat').onclick = () => tg?.close();
     } else {
       const path = activeEvent ? `events/${activeEvent.id}/schedule` : 'events';
-      const result = await api(path, { ...payload, title: $('title').value, location: $('location').value, description: $('description').value, questions: $('questions').value, requestId });
+      const result = await api(path, { ...payload, title: $('title').value, location: $('location').value, description: $('description').value, requestId });
       createdEvent = result.event; await refresh();
       if (banner) {
         const form = new FormData(); form.set('photo', banner);

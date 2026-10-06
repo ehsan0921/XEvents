@@ -26,3 +26,19 @@ test('check-in is idempotent and old, cancelled, finished or declined tickets fa
   e.guests[2].status='yes';e.guests[2].ticket='A'.repeat(12);assert.equal(verifyTicket(e,1,ticket.code).valid,false);
   assert.equal(verifyTicket(e,1,e.guests[2].ticket).alreadyCheckedIn,false);
 });
+
+test('disabling QR codes retains manual tickets and blocks scanning until enabled',()=>{
+  const e=fixture();e.qrEnabled=false;
+  const ticket=issueTicket(e,2);
+  assert.equal(ticket.image,null);assert.match(ticket.code,/^[A-F0-9]{12}$/);
+  assert.equal(verifyTicket(e,1,ticket.code).valid,true);
+  assert.equal(verifyTicket(e,1,`XE1:${e.id}:${ticket.code}`).valid,false);
+  assert.match(verifyTicket(e,1,`XE1:${e.id}:${ticket.code}`).reason,/QR codes are disabled/);
+  e.qrEnabled=true;
+  const enabled=issueTicket(e,2);
+  assert.equal(enabled.code,ticket.code);assert.match(enabled.image,/^data:image\/gif;base64,/);
+  assert.equal(verifyTicket(e,1,`XE1:${e.id}:${ticket.code}`).valid,true);
+  e.qrEnabled=false;
+  assert.equal(issueTicket(e,2).image,null);
+  assert.equal(verifyTicket(e,1,ticket.code,true).valid,true);
+});

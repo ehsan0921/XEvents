@@ -1,5 +1,5 @@
 export const permissionLabels = { guestList: 'See other guests', uploadMedia: 'Send photos, videos & files', viewMedia: 'See shared media' };
-export const asksPhone=e=>e.askPhone ?? (!e.invitationMode || e.invitationMode==='legacy');
+export const asksPhone=e=>e.askPhone === true;
 export const asksComments=e=>e.askComments ?? (!e.invitationMode || e.invitationMode==='legacy');
 export function permissions(event) {
   return Object.fromEntries(Object.keys(permissionLabels).map(key => [key, event.permissions?.[key] === true]));
@@ -11,7 +11,14 @@ export function guests(event) { return Object.entries(event.guests).filter(([id]
 export function confirmed(event, guest) { return guest?.status === 'yes' && (!event.requireApproval || guest.approval === 'approved') && (!paidEvent(event) || guest.payment?.status === 'paid'); }
 export function canSeeLocation(event, userId) { return event.owner === userId || (!(event.hideLocation || event.requireApproval || paidEvent(event)) || confirmed(event, event.guests[userId])); }
 export function responsesClosed(event, now = Date.now()) { return !!event.responseDeadline && new Date(event.responseDeadline).getTime() <= now; }
+export function invitationParticipants(event, guest) {
+  if(event.invitationMode!=='named')return null;
+  const invite=event.invitees?.[guest?.invitationToken];
+  return Number.isSafeInteger(invite?.participants) && invite.participants>=1 && invite.participants<=10 ? invite.participants : null;
+}
 export function participantCount(event, guest) {
+  const preset=invitationParticipants(event,guest);
+  if(preset!==null)return preset;
   return event.askParticipantCount === true && Number.isSafeInteger(guest?.participants) && guest.participants >= 1 && guest.participants <= 10000 ? guest.participants : 1;
 }
 export function responseCounts(event) {

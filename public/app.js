@@ -44,9 +44,13 @@ const bannerUrls = new Map();
 const initData = tg?.initData || '';
 document.querySelector('[data-tab="pending"]').hidden = true;
 let zones = [...new Set(['UTC', deviceZone, ...(Intl.supportedValuesOf?.('timeZone') || ['Australia/Sydney', 'Europe/London', 'America/New_York', 'Asia/Tehran'])])].sort();
-tg?.ready(); tg?.expand();
+function telegramStartup(method,...args){
+  try{return tg?.[method]?.(...args);}
+  catch(error){window.reportAppError?.(error,'Telegram '+method);}
+}
+telegramStartup('ready');telegramStartup('expand');
 function theme() { document.body.classList.toggle('dark', tg?.colorScheme === 'dark'); }
-theme(); tg?.onEvent('themeChanged', theme);
+theme(); telegramStartup('onEvent','themeChanged',theme);
 function notice(text) { $('notice').textContent = text; $('notice').hidden = !text; }
 function selectedZone() { return state.preference.timezone || deviceZone; }
 function options(id, zone, filter = '') {

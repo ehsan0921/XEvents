@@ -9,7 +9,7 @@ const eventFixture=fields=>({id:'0123456789abcdef',title:'Club evening',location
 const pendingLink=(id,label)=>({id,label,status:'pending',createdAt:'2026-10-07T00:00:00Z',cohost:null,url:'https://t.me/test?start=cohost_'+id});
 const activeLink=(id,label,person)=>({...pendingLink(id,label),status:'active',url:null,cohost:{id:2,name:'Alex',username:'alex',joinedAt:'2026-10-07T00:00:00Z',...person}});
 
-async function harness(initial,{scheduleError,clipboardMode='ok',search='',invitationError}={}){
+async function harness(initial,{scheduleError,clipboardMode='ok',search='',invitationError,telegramErrors={}}={}){
   class El{
     constructor(tag=''){this.tag=tag;this.children=[];this.dataset={};this.value='';this.files=[];this.attributes={};this.listeners={};this.open=false;this.classList={toggle(){},add(){},remove(){}};}
     append(...children){this.children.push(...children);this.firstChild=this.children[0];}
@@ -24,8 +24,9 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
   const ids=new Map([...html.matchAll(/id="([^"]+)"/g)].map(match=>[match[1],new El()]));
   const tabs=[...html.matchAll(/data-tab="([^"]+)"/g)].map(match=>{const el=match[1]==='admin'?ids.get('admin-tab'):new El();el.dataset.tab=match[1];return el;});
   const document={body:new El(),getElementById:id=>ids.get(id),createElement:tag=>new El(tag),addEventListener(){},querySelector:selector=>selector==='.bottom-nav'?new El():tabs.find(el=>selector.includes('"'+el.dataset.tab+'"')),querySelectorAll:selector=>selector==='[data-tab]'?tabs:[]};
-  const telegramLinks=[],copied=[],calls=[],errors=[];
-  const window={Telegram:{WebApp:{initData:'test-session',ready(){},expand(){},onEvent(){},openTelegramLink:url=>telegramLinks.push(url)}},scrollTo(){},reportAppError:error=>errors.push(error.message)};
+  const telegramLinks=[],telegramStartupCalls=[],copied=[],calls=[],errors=[],errorContexts=[];
+  const telegramCall=method=>{telegramStartupCalls.push(method);if(telegramErrors[method])throw new Error(telegramErrors[method]);};
+  const window={Telegram:{WebApp:{initData:'test-session',ready(){telegramCall('ready');},expand(){telegramCall('expand');},onEvent(){telegramCall('onEvent');},openTelegramLink:url=>telegramLinks.push(url)}},scrollTo(){},reportAppError:(error,context)=>{errors.push(error.message);errorContexts.push(context);}};
   let event=initial,token=0,revision=0,invitationHold;
   const project=value=>({...value,cohosts:(value.cohostLinks || []).filter(link=>link.status==='active').map(link=>link.cohost),cohost:(value.cohostLinks || []).find(link=>link.status==='active')?.cohost || null,cohostInviteUrl:[...(value.cohostLinks || [])].reverse().find(link=>link.status==='pending')?.url || null});
   const response=(data,status=200)=>({ok:status<400,status,json:async()=>data,blob:async()=>new Blob(['image'],{type:'image/jpeg'})});
@@ -71,8 +72,27 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
   const descendants=node=>node.children.flatMap(child=>[child,...descendants(child)]);
   const findButton=(id,label)=>descendants(ids.get(id)).find(node=>node.tag==='button' && node.textContent===label);
   const findEntry=id=>ids.get('cohost-list').children.find(node=>node.dataset.linkId===id);
-  return {ids,calls,errors,copied,telegramLinks,findButton,findEntry,descendants,setClipboardMode:value=>{clipboardMode=value;},setEvent:value=>{event=value;},getEvent:()=>event,setInvitationError:value=>{invitationError=value;},holdNextInvitationMutation:()=>{let release;invitationHold=new Promise(resolve=>{release=resolve;});return release;}};
+  return {ids,calls,errors,errorContexts,copied,telegramLinks,telegramStartupCalls,findButton,findEntry,descendants,setClipboardMode:value=>{clipboardMode=value;},setEvent:value=>{event=value;},getEvent:()=>event,setInvitationError:value=>{invitationError=value;},holdNextInvitationMutation:()=>{let release;invitationHold=new Promise(resolve=>{release=resolve;});return release;}};
 }
+
+for(const method of ['ready','expand','onEvent'])test('a Telegram '+method+' bridge failure keeps Home, My events and Create usable',async()=>{
+  const initial=eventFixture(),message='Fictional '+method+' bridge failure';
+  const f=await harness(initial,{telegramErrors:{[method]:message}});
+  assert.deepEqual(f.errors,[message]);
+  assert.deepEqual(f.errorContexts,['Telegram '+method]);
+  assert.deepEqual(f.telegramStartupCalls,['ready','expand','onEvent'],'a failed bridge method must not prevent the other startup calls');
+  assert.equal(f.calls.filter(call=>call.path==='/api/bootstrap').length,1);
+  assert.equal(f.ids.get('home-view').hidden,false);
+  assert.ok(f.findButton('home-upcoming','📅 View event'));
+  assert.ok(f.findButton('event-list','✏️ Edit event'));
+  f.ids.get('hero-create').onclick();
+  assert.equal(f.ids.get('create-view').hidden,false);
+  assert.equal(f.ids.get('event-form').hidden,false);
+  assert.equal(f.ids.get('invitation-mode').value,'tickets');
+  assert.ok(f.calls.every(call=>call.body===undefined || call.path==='/api/preview'),'startup and opening Create must not mutate event data');
+  assert.deepEqual(f.telegramLinks,[]);
+  assert.strictEqual(f.getEvent(),initial);
+});
 
 test('co-host events expose management actions and keep payment fields read-only',async()=>{
   const f=await harness(eventFixture({isOwner:false,isCoHost:true}));

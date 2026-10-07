@@ -25,4 +25,6 @@ The UX review covers the bot and Mini App together. Behaviour is verified with a
 
 Clicked messages lose their buttons. Other previously delivered messages cannot all be edited retroactively; new RSVP and approval messages contain response versions, so stale actions are rejected when tapped. Older messages from before version tracking still use legacy validation.
 
+Startup errors remain visible and copyable without exposing hosting addresses, launch data or credentials. Runtime diagnostics include a known public script name and line number when the browser provides them; masked external-script errors explain that details were withheld. Telegram's SDK loads with anonymous CORS so supported clients can report the underlying exception. Optional ready, expand and theme-subscription bridge failures are reported independently and do not stop event-data loading.
+
 A one-time link stays locked when its holder later chooses Respond later. Shared ticket-booking links default to reusable, with an optional one-time setting. Enabling one-time use is rejected if the affected link already has final responses from multiple accounts. A personal link identifies the first responding Telegram account, not a verified real-world identity, so organisers should send it privately to the intended guest.

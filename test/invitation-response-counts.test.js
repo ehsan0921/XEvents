@@ -104,7 +104,12 @@ test('private locations stay hidden in named invitation messages and owner share
   for(const fields of [{hideLocation:true},{requireApproval:true},{starPrice:10,starPricing:'person'}]){
     const f=fixture('Alex = 2',fields);await f.open();
     assert.doesNotMatch(f.calls.at(-1).text,/Private club house/);assert.match(f.calls.at(-1).text,/Location will be available/);
-    await f.bot.personalLinks(1,f.e);const share=buttons(f.calls.at(-1)).find(b=>b.url);
+    await f.bot.personalLinks(1,f.e);
+    const guest=buttons(f.calls.at(-1)).find(b=>b.text==='Alex'),token=Object.keys(f.e.invitees)[0];
+    assert.equal(guest.callback_data,`invite-copy:${f.e.id}:${token}`);
+    await f.cb(guest.callback_data,1);
+    assert.doesNotMatch(f.calls.at(-1).text,/Private club house/);
+    const share=buttons(f.calls.at(-1)).find(b=>b.url);
     assert.doesNotMatch(new URL(share.url).searchParams.get('text'),/Private club house/);
   }
 });

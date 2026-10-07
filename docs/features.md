@@ -39,6 +39,8 @@ Group-size selection uses buttons for 1–5 people and **More** for 6–10. Coun
 
 **Respond later** keeps an unanswered named invitation in the pending list. The Pending button is hidden when none remain. After acceptance, guests see Change response and the extra actions enabled by the host. Declined and tentative responses do not gain accepted-guest actions. Hosts receive response notifications; guests receive approval/rejection notifications when ticket booking requires review.
 
+In Telegram, **Manage → Invitation links** shows ten guests per page with their names on the buttons. Short invitations copy the complete message and personal link directly. Longer invitations open the selected guest in App, where a name button copies the full text. Without App, the bot displays the full invitation to select, copy or share. The Mini App also supports guest search and a selectable-text fallback if clipboard access is unavailable.
+
 Read the [invitation guide](invitations.md) for link ownership, response changes, deadlines, and co-hosts. Existing events keep their original links and responses; older events can retain legacy defaults rather than adopting every new-event default.
 
 ## Guest management and co-hosting
@@ -47,7 +49,9 @@ Hosts can review accepted responses and total people, with approval requests and
 
 The main event actions include opening the event in chat, editing, copying the invite link, and shared media when available. Secondary actions sit under the three-dot menu.
 
-Each event can have one active co-host, added through a one-use private link. A co-host can edit event details, manage responses, share personal invitations, use shared media, and check guests in. The owner controls payment settings, co-host access, cancellation, and deletion. Host tools can expose submitted guest contact details to the co-host, so invite someone you trust.
+An owner can create multiple co-host links with optional labels. Each private link works once; after it is claimed, the owner sees the claimant's Telegram name, @handle when available, and numeric ID beside its label. Cancel an unused link or revoke a particular co-host without affecting other hosts. Revoked entries retain their status for the owner to review.
+
+Co-hosts can edit event details, manage responses, share personal invitations, use shared media, and check guests in. The owner controls payment settings, co-host access, cancellation, and deletion. Revocation removes management access immediately and preserves existing guest responses and tickets. Host tools expose submitted guest contact details to co-hosts, so invite people you trust.
 
 Cancelling or deleting asks for confirmation and notifies accepted and tentative guests. Paid orders remain available for refund handling after event deletion; see [payments and refunds](payments.md).
 

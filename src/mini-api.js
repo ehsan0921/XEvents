@@ -3,7 +3,7 @@ import {issueTicket,verifyTicket} from './tickets.js';
 import {profileFields,profilePreference,profilePhotoApi} from './profile.js';
 import {readOnlinePricing} from './exchange.js';
 import {invitationMode,invitationSettings,namedLink,oneTimeInvites,invitationAvailable,reconcileInvitationClaims} from './invitations.js';
-import {isManager,cohostLink,cohostVersion,createCohostInvite,revokeCohost} from './cohosts.js';
+import {isManager,cohostEntries,cohostLink,cohostVersion,createCohostInvite,revokeCohost} from './cohosts.js';
 import { authenticate } from './mini-auth.js';
 import { parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
@@ -80,6 +80,7 @@ function cohostSettings(input,event) {
 }
 export function publicEvent(e, id, username) {
   const manager=isManager(e,id),owner=e.owner===id;
+  const entries=cohostEntries(e),cohosts=entries.filter(entry=>entry.status==='active' && entry.cohost).map(entry=>entry.cohost);
   return {
     invitationMode:invitationMode(e),guestName:e.owner!==id ? e.guests[id]?.name || null : null,
     askPhone:asksPhone(e),askComments:asksComments(e),
@@ -88,8 +89,8 @@ export function publicEvent(e, id, username) {
     ...(manager ? {invitees:Object.entries(e.invitees || {}).map(([token,g])=>{
       const opened=Object.values(e.guests).filter(guest=>guest.invitationToken===token),responded=opened.find(guest=>['yes','no','maybe'].includes(guest.status));
       return {name:g.name,participants:g.participants || null,participantMode:g.participantMode || null,claimed:!!g.respondedBy || !!responded,status:(responded || opened[0])?.status || null,url:namedLink(e,token,username)};
-    }),cohost:e.cohost ? {id:e.cohost.id,name:e.cohost.name,username:e.cohost.username || '',joinedAt:e.cohost.joinedAt}:null} : {}),
-    ...(owner ? {cohostInviteUrl:cohostLink(e,username),cohostVersion:cohostVersion(e)} : {}),
+    }),cohosts,cohost:cohosts[0] || null} : {}),
+    ...(owner ? {cohostLinks:entries.map(entry=>({id:entry.id,label:entry.label,status:entry.status,createdAt:entry.createdAt,cohost:entry.cohost,url:cohostLink(e,username,entry.id),...(entry.revokedAt ? {revokedAt:entry.revokedAt}:{})})),cohostInviteUrl:cohostLink(e,username),cohostVersion:cohostVersion(e)} : {}),
     id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
     endsAt: e.endsAt || null, durationMinutes: e.durationMinutes || null, endMode: e.endMode || 'none', endDate: e.endDate || '', endTime: e.endTime || '',
@@ -191,7 +192,7 @@ export async function miniApi(request, env) {
   }
   if (path === '/api/bootstrap' && request.method === 'GET') {
     await rememberUser(env, user);
-    const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND (json_extract(data,'$.owner')=? OR json_extract(data,'$.cohost.id')=? OR json_type(data,?) IS NOT NULL)").bind(user.id,user.id, `$.guests."${user.id}"`).all();
+    const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND (json_extract(data,'$.owner')=? OR json_extract(data,'$.cohost.id')=? OR EXISTS (SELECT 1 FROM json_each(records.data,'$.cohostLinks') AS link WHERE json_extract(link.value,'$.status')='active' AND json_extract(link.value,'$.cohost.id')=?) OR json_type(data,?) IS NOT NULL)").bind(user.id,user.id,user.id, `$.guests."${user.id}"`).all();
     const preference = await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(user.id)).first();
     const session = await env.DB.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(user.id)).first();
     const s = session ? JSON.parse(session.data) : null;
@@ -199,7 +200,7 @@ export async function miniApi(request, env) {
     const pricing=await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id='_pricing'").first();
     const pref=preference ? JSON.parse(preference.data) : {};
     const branding=await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id='_branding'").first();
-    return respond({branding:{hasIcon:!!(branding && JSON.parse(branding.data).botIcon)},pricing:await readOnlinePricing(env,pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { id: user.id, firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: profilePreference(pref), session: pickerSession, events: results.map(r=>JSON.parse(r.data)).filter(e=>isManager(e,user.id) || invitationAvailable(e,user.id)).map(e=>publicEvent(e,user.id,env.BOT_USERNAME)) });
+    return respond({branding:{hasIcon:!!(branding && JSON.parse(branding.data).botIcon)},pricing:await readOnlinePricing(env,pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { id: user.id, firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: profilePreference(pref), session: pickerSession, events: results.map(r=>JSON.parse(r.data)).filter(e=>isManager(e,user.id) || (e.guests[user.id] && invitationAvailable(e,user.id))).map(e=>publicEvent(e,user.id,env.BOT_USERNAME)) });
   }
   if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
   const raw = await request.text();
@@ -276,14 +277,15 @@ export async function miniApi(request, env) {
         if(!e || e.owner!==id)throw new InputError('Only the event owner can manage the co-host.');
         if(input.version!==cohostVersion(e))throw new InputError('Co-host access has changed. Refresh the event and try again.');
         if(cohostMatch[2]==='invite'){
-          createCohostInvite(e,id);
-          await bot.send(id,`Co-host invitation for ${e.title}\n${cohostLink(e,env.BOT_USERNAME)}\nShare this private link with your co-host. It can be used once.`);
+          const entry=createCohostInvite(e,id,input.label);
+          await bot.send(id,`Co-host invitation for ${e.title}${entry.label ? ` · ${entry.label}`:''}\n${cohostLink(e,env.BOT_USERNAME,entry.id)}\nShare this private link with your co-host. It can be used once.`);
         }else{
-          const previous=e.cohost;
-          revokeCohost(e,id);
-          if(previous && data.sessions[previous.id]?.event===e.id)bot.session(previous.id);
-          if(previous)await bot.send(previous.id,`Your co-host access to ${e.title} has been removed.`);
-          await bot.send(id,`Co-host access removed for ${e.title}. Any unused co-host link is now invalid.`);
+          const entry=cohostEntries(e).find(item=>item.id===input.linkId),previous=revokeCohost(e,id,input.linkId);
+          if(previous && !isManager(e,previous.id)){
+            if(data.sessions[previous.id]?.event===e.id)bot.session(previous.id);
+            await bot.send(previous.id,`Your co-host access to ${e.title} has been removed.`);
+          }
+          await bot.send(id,`Co-host invitation revoked for ${e.title}${entry.label ? ` · ${entry.label}`:''}. Other co-host access is unchanged.`);
         }
         return {event:publicEvent(e,id,env.BOT_USERNAME)};
       }

@@ -30,7 +30,7 @@ Product screenshots are not checked in yet. The [screenshot capture guide](docs/
 | Area | What XEvents supports |
 | --- | --- |
 | **Events** | Banners, custom invitation messages, local timezones, duration or finish time, reminders, and public discovery by saved timezone. |
-| **Invitations & RSVP** | Named guest links with Accept, Reject, Maybe, and Respond later; optional group counts; response deadlines; one-time links; one co-host per event. |
+| **Invitations & RSVP** | Named guest links with Accept, Reject, Maybe, and Respond later; guest-name copy buttons; optional group counts; response deadlines; one-time links; multiple co-hosts through labelled links. |
 | **Tickets & check-in** | Shared booking links, optional organiser approval, unique ticket codes, optional QR codes, group check-in, and guest check-in notifications. |
 | **Payments** | Free events, text prices with organiser-verified bank transfers or external payment links, and Telegram Stars. Stars payouts to organisers are manual. |
 | **Media** | Photos, videos, and files; previews; Save and Send to Telegram; optional media-only upload links. |
@@ -53,6 +53,8 @@ Product screenshots are not checked in yet. The [screenshot capture guide](docs/
 | `Casey` | One person. |
 
 Counts include the guest and range from 1 to 10. Named invitations save RSVPs directly and do not require organiser approval. See the [invitation guide](docs/invitations.md) for one-time links, deadlines, and co-host permissions.
+
+In the bot, **Manage → Invitation links** lists guests by name. Short invitations copy immediately; longer ones open the selected guest in **App**, where their name button copies the full message and link.
 
 ## Run XEvents yourself
 
@@ -116,7 +118,7 @@ Direct card processing, automatic organiser payouts, and calendar synchronisatio
 | Guide | Start here when you want to… |
 | --- | --- |
 | [Features and examples](docs/features.md) | Understand the app and choose a workflow for your community. |
-| [Invitations](docs/invitations.md) | Set up RSVP lists, group counts, deadlines, privacy, or a co-host. |
+| [Invitations](docs/invitations.md) | Set up RSVP lists, guest-name copying, group counts, deadlines, privacy, and co-host access. |
 | [Payments](docs/payments.md) | Configure paid events, payment review, Stars, or refunds. |
 | [Self-hosting](docs/self-hosting.md) | Run your own bot, Mini App, and database. |
 | [Architecture](docs/architecture.md) | Find the relevant code and understand deployment constraints. |

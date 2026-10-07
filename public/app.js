@@ -89,13 +89,14 @@ function format(e, zone = selectedZone()) {
 function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener'); }
 function invitationGuestLine(guest){return guest.name+(guest.participantMode==='ask' ? ' = ?' : guest.participants ? ' = '+guest.participants+(guest.participantMode==='confirm' ? '!' : '') : '');}
 function inviteText(e,guest){
-  const when=e.startsAt ? format({startsAt:e.startsAt},e.timezone || selectedZone()) : e.when;
+  const when=e.startsAt ? format(e,e.timezone || selectedZone()) : e.when;
   const paid=e.starPrice>0 || ['bank','link','stars'].includes(e.paymentMethod);
   const privateLocation=e.hideLocation || e.requireApproval || e.locationAfterApproval || paid;
   const location=e.location && !privateLocation ? `At ${e.location}.` : paid ? e.requireApproval ? 'Location will be available after organiser approval and confirmed payment.' : 'Location will be available after confirmed payment.' : e.requireApproval ? 'Location will be available after organiser approval.' : 'Location will be available after your response.';
   const askCount=guest && (guest.participantMode==='ask' || (!guest.participants && e.askParticipantCount));
   const participants=guest?.participants || 1;
-  return [guest ? `Dear ${guest.name},` : '',`You are invited to ${e.title}${when ? ' on '+when : ''}.`,location,guest ? askCount ? 'Please choose how many people will attend.' : `Host has reserved ${participants} ${participants===1?'place':'places'} for you.` : '',e.inviteMessage,'Please respond below.'].filter(Boolean).join('\n\n');
+  const deadline=e.responseDeadline ? 'Please respond by '+format({startsAt:e.responseDeadline},e.timezone || selectedZone())+'.' : '';
+  return [guest ? `Dear ${guest.name},` : '',`You are invited to ${e.title}${when ? ' on '+when : ''}.`,location,priceLabel(e),guest ? askCount ? 'Please choose how many people will attend.' : `Host has reserved ${participants} ${participants===1?'place':'places'} for you.` : '',deadline,e.inviteMessage,'Please respond below.'].filter(Boolean).join('\n\n');
 }
 function share(e) { if(e.invitationMode==='named' && isManager(e))return openNamedLinks(e);openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(inviteText(e))}`); }
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
@@ -173,49 +174,67 @@ function confirmAction(message, operation) {
     dialog.showModal(); $('confirm-back').focus();
   });
 }
-let cohostEventId=null,cohostGeneration=0;
-function renderCoHost(event){
-  const cohost=event.cohost,link=event.cohostInviteUrl;
-  $('cohost-event-title').textContent=event.title;
-  $('cohost-settings-summary').textContent=cohost ? 'Manage co-host access' : link ? 'Share or cancel invite' : 'Invite a co-host';
-  $('cohost-identity').hidden=!cohost;
-  $('cohost-identity').textContent=cohost ? (cohost.name || 'Telegram user')+' · '+(cohost.username ? '@'+cohost.username.replace(/^@/,'') : 'No Telegram username') : '';
-  $('cohost-empty').hidden=!!cohost;$('cohost-empty').textContent=link ? 'Invite link ready. The first Telegram account to open it becomes your co-host. Share it privately with one trusted person.' : 'No co-host yet. Create a one-use link for someone you trust.';
-  $('cohost-link').hidden=!link;$('cohost-link').textContent=link || '';
-  for(const id of ['cohost-copy','cohost-share'])$(id).hidden=!link;
-  $('cohost-generate').hidden=!!cohost;$('cohost-generate').textContent=link ? 'Create new invite link' : 'Create invite link';
-  $('cohost-revoke').hidden=!cohost && !link;$('cohost-revoke').textContent=cohost ? 'Revoke co-host access' : 'Cancel invite link';
-  $('cohost-copy').onclick=async()=>{try{await navigator.clipboard.writeText(link);$('cohost-status').textContent='Co-host invite link copied.';}catch{$('cohost-status').textContent='Select and copy the invite link shown above.';}};
-  $('cohost-share').onclick=()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('Join me as co-host for '+event.title+'. This link is for you only.')}`);
-  $('cohost-generate').onclick=()=>changeCoHost(event,'invite');
-  $('cohost-revoke').onclick=()=>changeCoHost(event,'revoke');
+let cohostEventId=null,cohostGeneration=0,cohostBusy=false,cohostControls=[];
+function setCoHostBusy(busy){
+  cohostBusy=busy;
+  for(const control of [$('cohost-generate'),$('cohost-label'),...cohostControls])control.disabled=busy;
 }
-async function changeCoHost(event,operation){
-  if(!event.isOwner)return;
-  if(operation==='invite' && event.cohostInviteUrl && !await confirmAction('Replace the unused co-host invite for “'+event.title+'”? The previous link will stop working.','cohost-rotate'))return;
-  if(operation==='revoke'){
-    const message=event.cohost ? 'Remove '+(event.cohost.name || 'your co-host')+' from “'+event.title+'”? They will immediately lose management access. You can invite another co-host afterwards.' : 'Cancel the unused co-host invite for “'+event.title+'”? That link will stop working.';
-    if(!await confirmAction(message,event.cohost?'cohost-revoke':'cohost-cancel-link'))return;
+function renderCoHost(event){
+  const entries=event.cohostLinks || [];
+  $('cohost-event-title').textContent=event.title;
+  $('cohost-summary').textContent=entries.length ? ['active','pending','revoked'].map(status=>entries.filter(entry=>entry.status===status).length+' '+status).join(' · ') : 'No co-hosts yet. Add a one-use invitation for someone you trust.';
+  const list=$('cohost-list');list.replaceChildren();cohostControls=[];
+  for(const entry of entries){
+    const label=entry.label || 'Untitled invitation',person=entry.cohost;
+    const row=element('article','','panel cohost-entry');row.dataset.linkId=entry.id;
+    const heading=element('div','','cohost-entry-heading');heading.append(element('h3',label),element('span',{pending:'Pending',active:'Active',revoked:'Revoked'}[entry.status] || entry.status,'tag'));row.append(heading);
+    if(person)row.append(element('p',(person.name || 'Telegram user')+' · '+(person.username ? '@'+person.username.replace(/^@/,'') : 'No Telegram username')+' · ID '+person.id,'cohost-identity'));
+    else row.append(element('p',entry.status==='revoked' ? 'This invitation is no longer usable.' : 'The first eligible Telegram account to open this link becomes a co-host.','small muted'));
+    const actions=element('div','','event-actions');
+    if(entry.status==='pending' && entry.url){
+      row.append(element('p',entry.url,'invite-link'));
+      const copy=action('Copy link',async()=>{try{await navigator.clipboard.writeText(entry.url);$('cohost-status').textContent='Co-host invite link copied.';}catch{$('cohost-status').textContent='Select and copy the link shown for '+label+'.';}});
+      const share=action('Share privately',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(entry.url)}&text=${encodeURIComponent('Join me as co-host for '+event.title+'. This link is for you only.')}`));
+      actions.append(copy,share);cohostControls.push(copy,share);
+    }
+    if(entry.status!=='revoked'){
+      const revoke=action(entry.status==='active'?'Revoke access':'Cancel invite',()=>changeCoHost(event,'revoke',entry));revoke.setAttribute('aria-label',(entry.status==='active'?'Revoke access for ':'Cancel invite for ')+label);actions.append(revoke);cohostControls.push(revoke);
+    }
+    row.append(actions);list.append(row);
   }
-  for(const id of ['cohost-generate','cohost-revoke','cohost-copy','cohost-share'])$(id).disabled=true;
+  $('cohost-generate').onclick=()=>changeCoHost(event,'invite');
+  setCoHostBusy(cohostBusy);
+}
+async function changeCoHost(event,operation,entry){
+  if(!event.isOwner || cohostBusy)return;
+  const generation=cohostGeneration,label=$('cohost-label').value.trim();
+  if(operation==='invite' && label.length>80){$('cohost-status').textContent='Use a label of at most 80 characters.';return;}
+  if(operation==='revoke'){
+    if(!entry || entry.status==='revoked')return;
+    const name=entry.label || 'Untitled invitation';
+    const message=entry.status==='active' ? 'Remove '+(entry.cohost?.name || 'this co-host')+' ('+name+') from “'+event.title+'”? They will immediately lose management access. Other co-hosts and invitations stay active.' : 'Cancel the unused co-host invite “'+name+'” for “'+event.title+'”? That link will stop working. Other co-hosts and invitations stay active.';
+    if(!await confirmAction(message,entry.status==='active'?'cohost-revoke':'cohost-cancel-link'))return;
+  }
+  if(generation!==cohostGeneration || cohostEventId!==event.id)return;
+  setCoHostBusy(true);
   $('cohost-status').textContent='Saving…';
   try{
-    const {event:updated}=await api(`events/${event.id}/cohost/${operation}`,{version:event.cohostVersion || 'none'});
+    const {event:updated}=await api(`events/${event.id}/cohost/${operation}`,{version:event.cohostVersion,...(operation==='invite'?{label}:{linkId:entry.id})});
     const index=state.events.findIndex(item=>item.id===updated.id);if(index>=0)state.events[index]=updated;
     renderEvents();renderHome();
-    if(cohostEventId===event.id && $('cohost-dialog').open){renderCoHost(updated);$('cohost-status').textContent=operation==='invite' ? 'One-use co-host invite created.' : event.cohost ? 'Co-host access revoked.' : 'Invite link cancelled.';}
+    if(generation===cohostGeneration && cohostEventId===event.id && $('cohost-dialog').open){renderCoHost(updated);if(operation==='invite')$('cohost-label').value='';$('cohost-status').textContent=operation==='invite' ? 'One-use co-host invite created.' : entry.status==='active' ? 'Co-host access revoked.' : 'Invite link cancelled.';}
   }catch(error){
-    if(cohostEventId===event.id && $('cohost-dialog').open){
-      try{const {event:latest}=await api(`events/${event.id}`);if(latest.isOwner && cohostEventId===event.id){renderCoHost(latest);const index=state.events.findIndex(item=>item.id===latest.id);if(index>=0)state.events[index]=latest;}}catch{}
-      $('cohost-status').textContent=error.message+' Review the current co-host before trying again.';
+    if(generation===cohostGeneration && cohostEventId===event.id && $('cohost-dialog').open){
+      try{const {event:latest}=await api(`events/${event.id}`);if(latest.isOwner && generation===cohostGeneration && cohostEventId===event.id){renderCoHost(latest);const index=state.events.findIndex(item=>item.id===latest.id);if(index>=0)state.events[index]=latest;}}catch{}
+      if(generation===cohostGeneration)$('cohost-status').textContent=error.message+' Review the current co-host list before trying again.';
     }
   }
-  finally{for(const id of ['cohost-generate','cohost-revoke','cohost-copy','cohost-share'])$(id).disabled=false;}
+  finally{setCoHostBusy(false);}
 }
 async function openCoHost(id){
   const generation=++cohostGeneration,{event}=await api(`events/${id}`);if(generation!==cohostGeneration)return;
-  if(!event.isOwner)throw Error('Only the event owner can manage the co-host.');
-  cohostEventId=id;renderCoHost(event);$('cohost-settings').open=false;$('cohost-status').textContent='';$('cohost-dialog').showModal();
+  if(!event.isOwner)throw Error('Only the event owner can manage co-hosts.');
+  cohostEventId=id;renderCoHost(event);$('cohost-settings').open=false;$('cohost-label').value='';$('cohost-status').textContent='';$('cohost-dialog').showModal();
 }
 $('cohost-close').onclick=()=>$('cohost-dialog').close();
 $('cohost-dialog').onclose=()=>{cohostGeneration++;cohostEventId=null;};
@@ -283,7 +302,7 @@ function renderEvents() {
     const moreToggle = element('summary','⋯'); moreToggle.setAttribute('aria-label',`More options for ${e.title}`);
     const extraActions = element('div','','event-more-panel'); more.append(moreToggle,extraActions);
     extraActions.append(action('Share invite', () => share(e)));
-    if(e.isOwner && !e.cancelled)extraActions.append(action('Co-host',()=>openCoHost(e.id)));
+    if(e.isOwner && !e.cancelled)extraActions.append(action('Co-hosts',()=>openCoHost(e.id)));
     if(e.starPrice || ['bank','link'].includes(e.paymentMethod))extraActions.append(action(e.isOwner?'Payments & refunds':'Payment support',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=payments')));
     if (isManager(e) || (e.status==='yes' && e.permissions.viewMedia)) {
       actions.append(action('🗂 Shared media', () => openGallery(e.id)));
@@ -332,21 +351,35 @@ function updateInvitationMode(resetOneTime=false){
 }
 $('invitation-mode').onchange=()=>updateInvitationMode(true);
 $('one-time-invite').onchange=()=>updateInvitationMode();
+let invitationLinksGeneration=0;
 $('invitation-links-close').onclick=()=>$('invitation-links-dialog').close();
-async function openNamedLinks(event){
+$('invitation-links-dialog').onclose=()=>{invitationLinksGeneration++;};
+async function openNamedLinks(event,selectedGuest){
+  const generation=++invitationLinksGeneration;
   try{
     const {event:e}=await api(`events/${event.id}`);
+    if(generation!==invitationLinksGeneration)return;
     if(!isManager(e))throw Error('Only event managers can see invitation links.');
     $('invitation-links-note').textContent=oneTimeInviteEnabled(e) ? 'Send each link only to its named guest. Accept, Decline or Maybe locks it to that guest; Respond later does not. The same guest can change their RSVP.' : 'These links can be used by more than one guest. Each guest can change their own RSVP.';
-    const list=$('invitation-links-list');list.replaceChildren();
-    for(const guest of e.invitees || []){
+    const list=$('invitation-links-list');list.replaceChildren();$('invitation-links-status').textContent='';
+    const guests=[...(e.invitees || [])],selected=selectedGuest && guests.find(guest=>{try{return new URL(guest.url).searchParams.get('start')==='i_'+e.id+'_'+selectedGuest;}catch{return false;}});
+    if(selected){guests.splice(guests.indexOf(selected),1);guests.unshift(selected);}
+    else if(selectedGuest)$('invitation-links-status').textContent='That invitation is unavailable. Choose a guest below.';
+    const search=$('invitation-links-search');search.value='';search.hidden=guests.length<=10;
+    const rows=[];let selectedButton;
+    for(const guest of guests){
       const count=guest.participants || 1,countLabel=guest.participantMode==='ask' || (!guest.participants && e.askParticipantCount) ? 'Guest chooses attendee count' : count+' '+(count===1?'attendee':'attendees')+(guest.participants ? guest.participantMode==='confirm' ? ' · Confirm count on acceptance' : ' · Guest can change count' : '');
       const responseLabel={yes:'Accepted',no:'Declined',maybe:'Maybe',later:'Awaiting RSVP'}[guest.status] || 'Not opened';
       const linkLabel=oneTimeInviteEnabled(e) ? guest.claimed ? 'Locked to one guest' : 'One-time link' : 'Reusable link';
-      const row=element('article','','panel');row.append(element('h3',guest.name),element('p',countLabel+' · '+responseLabel+' · '+linkLabel,'small muted'),element('p',inviteText(e,guest),'invite-message'),element('p',guest.url,'invite-link'));
-      row.append(action('Copy personal link',async()=>{try{await navigator.clipboard.writeText(guest.url);notice('Personal invitation copied for '+guest.name);}catch{notice('Select and copy the link shown for '+guest.name);}}),action('Share invitation',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(guest.url)}&text=${encodeURIComponent(inviteText(e,guest))}`)));list.append(row);
+      const text=inviteText(e,guest)+'\n\n'+guest.url,row=element('article','','panel invitation-entry'+(guest===selected?' invitation-selected':''));
+      const preview=element('details','','invitation-preview'),fullText=document.createElement('textarea');fullText.value=text;fullText.readOnly=true;fullText.rows=9;fullText.setAttribute('aria-label','Full invitation for '+guest.name);preview.append(element('summary','Preview invitation'),fullText);
+      const copy=action(guest.name,async()=>{try{await navigator.clipboard.writeText(text);if(generation===invitationLinksGeneration)$('invitation-links-status').textContent='Invitation copied for '+guest.name+'.';}catch{if(generation!==invitationLinksGeneration)return;preview.open=true;fullText.focus();fullText.select();$('invitation-links-status').textContent='Could not copy. Select and copy the full invitation shown for '+guest.name+'.';}},'primary invitation-copy');copy.setAttribute('aria-label','Copy invitation for '+guest.name);
+      const actions=element('div','','event-actions');actions.append(action('Share invitation',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(guest.url)}&text=${encodeURIComponent(inviteText(e,guest))}`)));
+      row.append(copy,element('p',countLabel+' · '+responseLabel+' · '+linkLabel,'small muted'),actions,preview);list.append(row);rows.push({row,name:guest.name.toLocaleLowerCase()});if(guest===selected)selectedButton=copy;
     }
+    search.oninput=()=>{const term=search.value.trim().toLocaleLowerCase();for(const item of rows)item.row.hidden=!item.name.includes(term);$('invitation-links-empty').hidden=rows.some(item=>!item.row.hidden);};search.oninput();
     $('invitation-links-dialog').showModal();
+    if(selectedButton){selectedButton.focus();selectedButton.scrollIntoView?.({block:'nearest'});}
   }catch(error){notice(error.message);}
 }
 async function loadBannerPreview(id,generation){
@@ -636,7 +669,7 @@ if (!initData) {
     const data = await refresh();
     if (!state.preference.timezone) { const saved = await api('preferences', { timezone: deviceZone }); state.preference = saved.preference; await refresh(); }
     if (compactPicker) { setupForm(state.events.find(e => e.id === data.session?.event) || null); document.querySelector('.bottom-nav').hidden = true; if (data.session?.token !== query.get('session')) { notice('This picker has expired. Open a new picker from the current chat step.'); $('save-event').disabled = true; } }
-    else if(query.get('invitations'))await openNamedLinks({id:query.get('invitations')});
+    else if(query.get('invitations'))await openNamedLinks({id:query.get('invitations')},query.get('guest'));
     else if (query.get('gallery')) await openGallery(query.get('gallery'));
     else if (query.get('qr')) await showQr(query.get('qr'));
     else if(query.get('ticket'))await openTicket(query.get('ticket'));

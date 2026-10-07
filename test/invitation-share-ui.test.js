@@ -5,7 +5,8 @@ import fs from 'node:fs';
 const source=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 const start=source.indexOf('function dateInZone('),end=source.indexOf('function share(e)',start);
 assert.ok(start>=0 && end>start);
-const {invitationGuestLine,inviteText}=new Function('selectedZone',source.slice(start,end)+'\nreturn {invitationGuestLine,inviteText};')(()=> 'Europe/London');
+const pricing=source.slice(source.indexOf('function priceLabel('),source.indexOf('function priceEstimate('));
+const {invitationGuestLine,inviteText}=new Function('selectedZone',pricing+source.slice(start,end)+'\nreturn {invitationGuestLine,inviteText};')(()=> 'Europe/London');
 const event={title:'Club dinner',location:'Private club address',startsAt:'2099-10-24T08:00:00Z',timezone:'Australia/Sydney',inviteMessage:'Bring your team scarf.'};
 
 test('editing named guests preserves ask, confirmation, editable preset and default count syntax',()=>{

@@ -64,7 +64,9 @@ A guest's selected count survives reopening the invitation. Editable counts can 
 
 ### Personal links and edits
 
-Open **Guest invitations** for the event to copy or share each guest's link. Guest names and unused links are private to the event hosts. Send personal links privately: possession of a link does not prove someone's real-world identity.
+In the bot, open **Manage → Invitation links** to see guest-name buttons, with ten guests per page and two buttons per row. When the complete invitation and link fit Telegram's 256-character copy-button limit, tapping the name copies them immediately. Longer invitations open that guest in **App**; tap their name there to copy the full message and personal link. Without App, the bot displays the full invitation with a Share action so you can select and copy it. Messages are not truncated to fit the button.
+
+The Mini App's **Guest invitations** view also offers guest-name copy buttons, search for larger lists, invitation previews and sharing. If clipboard access fails, the full text is selected for manual copying. Guest names and unused links are private to the event hosts. Send personal links privately: possession of a link does not prove someone's real-world identity.
 
 Links stay stable when you save the same guest names and count settings. Removing an unopened name revokes its link. Once an invitation has been opened, the guest-list editor cannot remove or rename it, or change its count or selection mode. This edit protection applies even if the guest has only opened the link or chosen Later; it is separate from the one-time-use lock described below.
 
@@ -128,12 +130,14 @@ Validation checks current confirmation and payment status. Cancelled events and 
 
 Owners can cancel or delete an event and notify guests who accepted or chose Maybe. Cancellation retains the event record; deletion removes it. Payment records and refund handling are described in [payments](payments.md#changes-and-refunds).
 
-## Share hosting with one co-host
+## Share hosting with co-hosts
 
-In **My events**, open the three-dot menu, choose **Co-host** and expand its controls. The owner can create a one-use link. Share it privately: the first eligible Telegram account to open it in the bot becomes the event's co-host. Opening the Mini App alone does not claim the role. The panel shows the co-host's Telegram name and @username, or **No Telegram username**.
+In **My events**, open the three-dot menu and choose **Co-hosts**, or use the bot's organiser tools. The owner can create multiple one-use links and optionally give each a label of up to 80 characters, such as `Door team` or `Club secretary`. Share each link privately: the first eligible Telegram account to open it in the bot becomes a co-host. Opening the Mini App alone does not claim the role.
 
-Each event supports one active co-host. They can edit event details, schedules, banners and guest options; share personal invitations; manage responses and approve ticket requests; use shared media; and check in tickets. Their events appear as **Co-hosting**.
+The owner sees each link's label and pending, active or revoked status. Claimed entries show the person's Telegram name, @username when available and numeric Telegram ID; a missing username is shown as **No Telegram username**. A person who is already a co-host cannot consume another link for the same event, leaving it available for someone else.
 
-Payment settings are read-only for co-hosts. Only the owner can confirm manual payments, manage refunds, create or revoke co-host access, cancel or delete the event. The owner can replace or cancel an unused co-host link, or revoke the active co-host and invite someone new. Replacement invalidates the old unused link; revocation removes host access immediately. If access changes while a confirmation is open, refresh and review the current state before retrying.
+Co-hosts can edit event details, schedules, banners and guest options; share personal invitations; manage responses and approve ticket requests; use shared media; and check in tickets. Their events appear as **Co-hosting**. Payment settings are read-only for co-hosts. Only the owner can confirm manual payments, manage refunds, create or revoke co-host access, cancel or delete the event.
+
+Cancel an unused link or revoke a particular active co-host from their entry. This invalidates that link or removes that person's management access immediately, without affecting other co-hosts or pending links. The owner can create a new link afterwards. Revoked entries remain visible for review. If an entry changes while a confirmation is open, review its current state before retrying; a stale confirmation cannot revoke a newly claimed entry.
 
 Becoming or ceasing to be a co-host preserves an existing guest response and paid ticket. It does not transfer event ownership or create a new RSVP.

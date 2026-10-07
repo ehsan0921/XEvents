@@ -55,7 +55,12 @@ test('custom invitation message reaches event cards and public or personal Teleg
     const f=fixture(mode,{inviteMessage});
     await f.open();assert.ok(f.calls.some(c=>c.chat_id===2 && (c.text || c.caption || '').includes(inviteMessage)));
     f.calls.length=0;
-    if(mode==='named')await f.bot.personalLinks(1,f.e);else await f.bot.card(1,f.e);
+    if(mode==='named'){
+      await f.bot.personalLinks(1,f.e);
+      assert.ok(f.calls.some(c=>c.reply_markup?.inline_keyboard?.flat().some(b=>b.text==='Alex')));
+      const token=Object.keys(f.e.invitees)[0];
+      await f.cb(1,`invite-copy:${f.e.id}:${token}`);
+    }else await f.bot.card(1,f.e);
     const shares=f.calls.flatMap(c=>c.reply_markup?.inline_keyboard?.flat() || []).filter(b=>b.url?.startsWith('https://t.me/share/url?'));
     assert.equal(shares.length,1);
     const share=new URL(shares[0].url);assert.ok(share.searchParams.get('text').includes(inviteMessage));

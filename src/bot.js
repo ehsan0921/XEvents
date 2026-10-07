@@ -1,6 +1,7 @@
 import {paymentMethod,paidEvent} from './event-payment.js';
-import {invitationMode,claimInvitation,namedLink,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
-import {isManager,cohostLink,createCohostInvite,revokeCohost,claimCohost} from './cohosts.js';
+import {invitationMode,claimInvitation,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
+import {isManager,cohostEntries,cohostIds,cohostGuard,cohostLink,createCohostInvite,revokeCohost,claimCohost} from './cohosts.js';
+import {invitationLinksCard,invitationCopyCard} from './invitation-links.js';
 import {manualInstructions,manualReport,manualConfirm} from './manual-payment.js';
 import { priceText } from './pricing.js';
 import { randomBytes } from 'node:crypto';
@@ -34,7 +35,7 @@ export class Bot {
     if (s.step === 'phone') return reply([{ text: '📱 Share my phone number', request_contact: true }], [menu.skip, menu.cancel]);
     if (s.step === 'name') return reply([menu.name], [menu.cancel]);
     if (s.step === 'upload') return reply([menu.done], [menu.cancel]);
-    if (['description', 'inviteMessage', 'comment', 'banner'].includes(s.step)) return reply([menu.skip], [menu.cancel]);
+    if (['description', 'inviteMessage', 'comment', 'banner', 'cohostLabel'].includes(s.step)) return reply([menu.skip], [menu.cancel]);
     return reply([menu.cancel]);
   }
   prompt(id, text) { return this.send(id, text, this.inputKeyboard(this.db.sessions[id])); }
@@ -149,26 +150,34 @@ export class Bot {
     const deadline=e.responseDeadline ? '\n⏰ Respond by: '+eventTime({startsAt:e.responseDeadline,timezone:e.deadlineTimezone || e.timezone || 'UTC'},this.db.preferences[id]?.timezone)+(responsesClosed(e) ? '\nResponses closed — deadline passed.' : '') : '';
     return `Dear ${g.name},\n\nYou are invited to ${e.title} on ${this.time(e,id)}.\n📍 ${location}\n\n${mode==='ask' || mode==='default' && asksParticipantCount(e) ? 'Choose how many people will attend when you accept (1–10).' : `The host has reserved ${count} ${count===1?'place':'places'} for you.`}\nPlease respond below.${deadline}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n`;
   }
-  async personalLinks(id,e){
-    if(!isManager(e,id))return this.send(id,'Only event hosts can see personal invitation links.');
-    for(const [token,g] of Object.entries(e.invitees || {})){
-      const text=this.namedInvitationText(e,{...g,invitationToken:token},id,true)+(e.inviteMessage || '');
-      await this.send(id,`${text.trim()}\n\n${namedLink(e,token,this.username)}${g.claimedBy ? '\nLinked to a Telegram account.' : ''}`,keyboard([{text:'Share this invitation',url:`https://t.me/share/url?url=${encodeURIComponent(namedLink(e,token,this.username))}&text=${encodeURIComponent(text.trim())}`} ]));
-    }
-  }
-  cohostGuard(e){return e.cohost ? `${e.cohost.id}:${Date.parse(e.cohost.joinedAt)}` : e.cohostInvite ? `link:${e.cohostInvite.token.slice(0,8)}` : 'none:none';}
-  cohostCard(id,e){
+  personalLinks(id,e,page=0){return invitationLinksCard(this,id,e,page);}
+  cohostCard(id,e,page=0){
     if(e.owner!==id)return this.send(id,'Only the owner can manage co-host access.');
-    const cohost=e.cohost,url=cohostLink(e,this.username),rows=[];
-    const identity=cohost ? `${cohost.name}${cohost.username ? ' · @'+cohost.username : ' · No Telegram username'}` : 'No co-host yet.';
-    if(!cohost && !e.cancelled)rows.push([button(url?'Replace unused link':'Create co-host link',`co-create:${e.id}`)]);
-    if(url)rows.push([{text:'Share co-host link',url:`https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(`Join me as co-host of ${e.title}. This link works once.`)}`}]);
-    if(cohost || e.cohostInvite)rows.push([button(cohost?'Revoke co-host':'Cancel unused link',`co-remove:${e.id}`)]);
+    const entries=cohostEntries(e),pages=Math.max(1,Math.ceil(entries.length/10)),requested=Number(page);
+    const current=Number.isSafeInteger(requested) && requested>=0 ? Math.min(requested,pages-1):0;
+    const visible=entries.slice(current*10,(current+1)*10),rows=paired(visible.map(entry=>button(Array.from(`${entry.status==='active'?'✅':entry.status==='revoked'?'🚫':'🔗'} ${entry.label || entry.cohost?.name || 'Co-host link'}`).slice(0,64).join(''),`co-entry:${e.id}:${entry.id}`)));
+    const lines=visible.map(entry=>`${entry.label || 'Co-host link'} · ${entry.status}${entry.cohost ? `\n${entry.cohost.name} · ${entry.cohost.username?'@'+entry.cohost.username:'No Telegram username'} · ID ${entry.cohost.id}`:''}`);
+    if(!e.cancelled && !(e.endsAt && Date.parse(e.endsAt)<=Date.now()))rows.push([button('Create co-host link',`co-create:${e.id}`)]);
+    const nav=[];
+    if(current>0)nav.push(button('← Previous',`cohost:${e.id}:${current-1}`));
+    if(current+1<pages)nav.push(button('Next →',`cohost:${e.id}:${current+1}`));
+    if(nav.length)rows.push(nav);
     rows.push([button('Back to organiser tools',`h:${e.id}`)]);
-    return this.send(id,`Co-host · ${e.title}\n${identity}${url ? '\n\nOne-use link:\n'+url+'\nThe first Telegram account to open it becomes co-host.' : ''}\n\nCo-hosts can edit event details, manage guests and media, and check tickets. Payments, co-host access, cancellation and deletion stay with you.`,keyboard(...rows));
+    return this.long(id,`Co-hosts · ${e.title}\n${lines.length?lines.join('\n\n'):'No co-host links yet.'}\n\nTap an entry to share or revoke it.${pages>1?'\nPage '+(current+1)+' of '+pages:''}`,keyboard(...rows));
+  }
+  cohostEntryCard(id,e,entryId){
+    if(e.owner!==id)return this.send(id,'Only the owner can manage co-host access.');
+    const entry=cohostEntries(e).find(item=>item.id===entryId);
+    if(!entry)return this.cohostCard(id,e);
+    const url=cohostLink(e,this.username,entry.id),rows=[];
+    if(url)rows.push([{text:'Copy link',copy_text:{text:url}},{text:'Share link',url:`https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(`Join me as co-host of ${e.title}. This link works once.`)}`}]);
+    if(entry.status!=='revoked')rows.push([button(entry.status==='active'?'Revoke access':'Cancel unused link',`co-remove:${e.id}:${entry.id}`)]);
+    rows.push([button('Back to co-hosts',`cohost:${e.id}`)]);
+    const identity=entry.cohost ? `\n${entry.cohost.name}\n${entry.cohost.username?'@'+entry.cohost.username:'No Telegram username'} · ID ${entry.cohost.id}`:'';
+    return this.send(id,`${entry.label || 'Co-host link'} · ${entry.status}${identity}${url?'\n\n'+url+'\nFirst person to open this link becomes co-host.':''}`,keyboard(...rows));
   }
   async notifyManagers(e,text,markup){
-    for(const uid of new Set([e.owner,e.cohost?.id].filter(Number.isSafeInteger)))await this.send(uid,text,markup).catch(()=>{});
+    for(const uid of new Set([e.owner,...cohostIds(e)].filter(Number.isSafeInteger)))await this.send(uid,text,markup).catch(()=>{});
   }
   async saveResponse(id, e, response) {
     if(!this.allowed(e,id) || !invitationAvailable(e,id,response.invitationToken)){this.session(id);return this.home(id,'This invitation has already been used by another guest. Ask the organiser for your own link.');}
@@ -321,7 +330,8 @@ export class Bot {
         const e=this.db.events[cohost[1]];let identity;
         try{identity=claimCohost(e,cohost[2],m.from);}catch(error){return this.home(id,error.message);}
         await this.home(id,`You are now co-host of ${e.title}. Open My events to manage it.`);
-        await this.send(e.owner,`${identity.name}${identity.username?' · @'+identity.username:''} is now co-host of ${e.title}.`,keyboard([button('Manage co-host',`cohost:${e.id}`)])).catch(()=>{});
+        const entry=cohostEntries(e).find(item=>item.status==='active' && item.cohost?.id===identity.id);
+        await this.send(e.owner,`${identity.name} · ${identity.username?'@'+identity.username:'No Telegram username'} · ID ${identity.id}\nis now co-host of ${e.title}.${entry?.label?'\nLink: '+entry.label:''}`,keyboard([button('Manage co-hosts',`cohost:${e.id}`)])).catch(()=>{});
         return this.card(id,e);
       }
       const personal=text.match(/^\/start(?:@\w+)? i_([a-f0-9]{16})_([a-f0-9]{32})$/);
@@ -368,6 +378,13 @@ export class Bot {
     }
     if (s.draft) return this.create(id, text, s);
     const e = this.db.events[s.event];
+    if(s.step==='cohostLabel'){
+      if(!e || e.owner!==id || e.cancelled){this.session(id);return this.home(id,'Only the event owner can create co-host links.');}
+      if(text!=='/skip' && (!text || text.length>80))return this.prompt(id,'Label up to 80 characters, or tap Skip.');
+      let entry;
+      try{entry=createCohostInvite(e,id,text==='/skip'?'':text);}catch(error){this.session(id);return this.home(id,error.message);}
+      this.session(id);await this.home(id,'Co-host link created.');return this.cohostEntryCard(id,e,entry.id);
+    }
     const linkUploader = s.step === 'upload' && e && s.uploadToken && s.uploadToken === e.uploadToken && !!uploadLink(e, this.username);
     if ((!this.allowed(e, id) && !linkUploader) || e.cancelled) { this.session(id); return this.send(id, 'This event is no longer available for changes.'); }
     const g = e.guests[id];
@@ -453,7 +470,7 @@ export class Bot {
     s.step = 'comment'; return this.prompt(id, `Comment? ${permissions(e).guestList ? 'Visible in the guest list.' : 'Only the organiser sees it.'} Or tap Skip.`);
   }
   async notify(e, text) {
-    for (const uid of new Set([...Object.keys(e.guests).map(Number),e.cohost?.id].filter(Number.isSafeInteger))) if (uid !== e.owner) await this.send(uid, text).catch(() => {});
+    for (const uid of new Set([...Object.keys(e.guests).map(Number),...cohostIds(e)].filter(Number.isSafeInteger))) if (uid !== e.owner) await this.send(uid, text).catch(() => {});
   }
   async endEvent(id, e, remove = false) {
     if (!e || e.owner !== id) throw new Error('Only the organiser can do that.');
@@ -465,7 +482,7 @@ export class Bot {
     if (!wasCancelled || remove) for (const [uid, guest] of Object.entries(e.guests)) {
       if (Number(uid) !== e.owner && ['yes', 'maybe'].includes(guest.status)) await this.home(Number(uid), `🚫 ${e.title} has been ${remove ? 'deleted' : 'cancelled'} by the organiser. The event will no longer take place.`);
     }
-    if(e.cohost && !['yes','maybe'].includes(e.guests[e.cohost.id]?.status))await this.home(e.cohost.id,`🚫 ${e.title} has been ${remove ? 'deleted' : 'cancelled'} by the owner.`);
+    if(!wasCancelled || remove)for(const uid of cohostIds(e))if(uid!==e.owner && !['yes','maybe'].includes(e.guests[uid]?.status))await this.home(uid,`🚫 ${e.title} has been ${remove ? 'deleted' : 'cancelled'} by the owner.`).catch(()=>{});
     await this.home(id, remove ? 'Event deleted. Accepted and tentative guests were notified.' : 'Event cancelled. Accepted and tentative guests were notified.');
   }
   async callback(q) {
@@ -513,32 +530,32 @@ export class Bot {
     }
     if (action === 'star-pay') return invoice(this,id,e,true);
     if(action==='status' && paidEvent(e) && (!requiresApproval(e) || e.guests[id]?.approval==='approved') && !confirmed(e,e.guests[id]))return this.paymentInfo(id,e);
-    if (e.cancelled && !['delete', 'delete-confirm','cohost','co-remove','co-revoke'].includes(action)) return this.card(id, e);
-    const ownerActions=['x','z','rotate','delete','delete-confirm','cohost','co-create','co-new','co-remove','co-revoke'];
+    if (e.cancelled && !['delete', 'delete-confirm','cohost','co-entry','co-remove','co-revoke'].includes(action)) return this.card(id, e);
+    const ownerActions=['x','z','rotate','delete','delete-confirm','cohost','co-entry','co-create','co-new','co-remove','co-revoke'];
     if(ownerActions.includes(action) && e.owner!==id)return this.send(id,'Only the event owner can do that.');
-    const hostActions = ['h', 'a', 'edit', 'remove', 'permissions', 'toggle', 'approve', 'reject', 'banner'];
+    const hostActions = ['h', 'a', 'edit', 'remove', 'permissions', 'toggle', 'approve', 'reject', 'banner','invite-links','invite-copy'];
     if (hostActions.includes(action) && !isManager(e,id)) return this.send(id, 'Only event hosts can do that.');
-    if(action==='cohost')return this.cohostCard(id,e);
+    if(action==='cohost')return this.cohostCard(id,e,arg);
+    if(action==='co-entry')return this.cohostEntryCard(id,e,arg);
     if(action==='co-create'){
-      if(e.cohost)return this.cohostCard(id,e);
-      if(e.cohostInvite)return this.send(id,'Replace the unused co-host link? The previous link will stop working.',keyboard([button('Replace link',`co-new:${e.id}:${e.cohostInvite.token.slice(0,8)}`),button('Keep link',`cohost:${e.id}`)]));
-      try{createCohostInvite(e,id);}catch(error){return this.send(id,error.message);}
-      return this.cohostCard(id,e);
+      if(e.endsAt && Date.parse(e.endsAt)<=Date.now())return this.send(id,'Co-host invitations are unavailable for finished events.');
+      await this.clearButtons(id,q.message);
+      this.session(id,{step:'cohostLabel',event:e.id});
+      return this.prompt(id,'Label for this co-host link? Or tap Skip.');
     }
     if(action==='co-new'){
       await this.clearButtons(id,q.message);
-      if(e.cohost || arg!==e.cohostInvite?.token.slice(0,8))return this.cohostCard(id,e);
-      try{createCohostInvite(e,id);}catch(error){return this.send(id,error.message);}
       return this.cohostCard(id,e);
     }
     if(action==='co-remove'){
-      if(!e.cohost && !e.cohostInvite)return this.cohostCard(id,e);
-      return this.send(id,e.cohost ? `Revoke co-host access for ${e.cohost.name}${e.cohost.username?' (@'+e.cohost.username+')':''}?` : 'Cancel this unused co-host link?',keyboard([button('Confirm revoke',`co-revoke:${e.id}:${this.cohostGuard(e)}`),button('Keep access',`cohost:${e.id}`)]));
+      const entry=cohostEntries(e).find(item=>item.id===arg),guard=cohostGuard(e,arg);
+      if(!guard)return this.cohostCard(id,e);
+      return this.send(id,entry.status==='active' ? `Revoke access for ${entry.cohost.name}${entry.cohost.username?' (@'+entry.cohost.username+')':''}?` : `Cancel ${entry.label || 'this unused co-host link'}?`,keyboard([button('Confirm revoke',`co-revoke:${e.id}:${arg}:${guard}`),button('Keep access',`co-entry:${e.id}:${arg}`)]));
     }
     if(action==='co-revoke'){
       await this.clearButtons(id,q.message);
-      if(`${arg}:${version}`!==this.cohostGuard(e))return this.cohostCard(id,e);
-      const prior=revokeCohost(e,id);
+      if(!version || version!==cohostGuard(e,arg))return this.cohostCard(id,e);
+      const prior=revokeCohost(e,id,arg);
       if(prior){if(this.db.sessions[prior.id]?.event===e.id)this.session(prior.id);await this.home(prior.id,`Your co-host access to ${e.title} was revoked by the owner.`).catch(()=>{});}
       return this.cohostCard(id,e);
     }
@@ -570,7 +587,8 @@ export class Bot {
     if (required && !can(e, id, required)) return this.send(id, 'The organiser has not enabled this option for guests.');
     if (action === 'v') { this.session(id); await this.home(id, 'Use the event buttons below.'); return this.card(id, e); }
     if (action === 'details') return this.card(id, e, false);
-    if(action==='invite-links')return this.personalLinks(id,e);
+    if(action==='invite-links')return this.personalLinks(id,e,arg);
+    if(action==='invite-copy')return invitationCopyCard(this,id,e,arg);
     if(action==='book'){await this.clearButtons(id,q.message);if(e.guests[id]?.status==='yes')return this.card(id,e);return invitationMode(e)==='tickets' ? this.beginAcceptance(id,e,q.from) : this.card(id,e);}
     if (action === 'banner') { this.session(id, { step: 'banner', event: eid }); return this.prompt(id, 'Send a photo for your event banner, or tap Skip.'); }
     if (action === 'address') { if (!canSeeLocation(e, id)) return this.send(id, 'The address is not available yet.'); return this.send(id, e.location, keyboard([button('Back to event', `v:${eid}`)]), [{ type: 'code', offset: 0, length: e.location.length }]); }
@@ -647,7 +665,8 @@ export class Bot {
     if (action === 'remove') { e.media = e.media.filter(f => f.id !== arg); return this.send(id, 'Removed from the event collection. Previously sent copies remain in Telegram chats.'); }
     if (action === 'h') {
       const rows=[[button('Guest responses', `a:${eid}`), button('Guest options', `permissions:${eid}`)], [button('Edit title', `edit:${eid}:title`), button('Edit time', `edit:${eid}:when`)], [button('Edit location', `edit:${eid}:location`), button('Edit description', `edit:${eid}:description`)], [button('Edit invite message',`edit:${eid}:inviteMessage`),button('🖼 Edit banner', `banner:${eid}`)]];
-      if(e.owner===id)rows.push([button('Co-host',`cohost:${eid}`),button('Replace invite link', `rotate:${eid}`)],[button('Cancel event', `x:${eid}`), button('Delete event', `delete:${eid}`)]);
+      if(invitationMode(e)==='named')rows.push([button('Invitation links',`invite-links:${eid}:0`)]);
+      if(e.owner===id)rows.push([button('Co-hosts',`cohost:${eid}`),button('Replace invite link', `rotate:${eid}`)],[button('Cancel event', `x:${eid}`), button('Delete event', `delete:${eid}`)]);
       rows.push([button('Back to event',`v:${eid}`)]);
       return this.send(id,(e.owner===id?'Organiser':'Co-host')+' tools\n'+priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing),keyboard(...rows));
     }

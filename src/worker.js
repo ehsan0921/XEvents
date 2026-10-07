@@ -79,7 +79,7 @@ export default {
       return response;
       } catch (error) { const reference=crypto.randomUUID();console.error(JSON.stringify({event:'mini_api_failed',reference,path:url.pathname,type:error.name})); return Response.json({ error: 'Could not load the planner. Please try again.',reference }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
     }
-    if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/errors.js', '/gallery.js', '/style.css'].includes(url.pathname))) {
+    if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/errors.js', '/gallery.js', '/event-actions.js', '/style.css'].includes(url.pathname))) {
       const target = new URL(request.url);
       if (url.pathname === '/app' || url.pathname === '/app/') target.pathname = '/';
       const asset = await env.ASSETS.fetch(new Request(target, request));

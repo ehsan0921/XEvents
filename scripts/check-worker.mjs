@@ -8,6 +8,12 @@ const mf = new Miniflare(convertV4MiniflareOptions({
   workers: [{ name: 'test',
   modules: true, scriptPath: '.wrangler/build/worker.js', compatibilityDate: '2026-10-05', compatibilityFlags: ['nodejs_compat'],
   d1Databases: ['DB'], bindings: { SUPER_ADMIN_ID: '999001', BOT_USERNAME: 'XEvents_bot', APP_URL: 'https://test/app', TELEGRAM_BOT_TOKEN: 'fake', TELEGRAM_WEBHOOK_SECRET: 'test-secret' },
+  serviceBindings: { ASSETS: async request => {
+    const pathname=new URL(request.url).pathname;
+    const file=pathname==='/' ? 'index.html' : pathname.slice(1);
+    if(!['index.html','app.js','errors.js','gallery.js','event-actions.js','style.css'].includes(file))return new Response('Not found',{status:404});
+    return new Response(await readFile('public/'+file),{headers:{'Content-Type':file.endsWith('.js') ? 'application/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html'}});
+  } },
   outboundService: async request => {
     if(request.method==='POST' && request.headers.get('Content-Type')?.includes('application/json'))telegramCalls.push({method:new URL(request.url).pathname.split('/').at(-1),params:await request.clone().json()});
     if (request.url.includes('/file/bot')) return new Response(new Uint8Array([255,216,255]), { headers: { 'Content-Type':'image/jpeg' } });
@@ -23,6 +29,19 @@ try {
   await db.exec(await readFile('migrations/0002_delivery_lease.sql', 'utf8'));
   await db.exec(await readFile('migrations/0003_mini_app.sql', 'utf8'));
   assert.equal((await mf.dispatchFetch('https://test/')).status, 200);
+  const appPage=await mf.dispatchFetch('https://test/app');
+  assert.equal(appPage.status,200);assert.match(await appPage.text(),/id="event-end-dialog"/);
+  const appModule=await mf.dispatchFetch('https://test/app.js');
+  assert.equal(appModule.status,200);
+  const imports=[...(await appModule.text()).matchAll(/import\s+.*?from\s+['"]\.\/([^'"]+)['"]/g)].map(match=>match[1]);
+  assert.ok(imports.includes('event-actions.js'));
+  for(const file of imports){
+    const asset=await mf.dispatchFetch('https://test/'+file);
+    assert.equal(asset.status,200,file+' must be served by the Worker');
+    assert.match(asset.headers.get('Content-Type'),/javascript/);
+    assert.equal(asset.headers.get('Cache-Control'),'no-cache');
+    assert.equal(await asset.text(),await readFile('public/'+file,'utf8'));
+  }
   assert.equal((await mf.dispatchFetch('https://test/telegram', { method: 'POST', body: '{}' })).status, 401);
   async function telegramUpdate(body){
     for(let attempt=0;attempt<12;attempt++){

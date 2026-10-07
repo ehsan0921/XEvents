@@ -22,7 +22,7 @@ Set a response deadline under RSVP settings when you need replies before a parti
 
 ### Home, Explore, and My events
 
-- **Home** shows ongoing and upcoming plans, followed by future public events or ideas for a new gathering.
+- **Home** shows ongoing and upcoming plans, followed by future public events or ideas for a new gathering. Event buttons open details inside the app, with a separate Open in chat action. Hosts get editing, guest-list and invitation shortcuts; shared media and guest tickets appear when available. My events, Explore events and Create event shortcuts sit above the list.
 - **Explore** searches public events by title and description in the user's saved timezone. This is timezone matching, rather than GPS distance or city-based search.
 - **Create** opens the event form.
 - **My events** groups upcoming and past events, with co-hosted events identified. Guests do not see cancelled events or rejected invitations in My events.
@@ -53,15 +53,15 @@ Read the [invitation guide](invitations.md) for link ownership, response changes
 
 Hosts can review accepted responses and total people, with approval requests and unpaid acceptances counted separately from confirmed attendance. Filters distinguish accepted, pending, maybe, rejected, and unanswered guests. Named lists also show unopened guest placeholders; a shared booking link cannot identify people who never open it.
 
-**Guest invitations** combines personal links with response details, comments, attendee totals, response filters and guest-name search. Owners and co-hosts can add names without changing existing invitations, or remove an invitation with a choice to notify the guest or remove silently. Removal revokes the link and ticket; payment records are retained for separate refund handling.
+**Guest invitations** combines personal links with response details, comments, attendee totals, response filters and guest-name search. Owners and co-hosts can add guests individually with name, count and attendee settings, or paste a list of names. The individual form is also available when creating or editing an event. Existing links and responses stay intact. The **Guest list** includes Add guest and personal-invitation shortcuts, with Revoke invitation opening a choice to notify the guest or remove silently. Removal revokes the link and ticket; payment records are retained for separate refund handling.
 
-The main event actions include opening the event in chat, editing, copying the invite link, and shared media when available. Secondary actions sit under the three-dot menu.
+The main event actions include opening the event in chat, editing, copying the invite link, and shared media when available. Secondary actions sit under the three-dot menu, including another Edit event shortcut and an owner-only Cancel event action.
 
 An owner can create multiple co-host links with optional labels. Each private link works once; after it is claimed, the owner sees the claimant's Telegram name, @handle when available, and numeric ID beside its label. Cancel an unused link or revoke a particular co-host without affecting other hosts. Revoked entries retain their status for the owner to review.
 
 Co-hosts can edit event details, manage responses, share personal invitations, use shared media, and check guests in. The owner controls payment settings, co-host access, cancellation, and deletion. Revocation removes management access immediately and preserves existing guest responses and tickets. Host tools expose submitted guest contact details to co-hosts, so invite people you trust.
 
-Cancelling or deleting asks for confirmation and notifies accepted and tentative guests. Paid orders remain available for refund handling after event deletion; see [payments and refunds](payments.md).
+The owner's edit page has a red event-actions section with Cancel event and Delete event. The three-dot menu's single Cancel event action opens a confirmation with an optional Delete after cancellation checkbox. Either choice sends one cancellation or deletion request and notifies accepted and tentative guests. Cancelled events leave My events; deletion also removes the stored event. Paid orders remain available for refund handling after event deletion; see [payments and refunds](payments.md).
 
 ## Tickets and check-in
 

@@ -1,4 +1,5 @@
 import { setupGallery } from './gallery.js';
+import { setupEventActions } from './event-actions.js';
 const tg = window.Telegram?.WebApp;
 const $ = id => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -96,6 +97,32 @@ function format(e, zone = selectedZone()) {
 }
 function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener'); }
 function invitationGuestLine(guest){return guest.name+(guest.participantMode==='ask' ? ' = ?' : guest.participants ? ' = '+guest.participants+(guest.participantMode==='confirm' ? '!' : guest.participantMode==='fixed' ? '*' : '') : '');}
+function guestNamesIn(text){return text.split('\n').map(line=>line.split('=')[0].trim()).filter(Boolean);}
+function validateGuestAddition(name,names){
+  if(names.length>=100)throw Error('The guest list already has 100 invitations.');
+  if(names.some(value=>value.toLocaleLowerCase()===name.toLocaleLowerCase()))throw Error('That name is already in the list. Add a label to distinguish guests.');
+}
+const guestEditorVersions=new Map();
+function setupGuestEditor(prefix,addGuest,isCurrent=()=>true){
+  const name=$(prefix+'-name'),count=$(prefix+'-count'),mode=$(prefix+'-mode'),button=$(prefix+'-add'),status=$(prefix+'-status');
+  const version=Symbol(prefix);guestEditorVersions.set(prefix,version);const current=()=>guestEditorVersions.get(prefix)===version && isCurrent();
+  let blocked=false,pending=false;name.value='';mode.value='one';status.textContent='';count.replaceChildren();
+  for(let value=1;value<=10;value++){const option=document.createElement('option');option.value=String(value);option.textContent=String(value);count.append(option);}count.value='1';
+  const update=()=>{const needsCount=['editable','confirm','fixed'].includes(mode.value);$(prefix+'-count-field').hidden=!needsCount;count.disabled=blocked || pending || !needsCount;name.disabled=mode.disabled=button.disabled=blocked || pending;};
+  mode.onchange=update;
+  button.onclick=async()=>{
+    if(blocked || pending || !current())return;
+    const guestName=name.value.trim(),participants=Number(count.value),setting=mode.value;
+    if(!guestName || guestName.length>100 || /[=\r\n]/.test(guestName)){status.textContent='Enter a name of up to 100 characters, without = or line breaks.';name.focus();return;}
+    if(!['one','ask','editable','confirm','fixed'].includes(setting) || !Number.isInteger(participants) || participants<1 || participants>10){status.textContent='Choose a count from 1 to 10.';return;}
+    const line=guestName+(setting==='one'?'':setting==='ask'?' = ?':' = '+participants+(setting==='confirm'?'!':setting==='fixed'?'*':''));
+    pending=true;status.textContent='';update();
+    try{const added=await addGuest({name:guestName,line});if(added && current()){name.value='';mode.value='one';count.value='1';status.textContent=guestName+' added.';name.focus();}}
+    catch(error){if(current())status.textContent=error.message;}
+    finally{pending=false;if(current())update();}
+  };
+  update();return {setDisabled(value){blocked=value;update();}};
+}
 function inviteText(e,guest){
   const when=e.startsAt ? format(e,e.timezone || selectedZone()) : e.when;
   const paid=e.starPrice>0 || ['bank','link','stars'].includes(e.paymentMethod);
@@ -116,10 +143,19 @@ async function openGuestList(id) {
   $('guest-list-title').textContent=e.title+' · Guest list';
   $('guest-list-summary').textContent=`Accepted: ${accepted.length} responses · ${accepted.reduce((sum,g)=>sum+g.participants,0)} people. Confirmed: ${roster.filter(g=>g.confirmed).reduce((sum,g)=>sum+g.participants,0)} people.`;
   const filters=$('guest-list-filters');filters.replaceChildren();
+  const named=e.invitationMode==='named',readOnly=e.cancelled || e.group==='Past events';
+  const invitationFor=guest=>guest.id!=null ? e.invitees?.find(invite=>invite.responses?.some(response=>response.id===guest.id)) : e.invitees?.find(invite=>invite.name===guest.name);
+  const showInvitations=async(guest,options={})=>{$('guest-list-dialog').close();await openNamedLinks(e,guest?.token,options);};
+  $('guest-list-add').hidden=!named;$('guest-list-add').disabled=readOnly;$('guest-list-add').onclick=()=>showInvitations(null,{add:true});
+  $('guest-list-invitations').hidden=!named;$('guest-list-invitations').onclick=()=>showInvitations();
   const render=filter=>{
     const rows=$('guest-list-rows');rows.replaceChildren();
     const visible=roster.filter(g=>filter==='all' || (filter==='unanswered' ? ['later','unopened'].includes(g.status) : filter==='pending' ? g.status==='yes' && !g.confirmed : g.status===filter));
-    for(const g of visible)rows.append(element('p',`${g.name} · ${g.status==='yes' ? g.confirmed?'Confirmed':g.approval==='pending'?'Awaiting approval':'Awaiting payment' : {no:'Rejected',maybe:'Maybe',later:'Respond later',unopened:'Not opened'}[g.status] || g.status}${g.participants?' · '+g.participants+' people':''}`,'admin-guest'));
+    for(const g of visible){
+      const row=element('article','','admin-guest');row.append(element('p',`${g.name} · ${g.status==='yes' ? g.confirmed?'Confirmed':g.approval==='pending'?'Awaiting approval':'Awaiting payment' : {no:'Rejected',maybe:'Maybe',later:'Respond later',unopened:'Not opened'}[g.status] || g.status}${g.participants?' · '+g.participants+' people':''}`));
+      const invite=named && invitationFor(g);
+      if(invite){const controls=element('div','','event-actions guest-inline-actions');controls.append(action('✉️ Invitation',()=>showInvitations(invite)));const revoke=action('🚫 Revoke invitation',()=>showInvitations(invite,{revoke:true}),'text-button');revoke.disabled=readOnly;controls.append(revoke);row.append(controls);}rows.append(row);
+    }
     if(!visible.length)rows.append(element('p','No guests in this list.','muted'));
     for(const b of filters.children)b.setAttribute('aria-pressed',String(b.dataset.filter===filter));
   };
@@ -167,6 +203,12 @@ async function openCheckin(id) {
   $('checkin-dialog').showModal();
 }
 const {openGallery,showQr}=setupGallery({$,api,element,action,go,notice,openTelegram,initData});
+const {cancelEvent,deleteEvent}=setupEventActions({$,api,refresh,notice,onEnded:event=>{
+  state.events=state.events.filter(item=>item.id!==event.id);
+  if(activeEvent?.id===event.id){activeEvent=null;formReady=false;$('event-form').hidden=true;$('success').hidden=true;}
+  if(createdEvent?.id===event.id)createdEvent=null;
+  go('events');
+}});
 function confirmAction(message, operation) {
   const dialog = $('confirm-dialog');
   if (dialog.open) return Promise.resolve(false);
@@ -246,6 +288,11 @@ async function openCoHost(id){
 }
 $('cohost-close').onclick=()=>$('cohost-dialog').close();
 $('cohost-dialog').onclose=()=>{cohostGeneration++;cohostEventId=null;};
+function openEventInApp(id){
+  go('events');
+  const card=document.getElementById('event-card-'+id);
+  card?.scrollIntoView?.({block:'start',behavior:'smooth'});card?.focus?.({preventScroll:true});
+}
 function renderHome(){
   const now=Date.now(),events=state.events.filter(e=>!e.cancelled && (isManager(e) || ['yes','maybe'].includes(e.status)) && e.startsAt);
   for(const [id,active] of [['home-ongoing',true],['home-upcoming',false]]){
@@ -254,7 +301,15 @@ function renderHome(){
     if(!entries.length)list.append(element('p',active?'No ongoing events.':'No upcoming events yet.','muted'));
     for(const e of entries){const label=e.isCoHost?'Co-hosting':e.isOwner?'You’re hosting':e.status==='maybe'?'Maybe':e.approval==='pending'?'Awaiting approval':(e.starPrice || ['bank','link'].includes(e.paymentMethod)) && e.paymentStatus!=='paid'?'Awaiting payment':'You’re attending';const card=element('article','','event-card');card.append(priceTag(e),element('h3',e.title),element('p',format(e)),element('p',label,'small muted'));
       if(active && !e.endsAt)card.append(element('p','Started today · finish time not set.','small muted'));
-      card.append(action('Open event in chat',()=>openTelegram(e.inviteUrl),'primary'));list.append(card);}
+      const actions=element('div','','event-actions home-event-actions');
+      actions.append(action('📅 View event',()=>openEventInApp(e.id),'primary'),action('💬 Open in chat',()=>openTelegram(e.inviteUrl)));
+      if(isManager(e)){
+        actions.append(action('✏️ Edit event',()=>editEvent(e.id)),action('👥 Guest list',()=>openGuestList(e.id)));
+        if(e.invitationMode==='named')actions.append(action('✉️ Invitations',()=>openNamedLinks(e)));
+      }
+      if(isManager(e) || e.status==='yes' && e.permissions?.viewMedia)actions.append(action('🗂 Shared media',()=>openGallery(e.id)));
+      if(!isManager(e) && e.ticket)actions.append(action('🎟 My ticket',()=>openTicket(e.id)));
+      card.append(actions);list.append(card);}
   }
 }
 let homeSequence=0;
@@ -264,7 +319,7 @@ async function loadHomeSuggestions(){
     const data=await api('explore?timezone='+encodeURIComponent(selectedZone()));if(sequence!==homeSequence)return;
     list.replaceChildren();const joined=new Set(state.events.map(e=>e.id));
     const suggested=data.events.filter(e=>Date.parse(e.startsAt)>Date.now() && !e.responsesClosed && !joined.has(e.id)).slice(0,3);
-    for(const e of suggested){const card=element('article','','event-card');card.append(element('span','PUBLIC EVENT','tag'),priceTag(e),element('h3',e.title),element('p',format(e)),action('View event',()=>openTelegram(e.inviteUrl),'primary'));list.append(card);}
+    for(const e of suggested){const card=element('article','','event-card');card.append(element('span','PUBLIC EVENT','tag'),priceTag(e),element('h3',e.title),element('p',format(e)),action('💬 View in Telegram',()=>openTelegram(e.inviteUrl),'primary'));list.append(card);}
     if(!suggested.length){list.append(element('p','No new public events in your timezone yet. Try planning one:','muted'));for(const title of ['A weekend walk','A sports meetup','Dinner with friends'])list.append(action(title,()=>{setupForm();$('title').value=title;}));}
   }catch(error){if(sequence===homeSequence){list.replaceChildren(element('p',error.message,'small muted'));list.append(action('Try again',loadHomeSuggestions));}}
 }
@@ -279,7 +334,7 @@ function renderEvents() {
   events.sort((a,b) => ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(a.group) - ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(b.group) || (a.group === 'Past events' ? (b.startsAt || '').localeCompare(a.startsAt || '') : (a.startsAt || '').localeCompare(b.startsAt || '')));
   for (const e of events) {
     if (listFilter === 'all' && e.group !== lastGroup) { list.append(element('h2', e.group, 'event-group')); lastGroup = e.group; }
-    const card = element('article', '', 'event-card');
+    const card = element('article', '', 'event-card');card.id='event-card-'+e.id;card.tabIndex=-1;
     if (e.hasBanner) {
       const img = document.createElement('img'); img.className = 'event-banner'; img.alt = `Banner for ${e.title}`; card.append(img);
       fetch(`/api/events/${e.id}/banner`, { headers: { Authorization: 'tma ' + initData } }).then(r => { if (!r.ok) throw new Error(); return r.blob(); }).then(blob => { if (!img.isConnected) return; const old = bannerUrls.get(e.id); if (old) URL.revokeObjectURL(old); const url = URL.createObjectURL(blob); bannerUrls.set(e.id,url); img.src=url; }).catch(() => img.remove());
@@ -309,6 +364,7 @@ function renderEvents() {
     const more = document.createElement('details'); more.className = 'event-more';
     const moreToggle = element('summary','⋯'); moreToggle.setAttribute('aria-label',`More options for ${e.title}`);
     const extraActions = element('div','','event-more-panel'); more.append(moreToggle,extraActions);
+    if(isManager(e) && !e.cancelled)extraActions.append(action('✏️ Edit event',()=>editEvent(e.id)));
     extraActions.append(action('Share invite', () => share(e)));
     if(e.isOwner && !e.cancelled)extraActions.append(action('Co-hosts',()=>openCoHost(e.id)));
     if(e.starPrice || ['bank','link'].includes(e.paymentMethod))extraActions.append(action(e.isOwner?'Payments & refunds':'Payment support',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=payments')));
@@ -316,14 +372,7 @@ function renderEvents() {
       actions.append(action('🗂 Shared media', () => openGallery(e.id)));
     }
     if (isManager(e) && e.uploadLink) extraActions.append(e.qrEnabled!==false ? action('Upload link & QR code', () => showQr(e.id)) : action('Share upload link',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.uploadLink)}`)));
-    if (e.isOwner && !e.cancelled) {
-      for (const operation of ['cancel','delete']) extraActions.append(action(operation === 'cancel' ? 'Cancel event' : 'Delete event', async () => {
-        const text = operation === 'delete' ? `Permanently delete “${e.title}”, including saved responses and media references? Accepted and tentative guests will be notified. Previously sent Telegram copies remain.` : `Cancel “${e.title}”? Accepted and tentative guests will be notified.`;
-        if (!await confirmAction(text, operation)) return;
-        try { await api(`events/${e.id}/${operation}`,{confirm:true}); await refresh(); notice(operation === 'delete' ? 'Event deleted. Accepted and tentative guests notified.' : 'Event cancelled. Accepted and tentative guests notified.'); }
-        catch(error) { notice(error.message); }
-      }));
-    }
+    if(e.isOwner && !e.cancelled)extraActions.append(action('🛑 Cancel event',()=>cancelEvent(e),'danger-button'));
     if (e.location) extraActions.append(action('Copy address', async () => { try { await navigator.clipboard.writeText(e.location); notice('✓ Address copied.'); } catch { notice('Select and copy the address shown on the event.'); } }));
     if (e.upcoming && (isManager(e) || e.status==='yes')) {
       const label = element('label', 'Event reminder'); const select = document.createElement('select'); select.setAttribute('aria-label', `Reminder for ${e.title}`);
@@ -362,7 +411,7 @@ $('one-time-invite').onchange=()=>updateInvitationMode();
 let invitationLinksGeneration=0;
 $('invitation-links-close').onclick=()=>$('invitation-links-dialog').close();
 $('invitation-links-dialog').onclose=()=>{invitationLinksGeneration++;};
-async function openNamedLinks(event,selectedGuest){
+async function openNamedLinks(event,selectedGuest,options={}){
   const generation=++invitationLinksGeneration;
   try{
     let {event:e}=await api(`events/${event.id}`);
@@ -370,30 +419,32 @@ async function openNamedLinks(event,selectedGuest){
     if(!isManager(e))throw Error('Only event managers can see invitation links.');
     const search=$('invitation-links-search'),filter=$('invitation-links-filter'),status=$('invitation-links-status');
     search.value='';search.hidden=false;filter.value='all';status.textContent='';
-    $('invitation-add').open=false;$('invitation-add-names').value='';
-    let busy=false,mutationButtons=[],addRequest,focusSelected=true;
+    $('invitation-add').open=options.add===true;$('invitation-add-names').value='';$('invitation-single').open=options.add===true;$('invitation-bulk').open=false;
+    let busy=false,mutationButtons=[],addRequest,singleRequest,focusSelected=true,singleEditor;
     const current=()=>generation===invitationLinksGeneration;
     const readOnly=()=>e.cancelled || e.group==='Past events';
     const responses=guest=>Array.isArray(guest.responses) ? guest.responses : ['yes','no','maybe','later'].includes(guest.status) ? [{name:guest.name,status:guest.status,participants:guest.participants || 1}] : [];
     const matches=(guest,value)=>value==='all' || (value==='unanswered' ? !responses(guest).length || responses(guest).some(g=>g.status==='later') : responses(guest).some(g=>g.status===value));
-    const setBusy=value=>{busy=value;$('invitation-add-submit').disabled=value || readOnly();$('invitation-add-names').disabled=value || readOnly();for(const b of mutationButtons)b.disabled=value || readOnly() || b.dataset.unavailable==='true';};
+    const setBusy=value=>{busy=value;$('invitation-add-submit').disabled=value || readOnly();$('invitation-add-names').disabled=value || readOnly();singleEditor?.setDisabled(value || readOnly());for(const b of mutationButtons)b.disabled=value || readOnly() || b.dataset.unavailable==='true';};
     const updateEvent=value=>{e=value;const index=state.events.findIndex(item=>item.id===e.id);if(index>=0)state.events[index]=e;renderEvents();renderHome();};
     const refreshList=async()=>{const result=await api(`events/${e.id}`);if(!current())return;if(!isManager(result.event))throw Error('Your event management access has changed.');updateEvent(result.event);render();};
-    const mutate=async(operation,payload,guestName='Guest')=>{
+    const mutate=async(operation,payload,guestName='Guest',source='bulk')=>{
       if(busy || !current())return;
       setBusy(true);status.textContent='Saving…';
       try{
         const result=await api(`events/${e.id}/invitations/${operation}`,{...payload,version:e.invitationsVersion});
         if(!current())return;
         updateEvent(result.event);
-        if(operation==='add'){$('invitation-add-names').value='';$('invitation-add').open=false;addRequest=null;}
+        if(operation==='add'){if(source==='bulk'){$('invitation-add-names').value='';$('invitation-add').open=false;addRequest=null;}else singleRequest=null;}
         render();
         status.textContent=operation==='add' ? 'Guests added. Their links are ready to share.' : result.alreadyRemoved ? guestName+'’s invitation was already removed.' : payload.notify ? result.notifyCount ? guestName+'’s invitation removed. Guest notified.' : guestName+'’s invitation removed. No Telegram account was available to notify.' : guestName+'’s invitation removed silently.';
+        return true;
       }catch(error){
         if(!current())return;
         const message=error.message;
         try{await refreshList();if(current())status.textContent=message+' List refreshed; review and try again.';}
         catch{if(current())status.textContent=message;}
+        return false;
       }finally{if(current())setBusy(false);}
     };
     const render=()=>{
@@ -431,17 +482,23 @@ async function openNamedLinks(event,selectedGuest){
       const keep=action('Keep invite',()=>{removePanel.hidden=true;});
       const remove=action('Remove invite',()=>{if(busy)return;for(const item of rows)item.removePanel.hidden=true;removePanel.hidden=false;keep.focus();},'text-button invitation-remove-button');
       remove.setAttribute('aria-label','Remove invite for '+guest.name);
+      if(guest===selected && options.revoke && focusSelected)removePanel.hidden=false;
       const removalActions=element('div','','event-actions');removalActions.append(notify,silent,keep);
       removePanel.append(element('p',`Remove ${guest.name}’s invite? Its link and ticket will stop working.${replyList.length>1?' All responses using this link will be removed.':''}${guest.hasPayments?' Payment records remain; handle refunds separately in Payments.':''}${guest.canNotify===false?' No Telegram account is available to notify yet.':''}`,'small'),removalActions);
-      mutationButtons.push(remove,notify,silent,keep);row.append(actions,preview,remove,removePanel);list.append(row);rows.push({row,guest,removePanel,name:[guest.name,...replyList.map(g=>g.name || '')].join(' ').toLocaleLowerCase()});if(guest===selected)selectedButton=copy;
+      mutationButtons.push(remove,notify,silent,keep);row.append(actions,preview,remove,removePanel);list.append(row);rows.push({row,guest,removePanel,name:[guest.name,...replyList.map(g=>g.name || '')].join(' ').toLocaleLowerCase()});if(guest===selected)selectedButton=options.revoke?keep:copy;
       }
       const applyFilter=()=>{const term=search.value.trim().toLocaleLowerCase();for(const item of rows)item.row.hidden=!item.name.includes(term) || !matches(item.guest,filter.value);$('invitation-links-empty').hidden=rows.some(item=>!item.row.hidden);};
       search.oninput=applyFilter;filter.onchange=applyFilter;applyFilter();setBusy(busy);
       if(focusSelected && selectedButton && !rows.find(item=>item.guest===selected)?.row.hidden){selectedButton.focus();selectedButton.scrollIntoView?.({block:'nearest'});}focusSelected=false;
     };
+    singleEditor=setupGuestEditor('invitation-single',async guest=>{
+      validateGuestAddition(guest.name,(e.invitees || []).map(invite=>invite.name));
+      if(!singleRequest || singleRequest.guestNames!==guest.line)singleRequest={guestNames:guest.line,requestId:crypto.randomUUID()};
+      const added=await mutate('add',singleRequest,guest.name,'single');if(added===false)throw Error(status.textContent);return added;
+    },current);
     $('invitation-add-form').onsubmit=async ev=>{ev.preventDefault();const guestNames=$('invitation-add-names').value.trim();if(!guestNames){status.textContent='Enter at least one guest name.';return;}if(!addRequest || addRequest.guestNames!==guestNames)addRequest={guestNames,requestId:crypto.randomUUID()};await mutate('add',addRequest);};
     $('invitation-links-refresh').onclick=async()=>{if(busy)return;try{await refreshList();if(current())status.textContent='Responses refreshed.';}catch(error){if(current())status.textContent=error.message;}};
-    render();if(!$('invitation-links-dialog').open)$('invitation-links-dialog').showModal();
+    render();if(!$('invitation-links-dialog').open)$('invitation-links-dialog').showModal();if(options.add)$('invitation-single-name').focus();
   }catch(error){notice(error.message);}
 }
 async function loadBannerPreview(id,generation){
@@ -475,6 +532,13 @@ function setupForm(event = null) {
   const scheduleOnly = compactPicker;
   $('title').value=event?.title || '';$('location').value=event?.location || '';$('description').value=event?.description || '';$('invite-message').value=event?.inviteMessage || '';
   $('invitation-mode-panel').hidden=compactPicker;$('legacy-invitation-mode').hidden=event?.invitationMode!=='legacy';$('invitation-mode').value=event?.invitationMode || 'tickets';$('guest-names').value=(event?.invitees || []).map(invitationGuestLine).join('\n');
+  $('guest-single').open=false;
+  setupGuestEditor('guest-single',guest=>{
+    const list=$('guest-names'),names=guestNamesIn(list.value);validateGuestAddition(guest.name,names);
+    const next=list.value+(list.value && !list.value.endsWith('\n')?'\n':'')+guest.line;
+    if(next.length>10000)throw Error('The guest list can be at most 10,000 characters.');
+    list.value=next;return true;
+  });
   $('one-time-invite').checked=event ? oneTimeInviteEnabled(event) : $('invitation-mode').value==='named';
   $('event-details').hidden = scheduleOnly; $('optional-details').hidden = scheduleOnly;
   $('banner-panel').hidden = compactPicker; $('banner-preview').hidden = true;
@@ -505,6 +569,9 @@ function setupForm(event = null) {
   $('form-description').textContent = deadlinePicker ? 'Set the last date and time guests can respond, then continue creating the event in chat.' : picker ? 'Choose a date and time, then continue in the chat.' : event ? `Update the details, banner and guest options for ${event.title}.` : 'Pick a date. Share an invite. Let the good times follow.';
   $('save-event').textContent = deadlinePicker ? 'Set response deadline' : picker ? 'Use this time & continue' : event ? 'Save event settings' : 'Create event & get invite';
   $('cancel-edit').hidden = !event;
+  $('edit-event-actions').hidden=!event?.isOwner || compactPicker;
+  $('edit-cancel-event').disabled=!!event?.cancelled;
+  $('save-event').disabled=!!event?.cancelled;
   const zone = deadlinePicker ? state.session?.timezone || selectedZone() : event?.timezone || selectedZone(); options('event-zone', zone);
   const tomorrow = new Date(dateInZone(Date.now(), zone) + 'T12:00:00Z'); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
   $('date').value = (deadlinePicker ? state.session?.deadlineDate : event?.localDate) || tomorrow.toISOString().slice(0, 10); $('time').value = (deadlinePicker ? state.session?.deadlineTime : event?.localTime) || '18:00';
@@ -621,6 +688,8 @@ $('home-brand').onclick=event=>{event.preventDefault();go('home');};
 $('hero-create').onclick = () => setupForm();
 $('banner').onchange = () => { ++bannerLoadGeneration; if (bannerPreviewUrl) URL.revokeObjectURL(bannerPreviewUrl); const file=$('banner').files[0]; $('banner-preview').hidden=!file; if (file) { bannerPreviewUrl=URL.createObjectURL(file); $('banner-preview').src=bannerPreviewUrl; } };
 $('cancel-edit').onclick = () => {formReady=false;go('events');};
+$('edit-cancel-event').onclick=()=>activeEvent && cancelEvent(activeEvent);
+$('edit-delete-event').onclick=()=>activeEvent && deleteEvent(activeEvent);
 $('refresh').onclick = async () => { $('refresh').disabled = true; try { await refresh(); notice(''); } catch (e) { notice(e.message); } finally { $('refresh').disabled = false; } };
 for (const id of ['date', 'time', 'event-zone']) $(id).addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(preview, 180); });
 for (const [search, select] of [['event-zone-search', 'event-zone'], ['local-zone-search', 'local-zone']]) $(search).oninput = () => options(select, $(select).value, $(search).value);

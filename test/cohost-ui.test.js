@@ -82,6 +82,9 @@ test('co-host events expose management actions and keep payment fields read-only
   assert.ok(f.descendants(f.ids.get('event-list')).some(node=>node.textContent==='CO-HOSTING'));
   assert.ok(f.descendants(f.ids.get('event-list')).some(node=>node.tag==='label' && node.textContent==='🔔 Event reminder'));
   await f.findButton('event-list','✏️ Edit event').onclick();
+  assert.equal(f.ids.get('public-invitation-mode').disabled,true);
+  assert.equal(f.ids.get('tickets-invitation-mode').disabled,true);
+  assert.equal(f.ids.get('named-invitation-mode').disabled,false);
   assert.equal(f.ids.get('payment-owner-note').hidden,false);
   for(const id of ['stars-enabled','payment-method','stars-price','stars-pricing','payment-terms','display-price','payment-instructions','payment-url'])assert.equal(f.ids.get(id).disabled,true,id+' must be read-only');
   assert.equal(f.ids.get('stars-price').value,100);
@@ -191,6 +194,84 @@ test('existing reusable named links and legacy ticket defaults load without bein
   await tickets.findButton('event-list','✏️ Edit event').onclick();assert.equal(tickets.ids.get('one-time-invite').checked,false);
   assert.equal(tickets.ids.get('require-approval').checked,true);assert.equal(tickets.ids.get('ask-participant-count').checked,true);
   assert.equal(tickets.ids.get('require-approval-option').hidden,false);assert.equal(tickets.ids.get('ask-participant-count-option').hidden,false);
+});
+
+test('new public events use reusable ticket booking without carrying named invitation rules',async()=>{
+  const f=await harness(eventFixture());f.ids.get('hero-create').onclick();
+  f.ids.get('invitation-mode').value='named';f.ids.get('invitation-mode').onchange();
+  assert.equal(f.ids.get('one-time-invite').checked,true);
+  f.ids.get('guest-names').value='Private guest = 2*';
+  f.ids.get('invitation-mode').value='public';f.ids.get('invitation-mode').onchange();
+  assert.equal(f.ids.get('one-time-invite').checked,false);
+  assert.equal(f.ids.get('guest-names-panel').hidden,true);
+  assert.equal(f.ids.get('require-approval-option').hidden,false);
+  assert.equal(f.ids.get('ask-participant-count-option').hidden,false);
+  f.ids.get('title').value='Community training';f.ids.get('location').value='Park';
+  f.ids.get('require-approval').checked=true;f.ids.get('ask-participant-count').checked=true;
+  await f.ids.get('event-form').onsubmit({preventDefault(){}});
+  const saved=f.calls.find(call=>call.path==='/api/events').body;
+  assert.equal(saved.invitationMode,'tickets');assert.equal(saved.isPublic,true);assert.equal(saved.oneTimeInvite,false);
+  assert.equal(saved.guestNames,undefined);assert.equal(saved.requireApproval,true);assert.equal(saved.askParticipantCount,true);
+  assert.deepEqual(f.errors,[]);
+});
+
+test('existing public ticket events can become private and public without resetting their invitation settings',async()=>{
+  const f=await harness(eventFixture({invitationMode:'tickets',isPublic:true,oneTimeInvite:true,requireApproval:true,askParticipantCount:true}));
+  await f.findButton('event-list','✏️ Edit event').onclick();
+  assert.equal(f.ids.get('invitation-mode').value,'public');assert.equal(f.ids.get('one-time-invite').checked,true);
+  f.ids.get('invitation-mode').value='tickets';f.ids.get('invitation-mode').onchange();
+  assert.equal(f.ids.get('one-time-invite').checked,true);
+  await f.ids.get('event-form').onsubmit({preventDefault(){}});
+  let saved=f.calls.filter(call=>call.path.endsWith('/schedule')).at(-1).body;
+  assert.equal(saved.invitationMode,'tickets');assert.equal(saved.isPublic,false);assert.equal(saved.oneTimeInvite,true);
+  assert.equal(saved.requireApproval,true);assert.equal(saved.askParticipantCount,true);
+  await f.findButton('event-list','✏️ Edit event').onclick();
+  assert.equal(f.ids.get('invitation-mode').value,'tickets');
+  f.ids.get('invitation-mode').value='public';f.ids.get('invitation-mode').onchange();
+  await f.ids.get('event-form').onsubmit({preventDefault(){}});
+  saved=f.calls.filter(call=>call.path.endsWith('/schedule')).at(-1).body;
+  assert.equal(saved.invitationMode,'tickets');assert.equal(saved.isPublic,true);assert.equal(saved.oneTimeInvite,true);
+  assert.equal(saved.requireApproval,true);assert.equal(saved.askParticipantCount,true);
+  assert.deepEqual(f.errors,[]);
+});
+
+test('editing an existing public RSVP event preserves the legacy link mode and its one-time choice',async()=>{
+  for(const oneTimeInvite of [false,true]){
+    const f=await harness(eventFixture({invitationMode:'legacy',isPublic:true,oneTimeInvite,requireApproval:true,askParticipantCount:true}));
+    await f.findButton('event-list','✏️ Edit event').onclick();
+    assert.equal(f.ids.get('invitation-mode').value,'public');assert.equal(f.ids.get('legacy-invitation-mode').hidden,false);
+    assert.equal(f.ids.get('one-time-invite').checked,oneTimeInvite);
+    f.ids.get('invitation-mode').onchange();
+    assert.equal(f.ids.get('one-time-invite').checked,oneTimeInvite);
+    await f.ids.get('event-form').onsubmit({preventDefault(){}});
+    const saved=f.calls.find(call=>call.path.endsWith('/schedule')).body;
+    assert.equal(saved.invitationMode,'legacy');assert.equal(saved.isPublic,true);assert.equal(saved.oneTimeInvite,oneTimeInvite);
+    assert.equal(saved.requireApproval,true);assert.equal(saved.askParticipantCount,true);
+    assert.equal(saved.guestNames,undefined);assert.deepEqual(f.errors,[]);
+    f.ids.get('invitation-mode').value='legacy';f.ids.get('invitation-mode').onchange();
+    await f.ids.get('event-form').onsubmit({preventDefault(){}});
+    let changed=f.calls.filter(call=>call.path.endsWith('/schedule')).at(-1).body;
+    assert.equal(changed.invitationMode,'legacy');assert.equal(changed.isPublic,false);assert.equal(changed.oneTimeInvite,oneTimeInvite);
+    f.ids.get('invitation-mode').value='public';f.ids.get('invitation-mode').onchange();
+    await f.ids.get('event-form').onsubmit({preventDefault(){}});
+    changed=f.calls.filter(call=>call.path.endsWith('/schedule')).at(-1).body;
+    assert.equal(changed.invitationMode,'legacy');assert.equal(changed.isPublic,true);assert.equal(changed.oneTimeInvite,oneTimeInvite);
+  }
+});
+
+test('co-hosts can switch ticket visibility while forbidden invitation modes and owner payment fields stay locked',async()=>{
+  const f=await harness(eventFixture({isOwner:false,isCoHost:true,invitationMode:'tickets',isPublic:false,oneTimeInvite:false}));
+  await f.findButton('event-list','✏️ Edit event').onclick();
+  assert.equal(f.ids.get('tickets-invitation-mode').disabled,false);assert.equal(f.ids.get('public-invitation-mode').disabled,false);
+  assert.equal(f.ids.get('named-invitation-mode').disabled,true);
+  assert.equal(f.ids.get('legacy-invitation-mode').hidden,true);
+  assert.equal(f.ids.get('stars-price').disabled,true);assert.equal(f.ids.get('payment-terms').disabled,true);
+  f.ids.get('invitation-mode').value='public';f.ids.get('invitation-mode').onchange();
+  await f.ids.get('event-form').onsubmit({preventDefault(){}});
+  const saved=f.calls.find(call=>call.path.endsWith('/schedule')).body;
+  assert.equal(saved.invitationMode,'tickets');assert.equal(saved.isPublic,true);assert.equal(saved.oneTimeInvite,false);
+  assert.equal(saved.paymentMethod,'stars');assert.equal(saved.starPrice,100);assert.equal(saved.starPricing,'person');
+  assert.equal(saved.paymentTerms,'Admission for one person.');assert.deepEqual(f.errors,[]);
 });
 
 test('collapsed settings expand for invalid required fields and payment errors',async()=>{

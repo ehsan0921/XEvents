@@ -32,12 +32,15 @@ Named invitation events stay private and are absent from Explore. Public event l
 
 ## Invitations and responses
 
-Choose the workflow that fits the event:
+Choose **Event type** when creating or editing in the Mini App:
 
 | Mode | Guest experience | Host control |
 | --- | --- | --- |
-| Ticket booking | Open a shared link, enter a ticket name, and book or request a ticket. | Optional individual approval, group-size selection, payment, and private joining details. |
-| Named invitations | Open a personal link showing the assigned name; Accept, Reject, Maybe, or Respond later. | Per-guest counts, response deadlines, and optional one-time links. No second approval step. |
+| Ticket booking — Private | Open a shared private link, enter a ticket name, and book or request a ticket. | Optional individual approval, group-size selection, payment, and private joining details. |
+| Named invitations — Private | Open a personal link showing the assigned name; Accept, Reject, Maybe, or Respond later. | Per-guest counts, response deadlines, and optional one-time links. No second approval step. |
+| Public event | Find the event in Explore in the event's timezone, then book or request a ticket. | The same ticket-booking options, with public discovery enabled. |
+
+The Event type choice also sets public or private visibility; there is no separate visibility selector. Existing public bookings load as Public event. Older RSVP events retain their original links and response behavior when made public or private; their existing RSVP option remains available while editing.
 
 The host does not respond to their own event. Phone collection and comments start off for new events. When phone collection is off, the response flow never asks for a number. Hosts can enable either option when needed; profile contact details do not automatically become an RSVP phone response. Custom guest questions are no longer offered in the creation or response flow.
 

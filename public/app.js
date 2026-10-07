@@ -389,8 +389,12 @@ document.addEventListener('keydown', event => { if (event.key==='Escape') for (c
 async function editEvent(id){
   try{const result=await api(`events/${id}`);setupForm(result.event);}catch(error){notice(error.message);}
 }
+function selectedInvitationMode(){
+  const type=$('invitation-mode').value;
+  return type==='public' ? activeEvent?.invitationMode==='legacy' ? 'legacy' : 'tickets' : type;
+}
 function updateInvitationMode(resetOneTime=false){
-  const named=$('invitation-mode').value==='named';
+  const mode=selectedInvitationMode(),named=mode==='named',isPublic=$('invitation-mode').value==='public';
   $('guest-names-panel').hidden=!named;$('guest-names').required=named && !compactPicker && (!activeEvent || activeEvent.invitees?.length>0);
   if(resetOneTime && !activeEvent)$('one-time-invite').checked=named;
   for(const id of ['require-approval-option','ask-participant-count-option'])$(id).hidden=named;
@@ -401,10 +405,8 @@ function updateInvitationMode(resetOneTime=false){
   for(const id of ['require-approval','ask-participant-count'])$(id).disabled=named;
   $('hide-location').disabled=!named && $('require-approval').checked;
   $('hide-location-note').textContent=named ? 'The location appears only after a guest accepts.' : 'When approval is required, only approved guests see the location.';
-  $('one-time-invite-note').textContent=$('one-time-invite').checked ? named || $('invitation-mode').value==='legacy' ? 'After Accept, Decline or Maybe, only that guest can reuse the link. Respond later does not lock it. The same guest can still change their RSVP.' : 'After a ticket request, only that guest can reuse the event link.' : named ? 'More than one guest can use each link. Each guest can change their own RSVP.' : 'Anyone with the event link can request a ticket.';
-  $('visibility-panel').hidden=compactPicker || named;
-  $('event-visibility').disabled=named;if(named)$('event-visibility').value='private';
-  $('invitation-mode-note').textContent=named ? 'Create a guest list. Each guest gets a personal Accept, Decline, Tentative and Later invitation without entering their name.' : $('invitation-mode').value==='legacy' ? 'This existing event keeps its original RSVP links and responses.' : 'Guests enter their name and get a ticket, or request organiser approval. No RSVP choices.';
+  $('one-time-invite-note').textContent=$('one-time-invite').checked ? named || mode==='legacy' ? 'After Accept, Decline or Maybe, only that guest can reuse the link. Respond later does not lock it. The same guest can still change their RSVP.' : 'After a ticket request, only that guest can reuse the event link.' : named ? 'More than one guest can use each link. Each guest can change their own RSVP.' : 'Anyone with the event link can request a ticket.';
+  $('invitation-mode-note').textContent=named ? 'Private guest list. Each guest gets personal Accept, Decline, Tentative and Later choices without entering their name.' : mode==='legacy' ? (isPublic ? 'Listed in Explore for people using the event’s timezone. ' : 'Private link. ')+'This existing event keeps its original RSVP links and responses.' : isPublic ? 'Listed in Explore for people using the event’s timezone. Guests enter their name to book a ticket or request organiser approval.' : 'Private link. Guests enter their name to book a ticket or request organiser approval. No RSVP choices.';
 }
 $('invitation-mode').onchange=()=>updateInvitationMode(true);
 $('one-time-invite').onchange=()=>updateInvitationMode();
@@ -522,7 +524,6 @@ function setupForm(event = null) {
   $('stars-price').value = event?.starPrice || state.pricing?.defaultStarPrice || 100; $('stars-pricing').value = event?.starPricing || state.pricing?.defaultStarPricing || 'person';
   $('payment-terms').value = event?.paymentTerms || '';
   updatePricePreview();
-  $('visibility-panel').hidden = compactPicker; $('event-visibility').value = event?.isPublic ? 'public' : 'private';
   $('ending-panel').hidden = deadlinePicker;
   $('end-mode').value = event?.endMode || 'none';
   $('duration-hours').value = event?.durationMinutes ? Math.floor(event.durationMinutes / 60) : 2;
@@ -531,7 +532,9 @@ function setupForm(event = null) {
   updateEnding();
   const scheduleOnly = compactPicker;
   $('title').value=event?.title || '';$('location').value=event?.location || '';$('description').value=event?.description || '';$('invite-message').value=event?.inviteMessage || '';
-  $('invitation-mode-panel').hidden=compactPicker;$('legacy-invitation-mode').hidden=event?.invitationMode!=='legacy';$('invitation-mode').value=event?.invitationMode || 'tickets';$('guest-names').value=(event?.invitees || []).map(invitationGuestLine).join('\n');
+  $('invitation-mode-panel').hidden=compactPicker;$('legacy-invitation-mode').hidden=event?.invitationMode!=='legacy';$('invitation-mode').value=event?.invitationMode!=='named' && event?.isPublic ? 'public' : event?.invitationMode || 'tickets';$('guest-names').value=(event?.invitees || []).map(invitationGuestLine).join('\n');
+  const lockedMode=event && !event.isOwner ? event.invitationMode : null;
+  for(const [id,mode] of [['tickets-invitation-mode','tickets'],['named-invitation-mode','named'],['public-invitation-mode',event?.invitationMode==='legacy'?'legacy':'tickets'],['legacy-invitation-mode','legacy']])$(id).disabled=!!lockedMode && lockedMode!==mode;
   $('guest-single').open=false;
   setupGuestEditor('guest-single',guest=>{
     const list=$('guest-names'),names=guestNamesIn(list.value);validateGuestAddition(guest.name,names);
@@ -725,8 +728,8 @@ function revealFormError(message){
 }
 $('event-form').onsubmit = async event => {
   event.preventDefault(); $('save-event').disabled = true; $('form-error').hidden = true;
-  const named=$('invitation-mode').value==='named';
-  const payload = { oneTimeInvite:$('one-time-invite').checked,inviteMessage:$('invite-message').value,qrEnabled:$('qr-enabled').checked,askPhone:document.getElementById('ask-phone').checked,askComments:document.getElementById('ask-comments').checked,invitationMode:$('invitation-mode').value,guestNames:named ? $('guest-names').value : undefined,paymentMethod:$('stars-enabled').checked ? $('payment-method').value : 'free',displayPrice:$('display-price').value,paymentInstructions:$('payment-instructions').value,paymentUrl:$('payment-url').value,starPrice:$('stars-enabled').checked && $('payment-method').value==='stars' ? Number($('stars-price').value) : 0,starPricing:$('stars-pricing').value,paymentTerms:$('payment-terms').value, askParticipantCount: !named && $('ask-participant-count').checked, isPublic: $('event-visibility').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: !named && $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
+  const mode=selectedInvitationMode(),named=mode==='named';
+  const payload = { oneTimeInvite:$('one-time-invite').checked,inviteMessage:$('invite-message').value,qrEnabled:$('qr-enabled').checked,askPhone:document.getElementById('ask-phone').checked,askComments:document.getElementById('ask-comments').checked,invitationMode:mode,guestNames:named ? $('guest-names').value : undefined,paymentMethod:$('stars-enabled').checked ? $('payment-method').value : 'free',displayPrice:$('display-price').value,paymentInstructions:$('payment-instructions').value,paymentUrl:$('payment-url').value,starPrice:$('stars-enabled').checked && $('payment-method').value==='stars' ? Number($('stars-price').value) : 0,starPricing:$('stars-pricing').value,paymentTerms:$('payment-terms').value, askParticipantCount: !named && $('ask-participant-count').checked, isPublic: $('invitation-mode').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: !named && $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
   try {
     const banner = $('banner').files[0];
     if (!compactPicker && banner && (banner.size > 5 * 1024 * 1024 || !['image/jpeg','image/png','image/webp'].includes(banner.type))) throw new Error('Choose a JPG, PNG, or WebP banner smaller than 5 MB.');

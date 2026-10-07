@@ -126,7 +126,7 @@ Direct card processing, automatic organiser payouts, and calendar synchronisatio
 
 ## Contributing and security
 
-Bug reports, accessibility improvements, translations, and focused pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+Bug reports, accessibility improvements, translations, and focused pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) to get started and [AGENTS.md](AGENTS.md) for security and backward compatibility rules when changing the project.
 
 Keep tokens, private deployment configuration, databases, and real guest data out of commits, issues, and screenshots. Report security concerns privately as described in [SECURITY.md](SECURITY.md).
 

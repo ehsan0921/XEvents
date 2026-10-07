@@ -180,9 +180,14 @@ test('button menus complete event creation and ticket booking without typed comm
   assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, 'App');
   assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].web_app,undefined);
   await f.msg(1, '🎉 Create event');
-  for (const text of ['Button party', 'Saturday, Sydney', 'Park', '⏭ Skip', '⏭ Skip']) await f.msg(1, text);
-  const token = f.store.data.sessions[1].token;
-  await f.cb(1, `pc:${token}:uploadMedia`); await f.cb(1, `pd:${token}`);
+  await f.msg(1, 'Button party');
+  const creationAction = (action, value) => f.cb(1, `cc:${f.store.data.sessions[1].token}:${action}${value === undefined ? '' : ':' + value}`);
+  await creationAction('date', '2099-11-25');
+  await creationAction('time', '1800');
+  await f.msg(1, 'Park');
+  await creationAction('options'); await creationAction('permissions');
+  await creationAction('toggle', 'uploadMedia'); await creationAction('back');
+  await creationAction('review'); await creationAction('create');
   const e = Object.values(f.store.data.events)[0];
   assert.equal(e.description, ''); assert.deepEqual(e.questions, []);
   const invite = f.calls.at(-1).reply_markup.inline_keyboard.flat().find(b => b.url);

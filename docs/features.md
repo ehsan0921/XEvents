@@ -1,6 +1,6 @@
 # XEvents features and examples
 
-XEvents is an open-source event planner for Telegram. The bot handles invitations, responses, uploads, and guest notifications; the Mini App provides event forms, management, profiles, discovery, and shared media.
+XEvents is an open-source event planner for Telegram. The bot handles event creation, invitations, responses, uploads, and guest notifications; the Mini App provides event forms, management, profiles, discovery, and shared media.
 
 [Try XEvents](https://t.me/XEvents_bot) · [Invitations](invitations.md) · [Payments](payments.md) · [Self-hosting](self-hosting.md)
 
@@ -9,6 +9,12 @@ Use **App** in Telegram's bot menu or on an inline message button to open the au
 ## Events and schedules
 
 Create an event with a title, location, description, optional banner, and optional custom invitation message. Choose a local date and time with the Mini App's pickers, and optionally set either a duration or a finish date and time. Clock times that are missing or repeated during a daylight-saving change are rejected so the host can choose another time.
+
+### Create directly in Telegram
+
+Tap **🎉 Create event** in the bot's main menu when you prefer chat or cannot open the Mini App. Type a title, choose a day and time, add a location or choose to provide it later, then review and create. Date and time choices use buttons, with text input for another date or a custom time. The displayed timezone comes from your profile when available; otherwise it is explicitly UTC, with a **Change timezone** option.
+
+The short flow creates a free, private event with a shared ticket link. **More options** lets you change the details, use a named guest list, add a description, invitation message or banner, enable guest options, and set a duration, response deadline or reminder. Phone collection, comments, media and QR codes start off. The Mini App is optional for this flow; `/new` remains available for the older text sequence.
 
 Guests can save their timezone in Profile. XEvents displays the event locally and includes the organiser's time when it differs. Changing a profile timezone does not move the event's actual start time.
 

@@ -236,7 +236,7 @@ export async function miniApi(request, env) {
         const existing = Object.values(data.events).find(e => e.owner === id && e.createRequestId === input.requestId);
         if (existing) return { event: publicEvent(existing, id, env.BOT_USERNAME) };
         const title = field(input.title, 'Event name', 100, true);
-        const location = field(input.location, 'Location', 300, true);
+        const location = field(input.location ?? '', 'Location', 300);
         const description = field(input.description ?? '', 'Description', 1500);
         const questions = [];
         const e = { ...schedule(input), id: randomBytes(8).toString('hex'), title, location, description, questions, permissions: parsePermissions(input.permissions), owner: id, guests: {}, media: [], cancelled: false, createdAt: new Date().toISOString(), createRequestId: input.requestId };
@@ -310,7 +310,7 @@ export async function miniApi(request, env) {
         if(e.owner!==id)cohostSettings(input,e);
         const inviteSettings=invitationSettings(input,e);
         if(input.title!==undefined)e.title=field(input.title,'Event name',100,true);
-        if(input.location!==undefined)e.location=field(input.location,'Location',300,true);
+        if(input.location!==undefined)e.location=field(input.location,'Location',300);
         if(input.description!==undefined)e.description=field(input.description,'Description',1500);
         Object.assign(e, schedule({ endMode: e.endMode || 'none', durationMinutes: e.durationMinutes, endDate: e.endDate, endTime: e.endTime, ...input }));
         Object.assign(e, eventSettings(input, e));

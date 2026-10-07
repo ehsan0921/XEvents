@@ -21,7 +21,16 @@ Payment requirements can apply in either mode. A paid RSVP or booking does not b
 
 ## Create and customise an invitation
 
-Open **App** in the bot to create an event. Set its title, location, schedule and timezone, then add optional details. You can provide a duration or finish time, a banner, a description and an invitation message of up to 1,000 characters.
+Create in **App** with the full event form, or tap **🎉 Create event** in the bot's main menu to stay in chat. Set its title, location, schedule and timezone, then add optional details. You can provide a duration, banner, description and invitation message of up to 1,000 characters; the Mini App also offers an explicit finish date and time.
+
+### Use the chat buttons
+
+1. Type the event title.
+2. Pick a day and time. Check the displayed timezone, and use **Change timezone** if needed. Choose another date or custom time by typing it when prompted.
+3. Type the location, or choose to provide it later.
+4. Review the event and create it, or open **More options**.
+
+This starts with a free, private event and a shared ticket booking link. **More options** provides a named guest list, guest permissions, banner, custom invitation, duration, response deadline and default reminders. Optional response steps stay off until you enable them. No Mini App or typed commands are required; titles, addresses and guest names use ordinary chat messages. The older `/new` text flow remains available.
 
 The invitation message appears in the bot and in shared invitation text. Personal invitations greet the guest by name, show the event time and explain their attendee count. Shared text omits locations protected by acceptance, approval or payment requirements, even when a host shares it. Private joining details are delivered in Telegram after the required steps are complete.
 

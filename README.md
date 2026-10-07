@@ -12,7 +12,7 @@ Create events, invite guests, collect RSVPs, issue tickets, check guests in with
 
 ## See XEvents in action
 
-Open **[@XEvents_bot](https://t.me/XEvents_bot)**, press **Start**, then choose **App**. Set your timezone in **Profile** and create your first event.
+Open **[@XEvents_bot](https://t.me/XEvents_bot)** and press **Start**. Choose **🎉 Create event** for a short chat flow, or **App** for the full event form. In chat, type the title and location, choose a date and time with buttons, then review and create. You can change the timezone before picking a date; App users can save it in **Profile**.
 
 Product screenshots are not checked in yet. The [screenshot capture guide](docs/screenshots/README.md) lists four real screens to capture: Home / Explore, Create event, a personal RSVP invitation, and a ticket with QR check-in.
 
@@ -29,7 +29,7 @@ Product screenshots are not checked in yet. The [screenshot capture guide](docs/
 
 | Area | What XEvents supports |
 | --- | --- |
-| **Events** | Banners, custom invitation messages, local timezones, duration or finish time, reminders, and public discovery by saved timezone. |
+| **Events** | Create with Telegram chat buttons or the Mini App; banners, custom invitations, timezones, duration, reminders, and public discovery by saved timezone. |
 | **Invitations & RSVP** | Named guest links with Accept, Reject, Maybe, and Respond later; guest-name copy buttons; optional group counts; response deadlines; one-time links; multiple co-hosts through labelled links. |
 | **Tickets & check-in** | Shared booking links, optional organiser approval, unique ticket codes, optional QR codes, group check-in, and guest check-in notifications. |
 | **Payments** | Free events, text prices with organiser-verified bank transfers or external payment links, and Telegram Stars. Stars payouts to organisers are manual. |

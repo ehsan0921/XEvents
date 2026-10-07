@@ -279,7 +279,7 @@ function renderEvents() {
     const meta = element('div', '', 'event-meta'); meta.append(element('span', e.cancelled ? 'CANCELLED' : e.isCoHost ? 'CO-HOSTING' : e.isOwner ? 'YOU’RE HOSTING' : 'INVITED', e.cancelled ? 'tag cancelled' : 'tag'));
     meta.append(priceTag(e),element('span',e.invitationMode==='tickets' ? 'TICKETS' : e.invitationMode==='named' ? 'NAMED INVITATIONS' : 'RSVP','tag'));
     if (e.status) meta.append(element('span', e.invitationMode==='tickets' ? e.status==='yes' ? e.ticket ? 'Ticket confirmed' : 'Ticket requested' : 'Not booked' : { yes: 'Accepted', no: 'Not coming', maybe: 'Tentative', later: 'Respond later' }[e.status], 'tag'));
-    card.append(meta, element('h3', e.title), element('p', '🗓 ' + format(e)), element('p', '📍 ' + (e.location || (e.requireApproval ? 'Shared after organiser approval' : 'Shared after acceptance')), 'muted'));
+    card.append(meta, element('h3', e.title), element('p', '🗓 ' + format(e)), element('p', '📍 ' + (typeof e.location==='string' ? e.location || 'Location to follow' : e.requireApproval ? 'Shared after organiser approval' : 'Shared after acceptance'), 'muted'));
     if (e.responsesClosed) card.append(element('p', '⏰ Responses closed — deadline passed.', 'error'));
     else if (e.responseDeadline) card.append(element('p', 'Respond by: ' + format({ startsAt: e.responseDeadline }), 'small muted'));
     if (e.approval === 'pending') card.append(element('p', 'The organiser will send your invitation details and ticket after approving your response.', 'muted'));
@@ -438,7 +438,7 @@ function setupForm(event = null) {
   $('allow-link-uploads').checked = event?.allowLinkUploads === true;
   $('allow-upload-media').checked = event?.permissions?.uploadMedia === true;
   $('allow-view-media').checked = event?.permissions?.viewMedia === true;
-  $('title').required = !scheduleOnly; $('location').required = !scheduleOnly;
+  $('title').required = !scheduleOnly; $('location').required = false;
   $('form-title').textContent = deadlinePicker ? 'When do replies close?' : picker ? 'Pick your moment.' : event ? 'A change of plans.' : 'Make a plan.';
   $('form-description').textContent = deadlinePicker ? 'Set the last date and time guests can respond, then continue creating the event in chat.' : picker ? 'Choose a date and time, then continue in the chat.' : event ? `Update the details, banner and guest options for ${event.title}.` : 'Pick a date. Share an invite. Let the good times follow.';
   $('save-event').textContent = deadlinePicker ? 'Set response deadline' : picker ? 'Use this time & continue' : event ? 'Save event settings' : 'Create event & get invite';

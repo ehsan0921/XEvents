@@ -577,5 +577,69 @@ try {
   assert.equal((await mf.dispatchFetch(`https://test/api/events/${cohostId}/banner`,{headers:{Authorization:'tma '+initData(906)}})).status,403);
   assert.equal((await mf.dispatchFetch(`https://test/api/events/${cohostId}/banner`)).status,401);
   assert.equal((await mf.dispatchFetch(`https://test/api/events/${cohostId}/banner`,{headers:{Authorization:'tma '+initData(902)}})).status,200);
-  console.log('Worker integration passed: profiles, private photos, ticket bookings, personal RSVP links, multiple tagged co-host links and isolated revocation, legacy co-host migration, approvals, payments, durable refunds and media. Telegram mocked.');
+  // Native Telegram creation persists each short step in D1 without opening App.
+  const nativeCreator=777123,nativeOutsider=777124;
+  const nativeSession=async()=>{
+    const row=await db.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(nativeCreator)).first();
+    return row?JSON.parse(row.data):null;
+  };
+  await message(80000,'/start',nativeCreator);
+  assert.equal((await api('preferences',{timezone:'Australia/Sydney'},nativeCreator)).status,200);
+  await message(80001,'🎉 Create event',nativeCreator);
+  assert.equal((await nativeSession()).flow,'chat-create');
+  await message(80002,'Native button meetup',nativeCreator);
+  const nativeDateSession=await nativeSession();
+  assert.equal(nativeDateSession.step,'chat-date');
+  const nativeDateCallback=`cc:${nativeDateSession.token}:date:2099-11-25`;
+  await callback(80003,nativeDateCallback,nativeCreator);
+  const nativeTimeSession=await nativeSession();
+  assert.equal(nativeTimeSession.step,'chat-time');
+  assert.notEqual(nativeTimeSession.token,nativeDateSession.token);
+  await callback(80004,nativeDateCallback,nativeOutsider);
+  assert.deepEqual(await nativeSession(),nativeTimeSession);
+  await callback(80005,nativeDateCallback,nativeCreator);
+  assert.deepEqual(await nativeSession(),nativeTimeSession);
+  await callback(80006,`cc:${nativeTimeSession.token}:time:1800`,nativeCreator);
+  assert.equal((await nativeSession()).draft.startsAt,'2099-11-25T07:00:00Z');
+  await message(80007,'Community park',nativeCreator);
+  assert.equal((await nativeSession()).step,'chat-review');
+  async function nativeAction(updateId,action,value){
+    const current=await nativeSession();
+    const data=`cc:${current.token}:${action}${value===undefined?'':':'+value}`;
+    await callback(updateId,data,nativeCreator);return data;
+  }
+  await nativeAction(80008,'options');await nativeAction(80009,'reminders');await nativeAction(80010,'reminder',180);
+  await nativeAction(80011,'review');
+  const nativeCreateCallback=await nativeAction(80012,'create');
+  assert.equal(await nativeSession(),null);
+  const nativeEvents=(await api('bootstrap',null,nativeCreator)).data.events;
+  assert.equal(nativeEvents.length,1);
+  const nativeEvent=nativeEvents[0];
+  assert.equal(nativeEvent.title,'Native button meetup');
+  assert.equal(nativeEvent.startsAt,'2099-11-25T07:00:00Z');
+  assert.equal(nativeEvent.timezone,'Australia/Sydney');
+  assert.equal(nativeEvent.invitationMode,'tickets');
+  assert.equal(nativeEvent.isPublic,false);
+  assert.equal(nativeEvent.askPhone,false);
+  assert.equal(nativeEvent.askComments,false);
+  assert.equal(nativeEvent.qrEnabled,false);
+  assert.equal(nativeEvent.requireApproval,false);
+  assert.equal(nativeEvent.defaultReminder,180);
+  assert.deepEqual(nativeEvent.permissions,{guestList:false,uploadMedia:false,viewMedia:false});
+  assert.equal((await api(`events/${nativeEvent.id}`,null,nativeOutsider)).status,403);
+  await callback(80013,nativeCreateCallback,nativeCreator);
+  assert.equal((await api('bootstrap',null,nativeCreator)).data.events.length,1);
+  const nativeCards=telegramCalls.filter(call=>call.params.chat_id===nativeCreator && call.params.reply_markup?.inline_keyboard?.flat().some(button=>button.callback_data?.startsWith('cc:')));
+  assert.ok(nativeCards.length>=4);
+  assert.ok(nativeCards.every(call=>call.params.reply_markup.inline_keyboard.flat().every(button=>!button.web_app)));
+  // Native Location later remains editable through App and does not require a placeholder address.
+  const nativeEditInput={date:'2099-11-25',time:'18:00',timezone:'Australia/Sydney'};
+  const nativeWithoutAddress=await api(`events/${nativeEvent.id}/schedule`,{...nativeEditInput,location:''},nativeCreator);
+  assert.equal(nativeWithoutAddress.status,200);assert.equal(nativeWithoutAddress.data.event.location,'');
+  const nativeEditReuse=await api(`events/${nativeEvent.id}/schedule`,{...nativeEditInput,title:'Native event edited in App'},nativeCreator);
+  assert.equal(nativeEditReuse.status,200);assert.equal(nativeEditReuse.data.event.location,'');
+  assert.equal(nativeEditReuse.data.event.startsAt,nativeEvent.startsAt);
+  const nativeAppCopy=await api('events',{...nativeEditInput,title:'App event with location later',description:'',invitationMode:'tickets',requestId:'77712300-0000-4000-8000-000000000001'},nativeCreator);
+  assert.equal(nativeAppCopy.status,200,JSON.stringify(nativeAppCopy.data));assert.equal(nativeAppCopy.data.event.location,'');
+  console.log('Worker integration passed: native button event creation, profiles, private photos, ticket bookings, personal RSVP links, multiple tagged co-host links and isolated revocation, legacy co-host migration, approvals, payments, durable refunds and media. Telegram mocked.');
 } finally { await mf.dispose(); }

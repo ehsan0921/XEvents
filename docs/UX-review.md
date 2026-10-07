@@ -4,6 +4,7 @@ The UX review covers the bot and Mini App together. Behaviour is verified with a
 
 | Journey | Expected behaviour |
 | --- | --- |
+| Create in chat | Show **🎉 Create event** in the bot's main menu. Collect a title, button-selected date and time in a visible timezone, and a location or later choice, then offer Review/Create. Use the saved timezone when available and explicitly show UTC otherwise. Keep optional settings under More options, accept custom dates/times, and reject stale wizard buttons. Creation works without opening App; ordinary text supplies the title, address and guest names. |
 | Create or edit | Choose ticket booking or named invitations. Existing details and banner load when editing. Phone sharing, comments and media extras default off. Hidden payment fields do not block a different payment method. |
 | Ticket link | Show booking or ticket request actions; collect the guest's name. No RSVP choices. |
 | Named invitation | Use the organiser's guest name; show Accept, Reject, Maybe and Respond later, including any response deadline. One-time links default on for named lists: the first completed Accept, Reject or Maybe response locks the link to that Telegram account. Opening it or choosing Later first does not consume it. The same account can revise its response before the deadline; forwarded links are blocked after locking. Turning one-time use off allows multiple accounts to use the link. |

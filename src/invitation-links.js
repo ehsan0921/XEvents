@@ -60,10 +60,10 @@ export async function invitationCopyCard(bot,id,event,token){
   let copy;
   try{copy=buildInvitationCopy(bot,id,event,token);}
   catch(error){if(error instanceof InputError)return bot.send(id,error.message);throw error;}
-  const rows=[];
-  if(copy.button.copy_text)rows.push([{...copy.button,text:'Copy invitation'}]);
-  else if(copy.button.web_app)rows.push([{...copy.button,text:'Copy full invitation in App'}]);
-  rows.push([{text:'Share invitation',url:`https://t.me/share/url?url=${encodeURIComponent(copy.url)}&text=${encodeURIComponent(copy.message)}`}]);
+  const actions=[{text:'Share invite',url:`https://t.me/share/url?url=${encodeURIComponent(copy.url)}&text=${encodeURIComponent(copy.message)}`}];
+  if(copy.button.copy_text)actions.push({...copy.button,text:'Copy invite'});
+  else if(copy.button.web_app)actions.push({...copy.button,text:'Copy invite in App'});
+  const rows=[actions,[{text:'Copy link only',copy_text:{text:copy.url}}]];
   const index=Object.keys(event.invitees || {}).filter(validToken).indexOf(token);
   rows.push([{text:'Back to invitation links',callback_data:`invite-links:${event.id}:${Math.floor(index/pageSize)}`}]);
   const markup=keyboard(rows);

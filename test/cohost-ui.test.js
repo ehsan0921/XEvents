@@ -200,7 +200,7 @@ test('personal invitation rows distinguish an unanswered open link from a locked
   assert.match(rows,/Accepted · Reusable link/);assert.match(f.ids.get('invitation-links-note').textContent,/more than one guest/);
 });
 
-test('guest-name buttons copy the fresh full personal invitation and link, preserving each guest and share action',async()=>{
+test('guest invitation actions copy the full invitation or only that guest link and preserve sharing',async()=>{
   const f=await harness(eventFixture({paymentMethod:'free',starPrice:0,endsAt:'2099-10-24T10:00:00Z',responseDeadline:'2099-10-23T08:00:00Z',inviteMessage:'Bring a scarf.',invitees:[{name:'Alex',participants:2,url:'https://t.me/test?start=alex'},{name:'Sam',participantMode:'ask',url:'https://t.me/test?start=sam'}]}));
   f.setEvent({...f.getEvent(),title:'Updated club evening'});
   await f.findButton('event-list','Guest invitations').onclick();
@@ -211,8 +211,16 @@ test('guest-name buttons copy the fresh full personal invitation and link, prese
   assert.match(alex,/Finishes:/);assert.match(alex,/\n\nFree\n\n/);assert.match(alex,/Please respond by/);
   assert.match(alex,/Please respond below\.\n\nhttps:\/\/t\.me\/test\?start=alex$/);assert.doesNotMatch(alex,/Dear Sam|start=sam/);
   assert.equal(alex.split('https://t.me/test?start=alex').length,2);
+  const rows=f.ids.get('invitation-links-list').children;
+  const rowButton=(row,label)=>f.descendants(row).find(node=>node.tag==='button' && node.textContent===label);
+  for(const [row,name,url] of [[rows[0],'Alex','https://t.me/test?start=alex'],[rows[1],'Sam','https://t.me/test?start=sam']]){
+    for(const label of ['Share invite','Copy invite','Copy link'])assert.ok(rowButton(row,label),name+' should have '+label);
+    await rowButton(row,name).onclick();const personal=f.copied.at(-1);
+    await rowButton(row,'Copy invite').onclick();assert.equal(f.copied.at(-1),personal);
+    await rowButton(row,'Copy link').onclick();assert.equal(f.copied.at(-1),url);
+  }
   await f.findButton('invitation-links-list','Sam').onclick();assert.match(f.copied.at(-1),/^Dear Sam,/);assert.match(f.copied.at(-1),/Please choose how many people/);assert.match(f.copied.at(-1),/start=sam$/);
-  await f.findButton('invitation-links-list','Share invitation').onclick();
+  await f.findButton('invitation-links-list','Share invite').onclick();
   const shared=new URL(f.telegramLinks.at(-1));assert.equal(shared.searchParams.get('url'),'https://t.me/test?start=alex');assert.equal(shared.searchParams.get('text')+'\n\n'+shared.searchParams.get('url'),alex);
   assert.equal(f.ids.get('invitation-links-status').textContent,'Invitation copied for Sam.');
 });
@@ -220,27 +228,51 @@ test('guest-name buttons copy the fresh full personal invitation and link, prese
 test('owner and co-host copy actions never include acceptance, approval or payment-protected addresses',async()=>{
   for(const owner of [true,false])for(const privacy of [{hideLocation:true},{requireApproval:true},{locationAfterApproval:true},{paymentMethod:'bank'},{paymentMethod:'link'},{paymentMethod:'stars',starPrice:25}]){
     const f=await harness(eventFixture({paymentMethod:'free',starPrice:0,isOwner:owner,isCoHost:!owner,location:'SECRET VENUE',...privacy}));
-    await f.findButton('event-list','Guest invitations').onclick();await f.findButton('invitation-links-list','Alex').onclick();
+    await f.findButton('event-list','Guest invitations').onclick();await f.findButton('invitation-links-list','Copy invite').onclick();
     assert.doesNotMatch(f.copied.at(-1),/SECRET VENUE/);assert.match(f.copied.at(-1),/Location will be available after/);assert.match(f.copied.at(-1),/\n\nhttps:\/\/t\.me\/test\?start=guest$/);
   }
 });
 
 test('copied paid invitations retain the configured Stars or manual text price',async()=>{
   for(const [pricing,expected] of [[{paymentMethod:'stars',starPrice:25,starPricing:'person'},'25 Stars per person'],[{paymentMethod:'stars',starPrice:50,starPricing:'group'},'50 Stars per group'],[{paymentMethod:'bank',starPrice:0,displayPrice:'AUD $20 each'},'Paid · AUD $20 each'],[{paymentMethod:'link',starPrice:0,displayPrice:'Members £15 / guests £20'},'Paid · Members £15 / guests £20']]){
-    const f=await harness(eventFixture(pricing));await f.findButton('event-list','Guest invitations').onclick();await f.findButton('invitation-links-list','Alex').onclick();assert.ok(f.copied.at(-1).includes(expected));
+    const f=await harness(eventFixture(pricing));await f.findButton('event-list','Guest invitations').onclick();await f.findButton('invitation-links-list','Copy invite').onclick();assert.ok(f.copied.at(-1).includes(expected));
   }
+});
+
+test('explicit copy preserves long custom invitations without putting their text into the link-only copy',async()=>{
+  const inviteMessage='Bring your friends, a warm scarf and your favourite snack. '.repeat(16).trim();
+  const url='https://t.me/test?start=personal_link';
+  const f=await harness(eventFixture({paymentMethod:'free',starPrice:0,inviteMessage,invitees:[{name:'Alex',participants:3,url}]}));
+  await f.findButton('event-list','Guest invitations').onclick();
+  await f.findButton('invitation-links-list','Copy invite').onclick();
+  const text=f.copied.at(-1);assert.ok(text.length>1000);assert.ok(text.includes(inviteMessage));assert.match(text,/^Dear Alex,/);assert.ok(text.endsWith('\n\n'+url));
+  await f.findButton('invitation-links-list','Copy link').onclick();assert.equal(f.copied.at(-1),url);
 });
 
 test('denied or unavailable clipboard exposes selectable full text and a denied copy can recover',async()=>{
   for(const clipboardMode of ['denied','absent']){
     const f=await harness(eventFixture({hideLocation:true,inviteMessage:'Bring a scarf.'}),{clipboardMode});
     await f.findButton('event-list','Guest invitations').onclick();
-    const copy=f.findButton('invitation-links-list','Alex');await copy.onclick();
+    const copy=f.findButton('invitation-links-list','Copy invite');await copy.onclick();
     const nodes=f.descendants(f.ids.get('invitation-links-list')),fullText=nodes.find(node=>node.tag==='textarea');
     assert.equal(nodes.find(node=>node.tag==='details').open,true);assert.equal(fullText.readOnly,true);assert.equal(fullText.focused,true);assert.equal(fullText.selected,true);
     assert.match(fullText.value,/^Dear Alex,/);assert.match(fullText.value,/Bring a scarf\./);assert.match(fullText.value,/start=guest$/);assert.doesNotMatch(fullText.value,/Club house/);
     assert.equal(f.copied.length,0);assert.match(f.ids.get('invitation-links-status').textContent,/Could not copy/);assert.doesNotMatch(f.ids.get('invitation-links-status').textContent,/Invitation copied/);assert.equal(copy.disabled,false);
     if(clipboardMode==='denied'){f.setClipboardMode('ok');await copy.onclick();assert.equal(f.copied.at(-1),fullText.value);assert.equal(f.ids.get('invitation-links-status').textContent,'Invitation copied for Alex.');}
+  }
+});
+
+test('link-only copy failures expose a selectable personal URL and can recover without copying invitation text',async()=>{
+  for(const clipboardMode of ['denied','absent']){
+    const url='https://t.me/test?start=guest';
+    const f=await harness(eventFixture({hideLocation:true,inviteMessage:'Bring a scarf.'}),{clipboardMode});
+    await f.findButton('event-list','Guest invitations').onclick();
+    const copy=f.findButton('invitation-links-list','Copy link');await copy.onclick();
+    const nodes=f.descendants(f.ids.get('invitation-links-list')),link=nodes.find(node=>node.tag==='input' && node.attributes['aria-label']==='Personal link for Alex');
+    assert.ok(link);assert.equal(link.value,url);assert.equal(link.readOnly,true);assert.equal(link.focused,true);assert.equal(link.selected,true);
+    assert.equal(nodes.find(node=>node.tag==='details').open,true);assert.equal(f.copied.length,0);assert.equal(copy.disabled,false);
+    assert.match(f.ids.get('invitation-links-status').textContent,/Could not copy/);assert.doesNotMatch(f.ids.get('invitation-links-status').textContent,/Link copied/);
+    if(clipboardMode==='denied'){f.setClipboardMode('ok');await copy.onclick();assert.equal(f.copied.at(-1),url);assert.match(f.ids.get('invitation-links-status').textContent,/Link copied/);}
   }
 });
 

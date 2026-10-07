@@ -22,6 +22,31 @@ test('guest-name buttons copy the complete short invitation and personal link, w
   assert.doesNotMatch(button.copy_text.text,/Linked to a Telegram account/);
 });
 
+test('native invitation details pair sharing with full-text copy and offer a separate personal-link copy',async()=>{
+  const f=fixture();f.event.inviteMessage='Bring your team!';
+  const copy=buildInvitationCopy(f.bot,1,f.event,f.token);
+  await invitationCopyCard(f.bot,1,f.event,f.token);
+  const rows=f.calls.at(-1).reply_markup.inline_keyboard;
+  assert.deepEqual(rows[0].map(b=>b.text),['Share invite','Copy invite']);
+  assert.deepEqual(rows[0][1].copy_text,{text:copy.text});
+  assert.deepEqual(rows[1],[{text:'Copy link only',copy_text:{text:personalUrl(f.event,f.token)}}]);
+  assert.ok(Array.from(rows[1][0].copy_text.text).length<=256);
+  const share=new URL(rows[0][0].url);
+  assert.equal(share.searchParams.get('url'),copy.url);assert.equal(share.searchParams.get('text'),copy.message);
+  assert.ok(rows[2][0].callback_data.startsWith('invite-links:'));
+});
+
+test('long native invitation details keep App full-text copy beside sharing and link-only copy native',async()=>{
+  const f=fixture();f.event.inviteMessage='Welcome to our club. '.repeat(25);
+  const copy=buildInvitationCopy(f.bot,1,f.event,f.token);
+  await invitationCopyCard(f.bot,1,f.event,f.token);
+  const rows=f.calls.at(-1).reply_markup.inline_keyboard;
+  assert.deepEqual(rows[0].map(b=>b.text),['Share invite','Copy invite in App']);
+  assert.equal(rows[0][1].copy_text,undefined);
+  assert.equal(rows[0][1].web_app.url,copy.button.web_app.url);
+  assert.deepEqual(rows[1],[{text:'Copy link only',copy_text:{text:personalUrl(f.event,f.token)}}]);
+});
+
 test('the native copy boundary counts Unicode characters and never truncates longer text',()=>{
   const f=fixture(),overhead=`Dear Alex,\n\nClub dinner.\n\n\n\n${personalUrl(f.event,f.token)}`;
   f.event.inviteMessage='🎉'.repeat(256-Array.from(overhead).length);
@@ -88,9 +113,10 @@ test('without App, long invitations use a bounded callback and show the entire m
   const detail=f.calls.at(-1),expected=`Dear Alex,\n\nClub dinner.\n\n${f.event.inviteMessage.trim()}\n\n${personalUrl(f.event,f.token)}`;
   assert.equal(detail.text,expected);
   const actions=detail.reply_markup.inline_keyboard.flat();
-  assert.equal(actions.some(b=>b.copy_text || b.web_app || b.callback_data?.startsWith('invite-copy:')),false);
+  assert.equal(actions.some(b=>b.web_app || b.callback_data?.startsWith('invite-copy:')),false);
+  assert.deepEqual(actions.filter(b=>b.copy_text),[{text:'Copy link only',copy_text:{text:personalUrl(f.event,f.token)}}]);
   assert.equal(actions.some(b=>/copied/i.test(b.text)),false);
-  const share=new URL(actions.find(b=>b.text==='Share invitation').url);
+  const share=new URL(actions.find(b=>b.text==='Share invite').url);
   assert.equal(share.hostname,'t.me');assert.ok(share.searchParams.get('text').includes(f.event.inviteMessage.trim()));
   assert.equal(share.searchParams.get('url'),personalUrl(f.event,f.token));
 });

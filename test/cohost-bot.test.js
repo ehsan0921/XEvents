@@ -7,7 +7,8 @@ import {setReminder,sendDueReminders} from '../src/reminders.js';
 
 function fixture(fields={}){
   const e={id:'0123456789abcdef',owner:1,title:'Club evening',location:'Private venue',when:'24 October 2099, 6pm Sydney',description:'A club meetup',guests:{3:{name:'Guest',status:'yes',approval:'pending',participants:1,responseVersion:1,phone:'',comment:''}},media:[],permissions:{},requireApproval:true,...fields};
-  e.invitationMode='named';Object.assign(e,invitationSettings({guestNames:'Alex = 2'},e));
+  e.invitationMode=fields.invitationMode || 'named';
+  if(e.invitationMode==='named')Object.assign(e,invitationSettings({guestNames:'Alex = 2'},e));
   const data={events:{[e.id]:e},sessions:{},preferences:{}},calls=[];
   const bot=new Bot({data},async(method,params)=>{calls.push({method,...params});return {};},'ExampleBot','https://example.test/app');
   const user=id=>({id,first_name:id===2?'Co':'User',last_name:id===2?'Host':String(id),username:id===2?'club_cohost':undefined});
@@ -30,18 +31,18 @@ test('owner creates a one-use co-host invite and claim announces the verified na
 });
 
 test('co-host can edit details, manage guests, approve requests, and upload media with guest options off',async()=>{
-  const f=fixture(),token=await f.create();await f.claim(token);
+  const f=fixture({invitationMode:'tickets'}),token=await f.create();await f.claim(token);
   await f.cb(2,`edit:${f.e.id}:title`);await f.msg(2,'Updated evening');assert.equal(f.e.title,'Updated evening');
   await f.cb(2,`banner:${f.e.id}`);await f.msg(2,undefined,{photo:[{file_id:'new-banner'}]});assert.equal(f.e.banner,'new-banner');
   await f.cb(2,`a:${f.e.id}`);assert.ok(f.calls.some(c=>c.chat_id===2 && c.text?.includes('Guest') && c.text.includes('Awaiting approval')));
   await f.cb(2,`approve:${f.e.id}:3:1`);assert.equal(f.e.guests[3].approval,'approved');assert.ok(f.e.guests[3].ticket);
   await f.cb(2,`u:${f.e.id}`);await f.msg(2,undefined,{photo:[{file_id:'cohost-photo'}]});assert.equal(f.e.media[0].fileId,'cohost-photo');
-  await f.msg(2,'/done');await f.bot.personalLinks(2,f.e);assert.ok(f.calls.some(c=>c.chat_id===2 && c.text?.includes('Dear Alex,')));
+  await f.msg(2,'/done');assert.equal(f.data.sessions[2],undefined);
 });
 
 test('guest response notifications reach both hosts and obsolete approval buttons cannot approve twice',async()=>{
-  const f=fixture(),token=await f.create();await f.claim(token);const personal=Object.keys(f.e.invitees)[0];
-  await f.msg(4,`/start i_${f.e.id}_${personal}`);await f.cb(4,`r:${f.e.id}:yes:0`);
+  const f=fixture({invitationMode:'tickets'}),token=await f.create();await f.claim(token);
+  await f.msg(4,`/start e_${f.e.id}`);await f.cb(4,`book:${f.e.id}`);await f.msg(4,'Alex');
   for(const uid of [1,2])assert.ok(f.calls.some(c=>c.chat_id===uid && c.text?.includes('Alex:') && buttons(c).some(b=>b.callback_data===`approve:${f.e.id}:4:1`)));
   await f.cb(2,`approve:${f.e.id}:4:1`);const ticket=f.e.guests[4].ticket;await f.cb(1,`approve:${f.e.id}:4:1`);assert.equal(f.e.guests[4].ticket,ticket);
 });

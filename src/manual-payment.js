@@ -1,9 +1,10 @@
 import {randomBytes} from 'node:crypto';
 import {paymentMethod} from './event-payment.js';
+import {requiresApproval} from './permissions.js';
 
 export async function manualInstructions(bot,id,e){
   const g=e.guests[id];
-  if(e.cancelled || !['bank','link'].includes(paymentMethod(e)) || g?.status!=='yes' || (e.requireApproval && g.approval!=='approved'))return bot.send(id,'Payment instructions are available after your acceptance is approved.');
+  if(e.cancelled || !['bank','link'].includes(paymentMethod(e)) || g?.status!=='yes' || (requiresApproval(e) && g.approval!=='approved'))return bot.send(id,'Payment instructions are available after your acceptance is approved.');
   if(g.payment?.status==='paid')return bot.ticket(id,e);
   const rows=[];
   if(e.paymentUrl)rows.push([{text:'Open payment link',url:e.paymentUrl}]);
@@ -12,7 +13,7 @@ export async function manualInstructions(bot,id,e){
 }
 export async function manualReport(bot,id,e){
   const g=e.guests[id];
-  if(e.cancelled || !['bank','link'].includes(paymentMethod(e)) || g?.status!=='yes' || (e.requireApproval && g.approval!=='approved'))return bot.send(id,'You cannot report payment for this booking.');
+  if(e.cancelled || !['bank','link'].includes(paymentMethod(e)) || g?.status!=='yes' || (requiresApproval(e) && g.approval!=='approved'))return bot.send(id,'You cannot report payment for this booking.');
   if(g.payment?.status==='paid' || g.payment?.status==='reported')return bot.send(id,g.payment.status==='paid'?'Your payment is already confirmed.':'Your organiser is reviewing your payment.');
   const token=randomBytes(12).toString('hex');
   g.payment={status:'reported',method:paymentMethod(e),record:token};
@@ -23,7 +24,7 @@ export async function manualReport(bot,id,e){
 }
 export async function manualConfirm(bot,actor,e,uid,clear=false){
   const g=e.guests[uid];
-  if(e.owner!==actor || !['bank','link'].includes(paymentMethod(e)) || !g || (clear ? !['paid','reported'].includes(g.payment?.status) : e.cancelled || g.status!=='yes' || g.payment?.status!=='reported' || (e.requireApproval && g.approval!=='approved')))return bot.send(actor,'This payment cannot be updated.');
+  if(e.owner!==actor || !['bank','link'].includes(paymentMethod(e)) || !g || (clear ? !['paid','reported'].includes(g.payment?.status) : e.cancelled || g.status!=='yes' || g.payment?.status!=='reported' || (requiresApproval(e) && g.approval!=='approved')))return bot.send(actor,'This payment cannot be updated.');
   const record=bot.db.preferences[uid]?.manualPayments?.[g.payment.record];
   g.payment.status=clear?'voided':'paid';
   if(record){record.status=g.payment.status;record.updatedAt=new Date().toISOString();}

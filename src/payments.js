@@ -1,15 +1,15 @@
 import { randomBytes } from 'node:crypto';
-import { participantCount } from './permissions.js';
+import { participantCount,requiresApproval } from './permissions.js';
 
 export const starTotal = (e, g) => e.starPrice * (e.starPricing === 'person' ? participantCount(e, g) : 1);
 export function orderFor(data, uid, token) { return data.preferences[uid]?.starOrders?.[token]; }
 export function validOrder(data, uid, order) {
   const e = order && data.events[order.event]; const g = e?.guests[uid];
-  return !!(e && !e.cancelled && e.owner === order.owner && e.starPrice > 0 && e.starPrice===order.unitPrice && e.starPricing===order.pricing && e.paymentTerms===order.terms && g?.status === 'yes' && (!e.requireApproval || g.approval === 'approved') && g.payment?.status !== 'paid' && order.status === 'pending' && g.payment?.order === order.id && starTotal(e,g) === order.amount && participantCount(e,g) === order.participants && (!e.startsAt || Date.parse(e.startsAt) > Date.now()));
+  return !!(e && !e.cancelled && e.owner === order.owner && e.starPrice > 0 && e.starPrice===order.unitPrice && e.starPricing===order.pricing && e.paymentTerms===order.terms && g?.status === 'yes' && (!requiresApproval(e) || g.approval === 'approved') && g.payment?.status !== 'paid' && order.status === 'pending' && g.payment?.order === order.id && starTotal(e,g) === order.amount && participantCount(e,g) === order.participants && (!e.startsAt || Date.parse(e.startsAt) > Date.now()));
 }
 export async function invoice(bot, uid, e, consent = false) {
   const g=e.guests[uid];
-  if (!e.starPrice || e.cancelled || g?.status !== 'yes' || (e.requireApproval && g.approval !== 'approved')) return bot.send(uid,'Payment is available after your acceptance is approved.');
+  if (!e.starPrice || e.cancelled || g?.status !== 'yes' || (requiresApproval(e) && g.approval !== 'approved')) return bot.send(uid,'Payment is available after your acceptance is approved.');
   if (g.payment?.status === 'paid') return bot.send(uid,'Your payment is already confirmed.');
   const previous=orderFor(bot.db,uid,g.payment?.order);
   if(g.payment?.status==='processing' && previous?.checkoutAt && Date.now()-Date.parse(previous.checkoutAt)>15*60000) {previous.status='expired';g.payment={status:'expired'};}

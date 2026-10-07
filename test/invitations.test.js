@@ -14,14 +14,15 @@ function fixture(mode){
 }
 
 test('completed message buttons clear, notifications deliver, and old request versions cannot change newer responses',async()=>{
-  const f=fixture('named');Object.assign(f.e,{askPhone:false,askComments:false},invitationSettings({invitationMode:'named',guestNames:'Alex'},f.e));
-  const token=Object.keys(f.e.invitees)[0];await f.msg(2,`/start i_${f.e.id}_${token}`);
+  const f=fixture('legacy');Object.assign(f.e,{askPhone:false,askComments:false});
+  await f.msg(2,`/start e_${f.e.id}`);
   const press=(id,data,message_id)=>f.bot.handle({callback_query:{id:'q',from:{id,first_name:'Alex'},data,message:{chat:{id},message_id}}});
   await press(2,`r:${f.e.id}:yes:0`,10);
+  await f.msg(2,'Alex');
   assert.ok(f.calls.some(c=>c.method==='editMessageReplyMarkup' && c.chat_id===2 && c.message_id===10 && c.reply_markup.inline_keyboard.length===0));
   assert.ok(f.calls.some(c=>c.chat_id===1 && c.reply_markup?.inline_keyboard.flat().some(b=>b.callback_data===`approve:${f.e.id}:2:1`)));
   await press(2,`r:${f.e.id}:maybe:1`,11);assert.equal(f.e.guests[2].status,'maybe');
-  await press(2,`r:${f.e.id}:yes:2`,12);assert.equal(f.e.guests[2].responseVersion,3);
+  await press(2,`r:${f.e.id}:yes:2`,12);await f.msg(2,'Alex');assert.equal(f.e.guests[2].responseVersion,3);
   await press(1,`approve:${f.e.id}:2:1`,20);assert.equal(f.e.guests[2].approval,'pending');
   await press(1,`approve:${f.e.id}:2:3`,21);assert.equal(f.e.guests[2].approval,'approved');
   const ticket=f.e.guests[2].ticket;
@@ -32,7 +33,7 @@ test('completed message buttons clear, notifications deliver, and old request ve
 });
 
 test('group-size buttons show 1–5 then 6–10, reject excess and expose roster only to the organiser',async()=>{
-  const f=fixture('named');Object.assign(f.e,{askPhone:false,askComments:false,askParticipantCount:true},invitationSettings({invitationMode:'named',guestNames:'Alex\nSam'},f.e));
+  const f=fixture('named');Object.assign(f.e,{askPhone:false,askComments:false,askParticipantCount:true},invitationSettings({invitationMode:'named',guestNames:'Alex = ?\nSam'},f.e));
   await f.msg(2,`/start i_${f.e.id}_${Object.keys(f.e.invitees)[0]}`);await f.cb(2,`r:${f.e.id}:yes`);
   const sizes=()=>f.calls.at(-1).reply_markup.inline_keyboard[0].map(b=>b.text);
   assert.deepEqual(sizes(),['1','2','3','4','5']);assert.ok(f.calls.at(-1).text.length<70);
@@ -46,16 +47,18 @@ test('group-size buttons show 1–5 then 6–10, reject excess and expose roster
   await f.msg(1,`/start manage_${f.e.id}`);assert.ok(f.calls.some(c=>c.chat_id===1 && c.text?.includes('Accepted: 1 responses · 10 people')));
   f.calls.length=0;await f.msg(2,`/start manage_${f.e.id}`);assert.ok(!f.calls.some(c=>c.text?.includes('Sam')));
 });
-test('personal invitation links preserve organiser names, bind to one account and skip the name prompt',async()=>{
+test('personal invitation links preserve organiser names, bind on the first completed RSVP and skip the name prompt',async()=>{
   const f=fixture('named');Object.assign(f.e,{askPhone:true,askComments:true},invitationSettings({invitationMode:'named',guestNames:'Alex Smith\nSam Jones'},f.e));
   const token=Object.keys(f.e.invitees)[0],second=Object.keys(f.e.invitees)[1];
   assert.ok(namedLink(f.e,token,'ExampleBot').split('start=')[1].length<=64);
   await f.msg(2,`/start i_${f.e.id}_${token}`);assert.equal(f.e.guests[2].name,'Alex Smith');
-  await f.msg(3,`/start i_${f.e.id}_${token}`);assert.equal(f.e.guests[3],undefined);
+  await f.msg(3,`/start i_${f.e.id}_${token}`);assert.equal(f.e.guests[3].status,'later');assert.equal(f.e.invitees[token].claimedBy,null);
   assert.throws(()=>claimInvitation(f.e,second,2));
   const projected=publicEvent(f.e,2,'ExampleBot');assert.equal(projected.guestName,'Alex Smith');assert.equal(projected.invitees,undefined);
   await f.cb(2,`r:${f.e.id}:yes`);assert.equal(f.data.sessions[2].step,'phone');
-  await f.msg(2,'/skip');await f.msg(2,'/skip');assert.equal(f.e.guests[2].name,'Alex Smith');assert.equal(f.e.guests[2].status,'yes');assert.equal(f.e.guests[2].approval,'pending');
+  await f.msg(2,'/skip');await f.msg(2,'/skip');assert.equal(f.e.guests[2].name,'Alex Smith');assert.equal(f.e.guests[2].status,'yes');assert.equal(f.e.guests[2].approval,'approved');
+  assert.equal(f.e.invitees[token].claimedBy,2);assert.equal(f.e.guests[3],undefined);
+  await f.msg(3,`/start i_${f.e.id}_${token}`);assert.equal(f.e.guests[3],undefined);
   const before=f.e.invitees;const updated=invitationSettings({guestNames:'Alex Smith\nSam Jones\nNew Guest'},f.e);assert.equal(updated.invitees[token],before[token]);
   assert.throws(()=>invitationSettings({guestNames:'Sam Jones'},f.e));assert.throws(()=>invitationSettings({invitationMode:'tickets'},f.e));
   await f.msg(4,`/start e_${f.e.id}`);assert.equal(f.e.guests[4],undefined);

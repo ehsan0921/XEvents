@@ -6,14 +6,14 @@ import {setupGallery} from '../public/gallery.js';
 
 const eventFixture=fields=>({id:'0123456789abcdef',title:'Club evening',location:'Club house',description:'Meet the team',isOwner:true,isManager:true,isCoHost:false,cohost:null,cohostInviteUrl:null,cohostVersion:'none',invitationMode:'named',invitees:[{name:'Alex',participants:2,url:'https://t.me/test?start=guest'}],group:'Upcoming events',upcoming:true,startsAt:'2099-10-24T08:00:00Z',timezone:'Australia/Sydney',localDate:'2099-10-24',localTime:'18:00',permissions:{},qrEnabled:true,uploadLink:'https://t.me/test?start=upload',paymentMethod:'stars',starPrice:100,starPricing:'person',paymentTerms:'Admission for one person.',...fields});
 
-async function harness(initial){
+async function harness(initial,{scheduleError}={}){
   class El{
-    constructor(tag=''){this.tag=tag;this.children=[];this.dataset={};this.value='';this.files=[];this.attributes={};this.open=false;this.classList={toggle(){},add(){},remove(){}};}
+    constructor(tag=''){this.tag=tag;this.children=[];this.dataset={};this.value='';this.files=[];this.attributes={};this.listeners={};this.open=false;this.classList={toggle(){},add(){},remove(){}};}
     append(...children){this.children.push(...children);this.firstChild=this.children[0];}
     replaceChildren(...children){this.children=[];this.append(...children);}
     setAttribute(key,value){this.attributes[key]=value;}
     removeAttribute(key){delete this.attributes[key];}
-    addEventListener(){} reset(){} focus(){} setCustomValidity(value){this.validation=value;} querySelector(){return new El();}
+    addEventListener(type,callback){this.listeners[type]=callback;} reset(){} focus(){} setCustomValidity(value){this.validation=value;} querySelector(){return new El();}
     showModal(){this.open=true;}
     close(){this.open=false;this.onclose?.();}
   }
@@ -37,7 +37,8 @@ async function harness(initial){
       event=path.endsWith('/invite') ? {...event,cohostInviteUrl:'https://t.me/test?start=cohost_'+(++token),cohostVersion:'pending:'+token} : {...event,cohost:null,cohostInviteUrl:null,cohostVersion:'none'};
       return response({event});
     }
-    if(path.endsWith('/schedule')){event={...event,...body};return response({event});}
+    if(path==='/api/events'){event={...event,...body};return response({event});}
+    if(path.endsWith('/schedule')){if(scheduleError)return response({error:scheduleError},400);event={...event,...body};return response({event});}
     if(path==='/api/preview')return response({startsAt:event.startsAt,timezone:event.timezone});
     return response({});
   };
@@ -74,6 +75,8 @@ test('owner can create, copy and share a co-host invite, then cancel its exact v
   const f=await harness(eventFixture());
   await f.findButton('event-list','Co-host').onclick();
   assert.equal(f.ids.get('cohost-dialog').open,true);
+  assert.equal(f.ids.get('cohost-settings').open,false);
+  assert.equal(f.ids.get('cohost-settings-summary').textContent,'Invite a co-host');
   await f.ids.get('cohost-generate').onclick();
   assert.equal(f.calls.find(call=>call.path.endsWith('/cohost/invite')).body.version,'none');
   assert.equal(f.ids.get('cohost-link').textContent,'https://t.me/test?start=cohost_1');
@@ -118,4 +121,68 @@ test('claimed co-host without a username shows an explicit fallback and owner pa
   await f.findButton('event-list','Co-host').onclick();assert.equal(f.ids.get('cohost-identity').textContent,'Alex · No Telegram username');
   f.ids.get('cohost-close').onclick();await f.findButton('event-list','Edit event').onclick();
   assert.equal(f.ids.get('payment-owner-note').hidden,true);assert.equal(f.ids.get('stars-price').disabled,false);assert.equal(f.ids.get('payment-terms').disabled,false);
+});
+
+test('named edits hide general count and approval controls, retain per-name rules and preserve private locations',async()=>{
+  const f=await harness(eventFixture({requireApproval:true,askParticipantCount:true,hideLocation:false,invitees:[{name:'Alex',participants:2,participantMode:'confirm'},{name:'Sam',participantMode:'ask'}]}));
+  await f.findButton('event-list','Edit event').onclick();
+  for(const id of ['require-approval-option','ask-participant-count-option'])assert.equal(f.ids.get(id).hidden,true);
+  for(const id of ['require-approval','ask-participant-count']){assert.equal(f.ids.get(id).checked,false);assert.equal(f.ids.get(id).disabled,true);}
+  assert.equal(f.ids.get('hide-location').checked,true);assert.equal(f.ids.get('hide-location').disabled,false);
+  assert.equal(f.ids.get('one-time-invite').checked,true);assert.match(f.ids.get('one-time-invite-note').textContent,/Respond later does not lock/);
+  assert.equal(f.ids.get('guest-names').value,'Alex = 2!\nSam = ?');
+  for(const id of ['extra-details','timing-options','stars-panel','guest-permissions','media-options'])assert.equal(f.ids.get(id).open,false);
+  // Even stale UI state cannot re-enable the two general options in the named payload.
+  f.ids.get('require-approval').checked=true;f.ids.get('ask-participant-count').checked=true;
+  await f.ids.get('event-form').onsubmit({preventDefault(){}});
+  const saved=f.calls.find(call=>call.path.endsWith('/schedule')).body;
+  assert.equal(saved.requireApproval,false);assert.equal(saved.askParticipantCount,false);assert.equal(saved.hideLocation,true);assert.equal(saved.oneTimeInvite,true);
+  assert.equal(saved.guestNames,'Alex = 2!\nSam = ?');assert.equal(saved.starPrice,100);
+});
+
+test('new forms default to reusable tickets and one-time named links while respecting an unchecked choice',async()=>{
+  const f=await harness(eventFixture());
+  f.ids.get('hero-create').onclick();
+  assert.equal(f.ids.get('invitation-mode').value,'tickets');assert.equal(f.ids.get('one-time-invite').checked,false);
+  assert.equal(f.ids.get('require-approval-option').hidden,false);assert.equal(f.ids.get('ask-participant-count-option').hidden,false);
+  f.ids.get('require-approval').checked=true;
+  f.ids.get('invitation-mode').value='named';f.ids.get('invitation-mode').onchange();
+  assert.equal(f.ids.get('one-time-invite').checked,true);assert.equal(f.ids.get('require-approval').checked,false);assert.equal(f.ids.get('hide-location').checked,true);
+  f.ids.get('one-time-invite').checked=false;f.ids.get('one-time-invite').onchange();
+  assert.match(f.ids.get('one-time-invite-note').textContent,/More than one guest/);
+  f.ids.get('guest-names').value='Alex = ?';f.ids.get('title').value='New event';f.ids.get('location').value='Park';
+  await f.ids.get('event-form').onsubmit({preventDefault(){}});
+  const saved=f.calls.find(call=>call.path==='/api/events').body;
+  assert.equal(saved.oneTimeInvite,false);assert.equal(saved.invitationMode,'named');assert.equal(saved.requireApproval,false);assert.equal(saved.askParticipantCount,false);
+  assert.deepEqual(f.errors,[]);
+});
+
+test('existing reusable named links and legacy ticket defaults load without being changed',async()=>{
+  const named=await harness(eventFixture({oneTimeInvite:false}));
+  await named.findButton('event-list','Edit event').onclick();assert.equal(named.ids.get('one-time-invite').checked,false);
+  const tickets=await harness(eventFixture({invitationMode:'tickets',requireApproval:true,askParticipantCount:true}));
+  await tickets.findButton('event-list','Edit event').onclick();assert.equal(tickets.ids.get('one-time-invite').checked,false);
+  assert.equal(tickets.ids.get('require-approval').checked,true);assert.equal(tickets.ids.get('ask-participant-count').checked,true);
+  assert.equal(tickets.ids.get('require-approval-option').hidden,false);assert.equal(tickets.ids.get('ask-participant-count-option').hidden,false);
+});
+
+test('collapsed settings expand for invalid required fields and payment errors',async()=>{
+  const f=await harness(eventFixture(),{scheduleError:'Payment and refund terms is required.'});
+  await f.findButton('event-list','Edit event').onclick();
+  const payment=f.ids.get('stars-panel');payment.tagName='DETAILS';
+  f.ids.get('payment-terms').parentElement=payment;
+  f.ids.get('event-form').listeners.invalid({target:f.ids.get('payment-terms')});
+  assert.equal(payment.open,true);
+  payment.open=false;await f.ids.get('event-form').onsubmit({preventDefault(){}});
+  assert.equal(payment.open,true);assert.equal(f.ids.get('form-error').hidden,false);assert.match(f.ids.get('form-error').textContent,/Payment and refund terms/);
+});
+
+test('personal invitation rows distinguish an unanswered open link from a locked RSVP and a reusable link',async()=>{
+  const f=await harness(eventFixture({oneTimeInvite:true,invitees:[{name:'Alex',status:'later',claimed:false,url:'https://t.me/test?start=alex'},{name:'Sam',status:'yes',claimed:true,url:'https://t.me/test?start=sam'}]}));
+  await f.findButton('event-list','Guest invitations').onclick();
+  let rows=f.descendants(f.ids.get('invitation-links-list')).filter(node=>node.tag==='p').map(node=>node.textContent).join('\n');
+  assert.match(rows,/Awaiting RSVP · One-time link/);assert.match(rows,/Accepted · Locked to one guest/);assert.doesNotMatch(rows,/Not opened/);
+  f.setEvent({...f.getEvent(),oneTimeInvite:false});await f.findButton('event-list','Guest invitations').onclick();
+  rows=f.descendants(f.ids.get('invitation-links-list')).filter(node=>node.tag==='p').map(node=>node.textContent).join('\n');
+  assert.match(rows,/Accepted · Reusable link/);assert.match(f.ids.get('invitation-links-note').textContent,/more than one guest/);
 });

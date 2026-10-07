@@ -24,14 +24,20 @@ try {
   await db.exec(await readFile('migrations/0003_mini_app.sql', 'utf8'));
   assert.equal((await mf.dispatchFetch('https://test/')).status, 200);
   assert.equal((await mf.dispatchFetch('https://test/telegram', { method: 'POST', body: '{}' })).status, 401);
+  async function telegramUpdate(body){
+    for(let attempt=0;attempt<12;attempt++){
+      const response=await mf.dispatchFetch('https://test/telegram',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':'test-secret'},body:JSON.stringify(body)});
+      const text=await response.text();
+      // Telegram redelivers the same update when concurrent writes encounter the D1 lease.
+      if(response.status===503 && attempt<11){await new Promise(resolve=>setTimeout(resolve,Math.min(25*(attempt+1),200)));continue;}
+      assert.equal(response.status,200,text);return;
+    }
+  }
   async function message(update_id, text, uid = 123, extra = {}) {
-    const body = { update_id, message: { from: { id: uid, first_name: 'Tester' }, chat: { id: uid, type: 'private' }, text, ...extra } };
-    const response = await mf.dispatchFetch('https://test/telegram', { method: 'POST', headers: { 'X-Telegram-Bot-Api-Secret-Token': 'test-secret' }, body: JSON.stringify(body) });
-    assert.equal(response.status, 200, await response.text());
+    await telegramUpdate({ update_id, message: { from: { id: uid, first_name: 'Tester' }, chat: { id: uid, type: 'private' }, text, ...extra } });
   }
   async function callback(update_id, data, uid = 123) {
-    const response = await mf.dispatchFetch('https://test/telegram', { method: 'POST', headers: { 'X-Telegram-Bot-Api-Secret-Token': 'test-secret' }, body: JSON.stringify({ update_id, callback_query: { id: String(update_id), from: { id: uid, first_name: 'Tester' }, data } }) });
-    assert.equal(response.status, 200);
+    await telegramUpdate({ update_id, callback_query: { id: String(update_id), from: { id: uid, first_name: 'Tester' }, data } });
   }
   const texts = ['/new', 'Cloud event', 'Tomorrow 6pm Sydney', 'Park', '/skip', 'Dietary needs?'];
   for (const [i, text] of texts.entries()) await message(i + 1, text);
@@ -232,7 +238,7 @@ try {
   assert.ok(['refund_pending','refunded'].includes(durablePref.starOrders[starOrder.id].status));
   assert.equal((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(starsId).first()),null);
   const ticketInput={...input,qrEnabled:true,title:'Ticket workflow',date:'2099-10-24',requestId:'66666666-6666-6666-6666-666666666666',requireApproval:true};delete ticketInput.invitationMode;
-  const ticketEvent=await api('events',ticketInput);assert.equal(ticketEvent.status,200);assert.equal(ticketEvent.data.event.invitationMode,'tickets');
+  const ticketEvent=await api('events',ticketInput);assert.equal(ticketEvent.status,200);assert.equal(ticketEvent.data.event.invitationMode,'tickets');assert.equal(ticketEvent.data.event.oneTimeInvite,false);
   const ticketId=ticketEvent.data.event.id;
   await message(5000,`/start e_${ticketId}`,456);await callback(5001,`book:${ticketId}`,456);await message(5002,'Ticket Guest',456);await message(5003,'/skip',456);await message(5004,'/skip',456);
   assert.equal((await api(`events/${ticketId}`,null,456)).data.event.approval,'pending');
@@ -255,16 +261,17 @@ try {
   const checkedEvent=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(ticketId).first()).data);assert.equal(checkedEvent.checkIns[ticketCode].userId,456);
   await api(`events/${ticketId}/cancel`,{confirm:true});assert.equal((await api(`events/${ticketId}/ticket-check`,{code:ticketCode})).data.ticket.valid,false);
   const namedInput={...ticketInput,title:'Named workflow',invitationMode:'named',askParticipantCount:true,inviteMessage:'Join our club celebration!',guestNames:'Alex Smith = 3\nSam Jones',requestId:'77777777-7777-7777-7777-777777777777'};
-  const namedEvent=await api('events',namedInput);assert.equal(namedEvent.status,200);assert.equal(namedEvent.data.event.invitees.length,2);
+  const namedEvent=await api('events',namedInput);assert.equal(namedEvent.status,200);assert.equal(namedEvent.data.event.invitees.length,2);assert.equal(namedEvent.data.event.oneTimeInvite,true);assert.equal(namedEvent.data.event.requireApproval,false);assert.equal(namedEvent.data.event.askParticipantCount,false);
   const namedId=namedEvent.data.event.id,personalUrl=namedEvent.data.event.invitees[0].url;
   await message(5010,'/start '+new URL(personalUrl).searchParams.get('start'),456);
   await message(5011,'/start '+new URL(personalUrl).searchParams.get('start'),789);
-  assert.equal((await api(`events/${namedId}`,null,789)).status,403);
+  assert.equal((await api(`events/${namedId}`,null,789)).status,200);
   const personalView=(await api(`events/${namedId}`,null,456)).data.event;assert.equal(personalView.guestName,'Alex Smith');assert.equal(personalView.invitees,undefined);
   await callback(5012,`r:${namedId}:yes`,456);
   assert.equal(JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='sessions' AND id='456'").first()).data).step,'phone');
   await message(5013,'/skip',456);await message(5014,'/skip',456);
-  assert.equal((await api(`events/${namedId}`,null,456)).data.event.participants,3);
+  const acceptedNamed=(await api(`events/${namedId}`,null,456)).data.event;assert.equal(acceptedNamed.participants,3);assert.equal(acceptedNamed.approval,'approved');
+  assert.equal((await api(`events/${namedId}`,null,789)).status,403);
   const editedNamed=await api(`events/${namedId}/schedule`,{...namedInput,title:'Edited title',location:'Edited address',description:'Edited description',inviteMessage:'Updated welcome message',guestNames:'Alex Smith = 3\nSam Jones\nTaylor'});
   assert.equal(editedNamed.status,200);assert.equal(editedNamed.data.event.invitees[0].url,personalUrl);
   const freshNamed=(await api(`events/${namedId}`)).data.event;
@@ -290,25 +297,20 @@ try {
   await openCountInvite('Default Guest',801);
   assert.equal((await countRecord()).guests[801].participants,2);
   await callback(countUpdate++,`r:${countId}:yes:${countGuest.responseVersion}`,801);
-  countGuest=(await countRecord()).guests[801];assert.equal(countGuest.status,'yes');assert.equal(countGuest.participants,2);assert.equal(countGuest.approval,'pending');assert.equal(await countSession(801),null);
-  await callback(countUpdate++,`approve:${countId}:801:${countGuest.responseVersion}`);
+  countGuest=(await countRecord()).guests[801];assert.equal(countGuest.status,'yes');assert.equal(countGuest.participants,2);assert.equal(countGuest.approval,'approved');assert.equal(await countSession(801),null);
   const approvedCountGuest=(await countRecord()).guests[801],oldCountTicket=approvedCountGuest.ticket;
   assert.ok(oldCountTicket);assert.equal(approvedCountGuest.approval,'approved');
   await callback(countUpdate++,`group:${countId}:edit:${approvedCountGuest.responseVersion}`,801);
   countState=await countSession(801);
   await callback(countUpdate++,`size:${countId}:3:${countState.countToken}`,801);
-  countGuest=(await countRecord()).guests[801];assert.equal(countGuest.participants,3);assert.equal(countGuest.approval,'pending');assert.equal(countGuest.ticket,undefined);assert.ok(countGuest.responseVersion>approvedCountGuest.responseVersion);
+  countGuest=(await countRecord()).guests[801];assert.equal(countGuest.participants,3);assert.equal(countGuest.approval,'approved');assert.ok(countGuest.ticket);assert.notEqual(countGuest.ticket,oldCountTicket);assert.ok(countGuest.responseVersion>approvedCountGuest.responseVersion);
   assert.equal((await api(`events/${countId}/ticket-check`,{code:oldCountTicket})).data.ticket.valid,false);
-  await callback(countUpdate++,`approve:${countId}:801:${approvedCountGuest.responseVersion}`);
-  assert.equal((await countRecord()).guests[801].approval,'pending');
-  await callback(countUpdate++,`approve:${countId}:801:${countGuest.responseVersion}`);
-  assert.equal((await countRecord()).guests[801].approval,'approved');
   await openCountInvite('Default Guest',801);assert.equal((await countRecord()).guests[801].participants,3);
   await openCountInvite('Confirm Guest',802);
   await callback(countUpdate++,`r:${countId}:yes:0`,802);
   countState=await countSession(802);assert.equal(countState.step,'participantConfirm');assert.equal((await countRecord()).guests[802].status,'later');
   await callback(countUpdate++,`count-confirm:${countId}:yes:${countState.countToken}`,802);
-  countGuest=(await countRecord()).guests[802];assert.equal(countGuest.status,'yes');assert.equal(countGuest.participants,4);assert.equal(countGuest.approval,'pending');assert.equal(await countSession(802),null);
+  countGuest=(await countRecord()).guests[802];assert.equal(countGuest.status,'yes');assert.equal(countGuest.participants,4);assert.equal(countGuest.approval,'approved');assert.equal(await countSession(802),null);
   await openCountInvite('Change Guest',804);
   await callback(countUpdate++,`r:${countId}:yes:0`,804);
   countState=await countSession(804);assert.equal(countState.step,'participantConfirm');
@@ -321,7 +323,79 @@ try {
   countState=await countSession(803);assert.equal(countState.step,'participants');
   await callback(countUpdate++,`size:${countId}:10:${countState.countToken}`,803);
   countGuest=(await countRecord()).guests[803];assert.equal(countGuest.status,'yes');assert.equal(countGuest.participants,10);assert.equal(await countSession(803),null);
-  assert.equal((await api(`events/${countId}`)).data.event.counts.pendingParticipants,19);
+  assert.equal((await api(`events/${countId}`)).data.event.counts.pendingParticipants,0);assert.equal((await api(`events/${countId}`)).data.event.counts.participants,22);
+  // One-time personal links lock only after the first final RSVP, including Reject and Maybe.
+  const oneTimeInput={...ticketInput,title:'One-time personal invitations',invitationMode:'named',askPhone:false,askComments:false,askParticipantCount:true,requireApproval:true,guestNames:'Accept Guest\nReject Guest\nMaybe Guest\nRace Guest\nDelayed Guest = ?',requestId:'dededede-dede-dede-dede-dededededede'};
+  const oneTimeCreated=await api('events',oneTimeInput);assert.equal(oneTimeCreated.status,200);
+  const oneTimeId=oneTimeCreated.data.event.id;
+  assert.equal(oneTimeCreated.data.event.oneTimeInvite,true);assert.equal(oneTimeCreated.data.event.requireApproval,false);assert.equal(oneTimeCreated.data.event.askParticipantCount,false);
+  const inviteRecord=async id=>JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(id).first()).data);
+  let inviteUpdate=10000;
+  const inviteToken=guestName=>new URL(oneTimeCreated.data.event.invitees.find(guest=>guest.name===guestName).url).searchParams.get('start');
+  const openOneTime=async(guestName,uid)=>message(inviteUpdate++,'/start '+inviteToken(guestName),uid);
+  const respondOneTime=async(uid,status)=>{const guest=(await inviteRecord(oneTimeId)).guests[uid];await callback(inviteUpdate++,`r:${oneTimeId}:${status}:${guest?.responseVersion || 0}`,uid);};
+  await Promise.all([openOneTime('Accept Guest',1101),openOneTime('Accept Guest',1102)]);
+  assert.equal((await api(`events/${oneTimeId}`,null,1101)).status,200);assert.equal((await api(`events/${oneTimeId}`,null,1102)).status,200);
+  await respondOneTime(1101,'later');
+  let oneTimeStored=await inviteRecord(oneTimeId),acceptToken=inviteToken('Accept Guest').split('_').at(-1);
+  assert.ok(!oneTimeStored.invitees[acceptToken].claimedBy);assert.ok(!oneTimeStored.invitees[acceptToken].respondedBy);
+  await respondOneTime(1102,'yes');
+  oneTimeStored=await inviteRecord(oneTimeId);
+  assert.equal(oneTimeStored.invitees[acceptToken].claimedBy,1102);assert.equal(oneTimeStored.invitees[acceptToken].respondedBy,1102);
+  assert.equal(oneTimeStored.guests[1102].status,'yes');assert.equal(oneTimeStored.guests[1102].approval,'approved');assert.equal(oneTimeStored.guests[1101],undefined);
+  assert.equal((await api(`events/${oneTimeId}`,null,1101)).status,403);
+  await respondOneTime(1101,'yes');assert.equal((await inviteRecord(oneTimeId)).guests[1101],undefined);
+  await openOneTime('Accept Guest',1101);assert.equal((await api(`events/${oneTimeId}`,null,1101)).status,403);
+  // Older stored invitations had claimedBy only; revising a final RSVP to Later must preserve that lock.
+  const olderBinding=await inviteRecord(oneTimeId);delete olderBinding.invitees[acceptToken].respondedBy;
+  await db.prepare("UPDATE records SET data=? WHERE kind='events' AND id=?").bind(JSON.stringify(olderBinding),oneTimeId).run();
+  await respondOneTime(1102,'later');assert.equal((await inviteRecord(oneTimeId)).invitees[acceptToken].respondedBy,1102);
+  await openOneTime('Accept Guest',1101);assert.equal((await api(`events/${oneTimeId}`,null,1101)).status,403);
+  // The holder can revise their RSVP; choosing Later afterwards never releases a consumed link.
+  await openOneTime('Accept Guest',1102);await respondOneTime(1102,'maybe');await respondOneTime(1102,'later');
+  assert.equal((await inviteRecord(oneTimeId)).invitees[acceptToken].respondedBy,1102);
+  await openOneTime('Accept Guest',1101);assert.equal((await api(`events/${oneTimeId}`,null,1101)).status,403);
+  await respondOneTime(1102,'no');assert.equal((await inviteRecord(oneTimeId)).guests[1102].status,'no');
+  for(const [guestName,status,holder,forwarded] of [['Reject Guest','no',1111,1112],['Maybe Guest','maybe',1121,1122]]){
+    await openOneTime(guestName,holder);await respondOneTime(holder,status);await openOneTime(guestName,forwarded);
+    const stored=await inviteRecord(oneTimeId),token=inviteToken(guestName).split('_').at(-1);
+    assert.equal(stored.invitees[token].respondedBy,holder);assert.equal(stored.guests[holder].status,status);assert.equal(stored.guests[forwarded],undefined);
+    assert.equal((await api(`events/${oneTimeId}`,null,forwarded)).status,403);
+  }
+  // Two already-opened copies racing to accept can produce only one final response.
+  await Promise.all([openOneTime('Race Guest',1131),openOneTime('Race Guest',1132)]);
+  await Promise.all([respondOneTime(1131,'yes'),respondOneTime(1132,'yes')]);
+  oneTimeStored=await inviteRecord(oneTimeId);
+  const raceToken=inviteToken('Race Guest').split('_').at(-1),raceHolder=oneTimeStored.invitees[raceToken].respondedBy;
+  assert.ok([1131,1132].includes(raceHolder));assert.equal(oneTimeStored.guests[raceHolder].status,'yes');assert.equal(oneTimeStored.guests[raceHolder===1131?1132:1131],undefined);
+  assert.equal(Object.values(oneTimeStored.guests).filter(guest=>guest.invitationToken===raceToken && ['yes','no','maybe'].includes(guest.status)).length,1);
+  // A final response from another account invalidates a count picker that was already open.
+  await openOneTime('Delayed Guest',1141);await openOneTime('Delayed Guest',1142);await respondOneTime(1141,'yes');
+  const delayedSession=await countSession(1141);assert.equal(delayedSession.step,'participants');
+  await respondOneTime(1142,'no');await callback(inviteUpdate++,`size:${oneTimeId}:4:${delayedSession.countToken}`,1141);
+  oneTimeStored=await inviteRecord(oneTimeId);assert.equal(oneTimeStored.guests[1141],undefined);assert.equal(oneTimeStored.guests[1142].status,'no');assert.equal(await countSession(1141),null);
+  // The setting is editable before responses; disabling it allows multiple accounts to reuse a link.
+  const reusableInput={...oneTimeInput,title:'Reusable personal link',guestNames:'Reusable Guest',oneTimeInvite:false,requestId:'acacacac-acac-acac-acac-acacacacacac'};
+  const reusableCreated=await api('events',reusableInput);assert.equal(reusableCreated.status,200);assert.equal(reusableCreated.data.event.oneTimeInvite,false);
+  const reusableId=reusableCreated.data.event.id;
+  assert.equal((await api(`events/${reusableId}/schedule`,{...reusableInput,oneTimeInvite:true})).data.event.oneTimeInvite,true);
+  assert.equal((await api(`events/${reusableId}/schedule`,{...reusableInput,oneTimeInvite:false})).data.event.oneTimeInvite,false);
+  const reusableStart=new URL(reusableCreated.data.event.invitees[0].url).searchParams.get('start');
+  for(const uid of [1151,1152]){await message(inviteUpdate++,'/start '+reusableStart,uid);await callback(inviteUpdate++,`r:${reusableId}:yes:0`,uid);assert.equal((await api(`events/${reusableId}`,null,uid)).status,200);}
+  assert.equal((await api(`events/${reusableId}`)).data.event.counts.yes,2);
+  assert.equal((await api(`events/${reusableId}/schedule`,{...reusableInput,oneTimeInvite:true})).status,400);
+  assert.equal((await api(`events/${reusableId}`)).data.event.oneTimeInvite,false);
+  assert.equal((await api(`events/${reusableId}/schedule`,{...reusableInput,oneTimeInvite:'yes'})).status,400);
+  assert.equal((await api('events',{...reusableInput,oneTimeInvite:'yes',requestId:'bcbcbcbc-bcbc-bcbc-bcbc-bcbcbcbcbcbc'})).status,400);
+  // A one-time general ticket link also stays open through name entry and closes on final booking.
+  const singleTicketInput={...ticketInput,title:'One-time ticket link',oneTimeInvite:true,requireApproval:false,askPhone:false,askComments:false,requestId:'cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd'};
+  const singleTicketCreated=await api('events',singleTicketInput);assert.equal(singleTicketCreated.status,200);assert.equal(singleTicketCreated.data.event.oneTimeInvite,true);
+  const singleTicketId=singleTicketCreated.data.event.id;
+  for(const uid of [1161,1162]){await message(inviteUpdate++,`/start e_${singleTicketId}`,uid);await callback(inviteUpdate++,`book:${singleTicketId}`,uid);assert.equal((await countSession(uid)).step,'name');}
+  assert.ok(!(await inviteRecord(singleTicketId)).inviteClaimedBy);
+  await message(inviteUpdate++,'First ticket holder',1161);await message(inviteUpdate++,'Stale ticket holder',1162);
+  const singleTicketStored=await inviteRecord(singleTicketId);assert.equal(singleTicketStored.inviteClaimedBy,1161);assert.equal(singleTicketStored.guests[1161].status,'yes');assert.equal(singleTicketStored.guests[1162],undefined);assert.equal(await countSession(1162),null);
+  await message(inviteUpdate++,`/start e_${singleTicketId}`,1162);assert.equal((await api(`events/${singleTicketId}`,null,1162)).status,403);
   const profileSaved=await api('preferences',{timezone:'Australia/Sydney',profileName:'Profile name',profilePhone:'+61 400 123 456'});assert.equal(profileSaved.status,200);
   assert.equal((await api('bootstrap')).data.preference.profileName,'Profile name');assert.equal((await api('bootstrap',null,789)).data.preference.profilePhone,'');
   assert.equal((await api('preferences',{timezone:'UTC',profilePhone:'invalid'})).status,400);
@@ -395,10 +469,8 @@ try {
   const eventGuestUrl=cohostCreated.data.event.invitees[0].url;
   await message(8004,'/start '+new URL(eventGuestUrl).searchParams.get('start'),902);await callback(8005,`r:${cohostId}:yes:0`,902);
   const cohostGuestView=(await api(`events/${cohostId}`,null,902)).data.event;
-  assert.equal(cohostGuestView.location,null);assert.equal(cohostGuestView.cohost,undefined);assert.equal(cohostGuestView.guestRoster,undefined);assert.equal(cohostGuestView.cohostInviteUrl,undefined);assert.equal(cohostGuestView.cohostVersion,undefined);
-  let cohostGuest=(await cohostStored()).guests[902];assert.equal(cohostGuest.approval,'pending');
-  await callback(8006,`approve:${cohostId}:902:${cohostGuest.responseVersion}`,901);
-  cohostGuest=(await cohostStored()).guests[902];assert.equal(cohostGuest.approval,'approved');assert.ok(cohostGuest.ticket);
+  assert.equal(cohostGuestView.location,'Updated private venue');assert.equal(cohostGuestView.cohost,undefined);assert.equal(cohostGuestView.guestRoster,undefined);assert.equal(cohostGuestView.cohostInviteUrl,undefined);assert.equal(cohostGuestView.cohostVersion,undefined);
+  const cohostGuest=(await cohostStored()).guests[902];assert.equal(cohostGuest.approval,'approved');assert.ok(cohostGuest.ticket);
   const cohostCheckin=await api(`events/${cohostId}/ticket-check`,{code:cohostGuest.ticket,checkIn:true},901);assert.equal(cohostCheckin.status,200);assert.equal(cohostCheckin.data.ticket.valid,true);assert.equal(cohostCheckin.data.ticket.participants,2);
   const cohostRevoked=await api(`events/${cohostId}/cohost/revoke`,{version:cohostOwnerView.cohostVersion});assert.equal(cohostRevoked.status,200);assert.equal(cohostRevoked.data.event.cohost,null);assert.equal(cohostRevoked.data.event.cohostVersion,'none');
   assert.equal((await api(`events/${cohostId}`,null,901)).status,403);assert.ok(!(await api('bootstrap',null,901)).data.events.some(e=>e.id===cohostId));
@@ -429,6 +501,14 @@ try {
   assert.equal((await api(`events/${paidCohostId}/schedule`,{...paidCohostInput,paymentInstructions:'A different bank account'},905)).status,400);
   assert.equal((await api(`events/${paidCohostId}/schedule`,{...paidCohostInput,displayPrice:'AUD $1'},905)).status,400);
   assert.equal(JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(paidCohostId).first()).data).owner,123);
+  // Approval belongs to ticket booking; a co-host can approve a request but cannot bypass payment.
+  await message(8010,`/start e_${paidCohostId}`,907);await callback(8011,`book:${paidCohostId}`,907);await message(8012,'Ticket guest',907);
+  const pendingCohostTicket=(await api(`events/${paidCohostId}`,null,907)).data.event;
+  assert.equal(pendingCohostTicket.approval,'pending');assert.equal(pendingCohostTicket.location,null);
+  const paidCohostStored=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(paidCohostId).first()).data);
+  await callback(8013,`approve:${paidCohostId}:907:${paidCohostStored.guests[907].responseVersion}`,905);
+  const approvedCohostTicket=(await api(`events/${paidCohostId}`,null,907)).data.event;
+  assert.equal(approvedCohostTicket.approval,'approved');assert.equal(approvedCohostTicket.location,null);assert.equal(approvedCohostTicket.ticket,null);
   // Legacy malformed visibility cannot publish a personal-invitation event or its banner.
   const malformedNamed=await cohostStored();malformedNamed.isPublic=true;malformedNamed.banner='test-banner';
   await db.prepare("UPDATE records SET data=? WHERE kind='events' AND id=?").bind(JSON.stringify(malformedNamed),cohostId).run();

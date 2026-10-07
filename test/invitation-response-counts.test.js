@@ -68,13 +68,13 @@ test('stale count controls do not affect a new picker session or a newer respons
   await f.size(3);await f.cb(`group:${f.e.id}:edit:0`);assert.equal(f.data.sessions[2],undefined);assert.equal(f.e.guests[2].participants,3);
 });
 
-test('changing an approved group count requests approval again and invalidates the old ticket',async()=>{
+test('changing a named group count updates its confirmed ticket without approval and invalidates the old ticket',async()=>{
   const f=fixture('Alex = 2',{requireApproval:true});await f.open();await f.accept();
   await f.cb(`approve:${f.e.id}:2:1`,1);const oldTicket=f.e.guests[2].ticket;
   assert.ok(oldTicket);await f.group();await f.size(4);
-  assert.equal(f.e.guests[2].approval,'pending');assert.equal(f.e.guests[2].ticket,undefined);assert.equal(canSeeLocation(f.e,2),false);
+  assert.equal(f.e.guests[2].approval,'approved');assert.ok(f.e.guests[2].ticket);assert.notEqual(f.e.guests[2].ticket,oldTicket);assert.equal(canSeeLocation(f.e,2),true);
   assert.equal(verifyTicket(f.e,1,oldTicket).valid,false);
-  await f.cb(`approve:${f.e.id}:2:1`,1);assert.equal(f.e.guests[2].approval,'pending');
+  await f.cb(`approve:${f.e.id}:2:1`,1);assert.equal(f.e.guests[2].approval,'approved');
   await f.cb(`approve:${f.e.id}:2:2`,1);assert.equal(f.e.guests[2].approval,'approved');assert.equal(f.e.guests[2].participants,4);
 });
 

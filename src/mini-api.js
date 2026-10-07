@@ -2,12 +2,12 @@ import {parseEventPayment,paymentMethod} from './event-payment.js';
 import {issueTicket,verifyTicket} from './tickets.js';
 import {profileFields,profilePreference,profilePhotoApi} from './profile.js';
 import {readOnlinePricing} from './exchange.js';
-import {invitationMode,invitationSettings,namedLink} from './invitations.js';
+import {invitationMode,invitationSettings,namedLink,oneTimeInvites,invitationAvailable,reconcileInvitationClaims} from './invitations.js';
 import {isManager,cohostLink,cohostVersion,createCohostInvite,revokeCohost} from './cohosts.js';
 import { authenticate } from './mini-auth.js';
 import { parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
-import { shareUploadLink,asksPhone,asksComments } from './permissions.js';
+import { shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
 import { isSuperAdmin, rememberUser, adminOverview } from './admin.js';
 import { schedule, timezone, InputError } from './time.js';
 import { mutateState, BusyError } from './worker-store.js';
@@ -26,8 +26,9 @@ function parsePermissions(value) {
 }
 function eventSettings(input, event = {}) {
   const result = {};
+  const named=(input.invitationMode ?? event.invitationMode)==='named';
   const activePayments=Object.values(event.guests || {}).some(g=>['reported','paid','processing','refund_pending','refund_failed'].includes(g.payment?.status));
-  if(activePayments && input.askParticipantCount !== undefined && input.askParticipantCount !== (event.askParticipantCount===true)) throw new InputError('Refund active payments before changing group attendance settings.');
+  if(!named && activePayments && input.askParticipantCount !== undefined && input.askParticipantCount !== asksParticipantCount(event)) throw new InputError('Refund active payments before changing group attendance settings.');
   if(activePayments && input.paymentTerms !== undefined && (typeof input.paymentTerms !== 'string' || input.paymentTerms.trim() !== event.paymentTerms)) throw new InputError('Refund active payments before changing payment terms.');
   if(input.paymentMethod!==undefined || input.starPrice!==undefined || !event.id){
     const next=parseEventPayment(input,event,true);
@@ -51,6 +52,10 @@ function eventSettings(input, event = {}) {
   for (const key of ['requireApproval', 'hideLocation', 'askParticipantCount','askPhone','askComments']) {
     if (input[key] !== undefined && typeof input[key] !== 'boolean') throw new InputError('Event options must be checked or unchecked.');
     if (input[key] !== undefined || !event.id) result[key] = input[key] === true;
+  }
+  if(named){
+    result.requireApproval=false;result.askParticipantCount=false;
+    if(input.hideLocation===undefined && event.requireApproval===true)result.hideLocation=true;
   }
   if (input.ticketInfo !== undefined || !event.id) result.ticketInfo = field(input.ticketInfo ?? '', 'Invitation details', 1000);
   if(input.inviteMessage!==undefined || !event.id)result.inviteMessage=field(input.inviteMessage ?? '', 'Invitation message',1000);
@@ -78,9 +83,12 @@ export function publicEvent(e, id, username) {
   return {
     invitationMode:invitationMode(e),guestName:e.owner!==id ? e.guests[id]?.name || null : null,
     askPhone:asksPhone(e),askComments:asksComments(e),
-    ...(manager ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,approval:g.approval || null,confirmed:confirmed(e,g),participants:g.status==='yes'?participantCount(e,g):0,paymentStatus:g.payment?.status || null})),...Object.values(e.invitees || {}).filter(g=>!g.claimedBy).map(g=>({id:null,name:g.name,status:'unopened',participants:0,confirmed:false}))]} : {}),
-    inviteMessage:e.inviteMessage || '',qrEnabled:e.qrEnabled!==false,
-    ...(manager ? {invitees:Object.entries(e.invitees || {}).map(([token,g])=>({name:g.name,participants:g.participants || null,participantMode:g.participantMode || null,claimed:!!g.claimedBy,status:g.claimedBy ? e.guests[g.claimedBy]?.status : null,url:namedLink(e,token,username)})),cohost:e.cohost ? {id:e.cohost.id,name:e.cohost.name,username:e.cohost.username || '',joinedAt:e.cohost.joinedAt}:null} : {}),
+    ...(manager ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,approval:g.status==='yes' ? requiresApproval(e) ? g.approval || 'pending' : 'approved' : null,confirmed:confirmed(e,g),participants:g.status==='yes'?participantCount(e,g):0,paymentStatus:g.payment?.status || null})),...Object.entries(e.invitees || {}).filter(([token])=>!Object.values(e.guests).some(g=>g.invitationToken===token)).map(([,g])=>({id:null,name:g.name,status:'unopened',participants:0,confirmed:false}))]} : {}),
+    inviteMessage:e.inviteMessage || '',qrEnabled:e.qrEnabled!==false,oneTimeInvite:oneTimeInvites(e),
+    ...(manager ? {invitees:Object.entries(e.invitees || {}).map(([token,g])=>{
+      const opened=Object.values(e.guests).filter(guest=>guest.invitationToken===token),responded=opened.find(guest=>['yes','no','maybe'].includes(guest.status));
+      return {name:g.name,participants:g.participants || null,participantMode:g.participantMode || null,claimed:!!g.respondedBy || !!responded,status:(responded || opened[0])?.status || null,url:namedLink(e,token,username)};
+    }),cohost:e.cohost ? {id:e.cohost.id,name:e.cohost.name,username:e.cohost.username || '',joinedAt:e.cohost.joinedAt}:null} : {}),
     ...(owner ? {cohostInviteUrl:cohostLink(e,username),cohostVersion:cohostVersion(e)} : {}),
     id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
@@ -89,19 +97,19 @@ export function publicEvent(e, id, username) {
     permissions: permissions(e),
     isPublic: e.isPublic === true,
     paymentMethod:paymentMethod(e),displayPrice:e.displayPrice || '',
-    ...(manager || (e.guests[id]?.status === 'yes' && (!e.requireApproval || e.guests[id]?.approval === 'approved')) ? {paymentInstructions:e.paymentInstructions || '',paymentUrl:e.paymentUrl || ''} : {}),
+    ...(manager || (e.guests[id]?.status === 'yes' && (!requiresApproval(e) || e.guests[id]?.approval === 'approved')) ? {paymentInstructions:e.paymentInstructions || '',paymentUrl:e.paymentUrl || ''} : {}),
     starPrice:e.starPrice || 0, starPricing:e.starPricing || 'group', paymentTerms:e.paymentTerms || '', paymentStatus:e.guests[id]?.payment?.status || null,
     defaultReminder: e.defaultReminder || 0,
     mediaCount: can(e, id, 'viewMedia') ? e.media?.length || 0 : null,
     imageCount: can(e, id, 'viewMedia') ? e.media?.filter(f => f.type === 'photo').length || 0 : null,
     ...(manager ? { allowLinkUploads: !!e.allowLinkUploads, uploadLink: shareUploadLink(e, username) } : {}),
     group: eventGroup(e), upcoming: upcoming(e), reminder: e.reminders?.[id]?.minutes || 0, hasBanner: !!e.banner,
-    askParticipantCount: e.askParticipantCount === true, participants: e.guests[id]?.status === 'yes' ? participantCount(e, e.guests[id]) : null, requireApproval: e.requireApproval === true, hideLocation: e.hideLocation === true,
+    askParticipantCount: asksParticipantCount(e), participants: e.guests[id]?.status === 'yes' ? participantCount(e, e.guests[id]) : null, requireApproval: requiresApproval(e), hideLocation: hidesLocation(e),
     responseDeadline: e.responseDeadline || null, responsesClosed: responsesClosed(e), deadlineDate: e.deadlineDate || '', deadlineTime: e.deadlineTime || '', deadlineTimezone: e.deadlineTimezone || e.timezone || null,
     ...(manager ? { ticketInfo: e.ticketInfo || '' } : {}),
     ticket: e.owner !== id && confirmed(e, e.guests[id]) && !e.cancelled ? { code: e.guests[id].ticket || '', name: e.guests[id].name, info: e.ticketInfo || '' } : null,
     counts: can(e, id, 'guestList') ? responseCounts(e) : null,
-    approval: e.owner !== id && e.guests[id]?.status === 'yes' ? (!e.requireApproval || e.guests[id]?.approval === 'approved') ? 'approved' : 'pending' : null,
+    approval: e.owner !== id && e.guests[id]?.status === 'yes' ? (!requiresApproval(e) || e.guests[id]?.approval === 'approved') ? 'approved' : 'pending' : null,
     status: e.owner === id ? null : e.guests[id]?.status || null
   };
 }
@@ -116,7 +124,7 @@ export async function miniApi(request, env) {
   const eventMatch=path.match(/^\/api\/events\/([a-f0-9]{16})$/);
   if(eventMatch && request.method==='GET'){
     const row=await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(eventMatch[1]).first();const e=row && JSON.parse(row.data);
-    if(!e || (!isManager(e,user.id) && !e.guests[user.id]))return respond({error:'Open a valid invitation first.'},403);
+    if(!e || (!isManager(e,user.id) && (!e.guests[user.id] || !invitationAvailable(e,user.id))))return respond({error:'Open a valid invitation first.'},403);
     return respond({event:publicEvent(e,user.id,env.BOT_USERNAME)});
   }
   if (path === '/api/explore' && request.method === 'GET') {
@@ -150,7 +158,7 @@ export async function miniApi(request, env) {
   if (bannerMatch && ['GET', 'POST'].includes(request.method)) {
     const row = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(bannerMatch[1]).first();
     const event = row && JSON.parse(row.data);
-    if (!event || (!isManager(event,user.id) && !event.guests[user.id] && !(request.method === 'GET' && event.isPublic === true && invitationMode(event)!=='named' && !event.cancelled))) return respond({ error: 'Open a valid invitation first.' }, 403);
+    if (!event || (!isManager(event,user.id) && !(event.guests[user.id] && invitationAvailable(event,user.id)) && !(request.method === 'GET' && event.isPublic === true && invitationMode(event)!=='named' && !event.cancelled))) return respond({ error: 'Open a valid invitation first.' }, 403);
     try {
       if (request.method === 'GET') {
         if (!event.banner) return respond({ error: 'No banner.' }, 404);
@@ -191,7 +199,7 @@ export async function miniApi(request, env) {
     const pricing=await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id='_pricing'").first();
     const pref=preference ? JSON.parse(preference.data) : {};
     const branding=await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id='_branding'").first();
-    return respond({branding:{hasIcon:!!(branding && JSON.parse(branding.data).botIcon)},pricing:await readOnlinePricing(env,pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { id: user.id, firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: profilePreference(pref), session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
+    return respond({branding:{hasIcon:!!(branding && JSON.parse(branding.data).botIcon)},pricing:await readOnlinePricing(env,pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { id: user.id, firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: profilePreference(pref), session: pickerSession, events: results.map(r=>JSON.parse(r.data)).filter(e=>isManager(e,user.id) || invitationAvailable(e,user.id)).map(e=>publicEvent(e,user.id,env.BOT_USERNAME)) });
   }
   if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
   const raw = await request.text();
@@ -305,6 +313,7 @@ export async function miniApi(request, env) {
         Object.assign(e, schedule({ endMode: e.endMode || 'none', durationMinutes: e.durationMinutes, endDate: e.endDate, endTime: e.endTime, ...input }));
         Object.assign(e, eventSettings(input, e));
         Object.assign(e,inviteSettings);
+        reconcileInvitationClaims(e,data.sessions);
         await bot.notify(e, `📣 ${e.title}: the organiser updated the event details. Tap My events for the latest details.`); await bot.card(id, e);
         return { event: publicEvent(e, id, env.BOT_USERNAME) };
       }

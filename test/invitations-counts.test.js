@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {claimInvitation,invitationParticipants,invitationParticipantMode,invitationSettings} from '../src/invitations.js';
+import {claimInvitation,consumeInvitation,invitationParticipants,invitationParticipantMode,invitationSettings} from '../src/invitations.js';
 import {asksPhone,participantCount,responseCounts} from '../src/permissions.js';
 
 function event(guestNames='Alex = 3\nSam') {
@@ -19,7 +19,7 @@ test('named invitation attendee presets keep the display name and apply without 
   const other=claimInvitation(e,sam,3);
   assert.equal(invitationParticipants(e,other),null);assert.equal(participantCount(e,other),1);
   e.askParticipantCount=true;other.participants=5;
-  assert.equal(participantCount(e,other),5);
+  assert.equal(participantCount(e,other),1);
   guest.participants=8;assert.equal(participantCount(e,guest),8);
 });
 
@@ -113,7 +113,7 @@ test('named invite selections override the proposal even when the event group qu
     guest.participants=6;guest.status='yes';
     assert.equal(participantCount(e,guest),6);assert.equal(responseCounts(e).participants,6);
     e.requireApproval=true;guest.approval='pending';
-    assert.equal(responseCounts(e).participants,0);assert.equal(responseCounts(e).pendingParticipants,6);
+    assert.equal(responseCounts(e).participants,6);assert.equal(responseCounts(e).pendingParticipants,0);
     e.askParticipantCount=true;assert.equal(participantCount(e,guest),6);
   }
 });
@@ -132,9 +132,10 @@ test('reopening a claimed invitation preserves a valid selected count across eve
   for(const guestNames of ['Alex = ?','Alex = 2!','Alex = 2']){
     const e=event(guestNames),token=Object.keys(e.invitees)[0],guest=claimInvitation(e,token,2);
     guest.participants=7;guest.status='yes';guest.approval='approved';
+    consumeInvitation(e,2,guest);
     assert.equal(claimInvitation(e,token,2),guest);
     assert.equal(guest.participants,7);assert.equal(guest.status,'yes');assert.equal(guest.approval,'approved');
-    assert.throws(()=>claimInvitation(e,token,3),/another Telegram account/);
+    assert.throws(()=>claimInvitation(e,token,3),/another guest/);
   }
 });
 
@@ -144,7 +145,7 @@ test('old plain presets remain editable by guests while bare and non-named invit
   guest.participants=4;claimInvitation(e,token,2);assert.equal(participantCount(e,guest),4);
   const plain=event('Alex'),plainToken=Object.keys(plain.invitees)[0],plainGuest=claimInvitation(plain,plainToken,2);
   plainGuest.participants=4;assert.equal(invitationParticipantMode(plain,plainGuest),'default');assert.equal(participantCount(plain,plainGuest),1);
-  plain.askParticipantCount=true;assert.equal(participantCount(plain,plainGuest),4);
+  plain.askParticipantCount=true;assert.equal(participantCount(plain,plainGuest),1);
   for(const invitationMode of ['legacy','tickets',undefined]){
     const other={...e,invitationMode};assert.equal(invitationParticipantMode(other,guest),'default');assert.equal(invitationParticipants(other,guest),null);
     assert.equal(participantCount(other,guest),1);other.askParticipantCount=true;assert.equal(participantCount(other,guest),4);

@@ -3,6 +3,7 @@ import {mediaPreview,previewMime} from './media-preview.js';
 import { can, shareUploadLink, uploadLink } from './permissions.js';
 import { mutateState } from './worker-store.js';
 import {isManager} from './cohosts.js';
+import {invitationAvailable} from './invitations.js';
 
 
 export async function mediaApi(request, env, user) {
@@ -15,7 +16,7 @@ export async function mediaApi(request, env, user) {
   const e = row && JSON.parse(row.data);
   const preference = await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(user.id)).first();
   const grant = e && preference && JSON.parse(preference.data).mediaAccess?.[e.id] === e.uploadToken && !!uploadLink(e,env.BOT_USERNAME);
-  if (!e || (!isManager(e,user.id) && !e.guests[user.id] && !grant)) return json({ error: 'Open a valid event or media link first.' }, 403);
+  if (!e || (!isManager(e,user.id) && !(e.guests[user.id] && invitationAvailable(e,user.id)) && !grant)) return json({ error: 'Open a valid event or media link first.' }, 403);
   if (match[2] === 'upload-qr') {
     if (request.method !== 'GET' || !isManager(e,user.id)) return json({ error: 'Only an organiser can view the upload QR code.' }, 403);
     if (e.qrEnabled === false) return json({ error: 'QR codes are disabled for this event.' }, 400);

@@ -556,7 +556,7 @@ $('timezone-form').onsubmit = async event => {
 function revealFieldOptions(field){for(let node=field?.parentElement;node;node=node.parentElement)if(node.tagName==='DETAILS')node.open=true;}
 $('event-form').addEventListener('invalid',event=>revealFieldOptions(event.target),true);
 function revealFormError(message){
-  const groups=[[/payment|price|stars|refund|terms|bank|currency/i,'stars-panel'],[/deadline|responses close/i,'timing-options'],[/duration|finish|end time/i,'timing-options'],[/banner|photo|image|description|invitation message/i,'extra-details'],[/media|upload|QR/i,'media-options'],[/approval|participant|attendee|group|phone|comment|visibility|public|private|permission/i,'guest-permissions']];
+  const groups=[[/payment|price|stars|refund|terms|bank|currency/i,'stars-panel'],[/deadline|responses close/i,'guest-permissions'],[/duration|finish|end time/i,'timing-options'],[/banner|photo|image|description|invitation message/i,'extra-details'],[/media|upload|QR/i,'media-options'],[/approval|participant|attendee|group|phone|comment|visibility|public|private|permission/i,'guest-permissions']];
   for(const [pattern,id] of groups)if(pattern.test(message))$(id).open=true;
 }
 $('event-form').onsubmit = async event => {

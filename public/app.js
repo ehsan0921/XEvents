@@ -84,7 +84,15 @@ function dateInZone(instant, zone) {
 }
 function format(e, zone = selectedZone()) {
   if (!e.startsAt) return e.when + '\nTimezone not set — shown as entered by the organiser.';
-  return new Intl.DateTimeFormat('en-AU', { timeZone: zone, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(e.startsAt)) + ` (${zone})` + (e.endsAt ? '\nFinishes: ' + format({ startsAt: e.endsAt }, zone) : '');
+  let text = new Intl.DateTimeFormat('en-AU', { timeZone: zone, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(e.startsAt)) + ` (${zone})`;
+  if (e.endsAt) {
+    const sameDay = dateInZone(e.startsAt, zone) === dateInZone(e.endsAt, zone);
+    const offset = new Intl.DateTimeFormat('en', { timeZone: zone, timeZoneName: 'shortOffset' });
+    const offsetAt = instant => offset.formatToParts(new Date(instant)).find(part => part.type === 'timeZoneName').value;
+    const offsetChanges = offsetAt(e.startsAt) !== offsetAt(e.endsAt);
+    text += '\nFinishes: ' + new Intl.DateTimeFormat('en-AU', { timeZone: zone, ...(!sameDay ? { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' } : {}), hour: 'numeric', minute: '2-digit', ...(offsetChanges ? { timeZoneName: 'short' } : {}) }).format(new Date(e.endsAt));
+  }
+  return text;
 }
 function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener'); }
 function invitationGuestLine(guest){return guest.name+(guest.participantMode==='ask' ? ' = ?' : guest.participants ? ' = '+guest.participants+(guest.participantMode==='confirm' ? '!' : '') : '');}
@@ -288,7 +296,7 @@ function renderEvents() {
     if (e.starPrice) card.append(element('p', '⭐ ' + e.starPrice + ' Stars ' + (e.starPricing === 'person' ? 'per person' : 'per group') + (e.paymentStatus ? ' · ' + e.paymentStatus.replaceAll('_',' ') : ''), 'small muted'));
     if (e.participants) card.append(element('p', 'Your group: ' + e.participants + (e.participants === 1 ? ' person' : ' people'), 'small muted'));
     if (e.ticket) card.append(element('p', `🎟 ${e.ticket.name}${e.ticket.code ? ' · ' + e.ticket.code : ''}${e.ticket.info ? '\n' + e.ticket.info : ''}`, 'time-preview'));
-    if (e.startsAt && selectedZone() !== e.timezone) card.append(element('p', 'Organiser time: ' + format(e, e.timezone), 'small muted'));
+    if (e.startsAt && selectedZone() !== e.timezone) card.append(element('p', 'Organiser time: ' + format({ startsAt: e.startsAt }, e.timezone), 'small muted'));
     if (e.counts) card.append(element('div', e.invitationMode==='tickets' ? `${e.counts.yes} confirmed bookings · ${e.counts.participants} people · ${e.counts.pending} approval requests · ${e.counts.awaitingPayment} awaiting payment` : `${e.counts.participants} people coming (${e.counts.yes} responses) · ${e.counts.pendingParticipants || 0} people awaiting approval · ${e.counts.awaitingPayment || 0} awaiting payment · ${e.counts.maybe} tentative · ${e.counts.no} declined · ${e.counts.later} later`, 'counts'));
     else card.append(element('div', 'Guest list is private to the organiser.', 'counts'));
     const actions = element('div', '', 'event-actions'); actions.append(action('Open event in chat ↗', () => openTelegram(e.inviteUrl), 'primary'));

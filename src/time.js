@@ -36,13 +36,19 @@ export function schedule(input) {
   return result;
 }
 
-export function formatInstant(instant, zone) {
-  return new Intl.DateTimeFormat('en-AU', { timeZone: timezone(zone), weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(instant)) + ` (${zone})`;
+export function formatInstant(instant, zone, { date = true, timezoneLabel = true } = {}) {
+  return new Intl.DateTimeFormat('en-AU', { timeZone: timezone(zone), ...(date ? { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' } : {}), hour: 'numeric', minute: '2-digit', ...(timezoneLabel ? { timeZoneName: 'short' } : {}) }).format(new Date(instant)) + (timezoneLabel === true ? ` (${zone})` : '');
 }
 
 export function eventTime(event, preference) {
   if (!event.startsAt || !event.timezone) return event.when;
   const zone = preference || event.timezone;
-  const local = formatInstant(event.startsAt, zone) + (event.endsAt ? '\nFinishes: ' + formatInstant(event.endsAt, zone) : '');
+  let local = formatInstant(event.startsAt, zone);
+  if (event.endsAt) {
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' });
+    const offset = new Intl.DateTimeFormat('en', { timeZone: zone, timeZoneName: 'shortOffset' });
+    const offsetAt = instant => offset.formatToParts(new Date(instant)).find(part => part.type === 'timeZoneName').value;
+    local += '\nFinishes: ' + formatInstant(event.endsAt, zone, { date: day.format(new Date(event.startsAt)) !== day.format(new Date(event.endsAt)), timezoneLabel: offsetAt(event.startsAt) !== offsetAt(event.endsAt) ? 'short' : false });
+  }
   return zone === event.timezone ? local : `${local}\nOrganiser time: ${formatInstant(event.startsAt, event.timezone)}`;
 }

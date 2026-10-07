@@ -8,7 +8,7 @@ const eventFixture=fields=>({id:'0123456789abcdef',title:'Club evening',location
 const pendingLink=(id,label)=>({id,label,status:'pending',createdAt:'2026-10-07T00:00:00Z',cohost:null,url:'https://t.me/test?start=cohost_'+id});
 const activeLink=(id,label,person)=>({...pendingLink(id,label),status:'active',url:null,cohost:{id:2,name:'Alex',username:'alex',joinedAt:'2026-10-07T00:00:00Z',...person}});
 
-async function harness(initial,{scheduleError,clipboardMode='ok',search=''}={}){
+async function harness(initial,{scheduleError,clipboardMode='ok',search='',invitationError}={}){
   class El{
     constructor(tag=''){this.tag=tag;this.children=[];this.dataset={};this.value='';this.files=[];this.attributes={};this.listeners={};this.open=false;this.classList={toggle(){},add(){},remove(){}};}
     append(...children){this.children.push(...children);this.firstChild=this.children[0];}
@@ -25,7 +25,7 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search=''}={}){
   const document={body:new El(),getElementById:id=>ids.get(id),createElement:tag=>new El(tag),addEventListener(){},querySelector:selector=>selector==='.bottom-nav'?new El():tabs.find(el=>selector.includes('"'+el.dataset.tab+'"')),querySelectorAll:selector=>selector==='[data-tab]'?tabs:[]};
   const telegramLinks=[],copied=[],calls=[],errors=[];
   const window={Telegram:{WebApp:{initData:'test-session',ready(){},expand(){},onEvent(){},openTelegramLink:url=>telegramLinks.push(url)}},scrollTo(){},reportAppError:error=>errors.push(error.message)};
-  let event=initial,token=0,revision=0;
+  let event=initial,token=0,revision=0,invitationHold;
   const project=value=>({...value,cohosts:(value.cohostLinks || []).filter(link=>link.status==='active').map(link=>link.cohost),cohost:(value.cohostLinks || []).find(link=>link.status==='active')?.cohost || null,cohostInviteUrl:[...(value.cohostLinks || [])].reverse().find(link=>link.status==='pending')?.url || null});
   const response=(data,status=200)=>({ok:status<400,status,json:async()=>data,blob:async()=>new Blob(['image'],{type:'image/jpeg'})});
   const fetcher=async(path,options={})=>{
@@ -35,6 +35,19 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search=''}={}){
     if(path.startsWith('/api/explore?'))return response({events:[]});
     if(path==='/api/branding/icon')return response({error:'Not found'},404);
     if(path==='/api/events/'+event.id)return response({event});
+    if(path.endsWith('/invitations/add') || path.endsWith('/invitations/remove')){
+      if(invitationHold){const hold=invitationHold;invitationHold=null;await hold;}
+      if(body.version!==event.invitationsVersion)return response({error:'Invitations changed. Review the current list.'},409);
+      if(invitationError)return response({error:invitationError.message},invitationError.status || 400);
+      let invitees=[...event.invitees];
+      if(path.endsWith('/add'))for(const line of body.guestNames.split('\n').filter(line=>line.trim())){
+        const match=line.match(/^\s*(.*?)\s*(?:=\s*(\?|\d+!?))?\s*$/),rule=match[2],guestToken=(++token).toString(16).padStart(32,'0');
+        invitees.push({name:match[1],token:guestToken,url:'https://t.me/test?start=i_'+event.id+'_'+guestToken,participants:rule && rule!=='?' ? parseInt(rule,10) : null,participantMode:rule==='?' ? 'ask' : rule?.endsWith('!') ? 'confirm' : null,claimed:false,status:null,responses:[],responseCounts:{yes:0,no:0,maybe:0,later:0}});
+      }
+      else invitees=invitees.filter(guest=>guest.token!==body.token);
+      event={...event,invitees,invitationsVersion:(++revision).toString(16).padStart(16,'0')};
+      return response({event,notifyCount:body.notify ? 1 : 0});
+    }
     if(path.endsWith('/cohost/invite') || path.endsWith('/cohost/revoke')){
       if(body.version!==event.cohostVersion)return response({error:'Co-host changed. Review the current co-host list.'},409);
       const links=[...event.cohostLinks];
@@ -57,7 +70,7 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search=''}={}){
   const descendants=node=>node.children.flatMap(child=>[child,...descendants(child)]);
   const findButton=(id,label)=>descendants(ids.get(id)).find(node=>node.tag==='button' && node.textContent===label);
   const findEntry=id=>ids.get('cohost-list').children.find(node=>node.dataset.linkId===id);
-  return {ids,calls,errors,copied,telegramLinks,findButton,findEntry,descendants,setClipboardMode:value=>{clipboardMode=value;},setEvent:value=>{event=value;},getEvent:()=>event};
+  return {ids,calls,errors,copied,telegramLinks,findButton,findEntry,descendants,setClipboardMode:value=>{clipboardMode=value;},setEvent:value=>{event=value;},getEvent:()=>event,setInvitationError:value=>{invitationError=value;},holdNextInvitationMutation:()=>{let release;invitationHold=new Promise(resolve=>{release=resolve;});return release;}};
 }
 
 test('co-host events expose management actions and keep payment fields read-only',async()=>{
@@ -299,4 +312,152 @@ test('invitation links recheck current manager access before exposing personal c
   const f=await harness(eventFixture());f.setEvent({...f.getEvent(),isOwner:false,isManager:false,isCoHost:false,invitees:[]});
   await f.findButton('event-list','Guest invitations').onclick();
   assert.equal(f.ids.get('invitation-links-dialog').open,false);assert.equal(f.ids.get('invitation-links-list').children.length,0);assert.match(f.ids.get('notice').textContent,/Only event managers/);
+});
+
+const managedInvite=(name,number,responses=[])=>{
+  const token=number.toString(16).padStart(32,'0'),statuses=[...new Set(responses.map(guest=>guest.status))];
+  return {name,token,url:'https://t.me/test?start=i_0123456789abcdef_'+token,participants:2,claimed:responses.some(guest=>['yes','no','maybe'].includes(guest.status)),status:statuses.length>1?'mixed':statuses[0] || null,responses,responseCounts:Object.fromEntries(['yes','no','maybe','later'].map(status=>[status,responses.filter(guest=>guest.status===status).length])),canNotify:responses.length>0,hasPayments:false};
+};
+const managedEvent=fields=>eventFixture({paymentMethod:'free',starPrice:0,invitationsVersion:'0000000000000000',...fields});
+const invitationRows=f=>f.ids.get('invitation-links-list').children;
+const invitationRow=(f,name)=>invitationRows(f).find(row=>f.descendants(row).some(node=>node.tag==='button' && node.textContent===name));
+const rowAction=(f,row,label)=>f.descendants(row).find(node=>node.tag==='button' && node.textContent===label);
+const visibleInvitations=f=>invitationRows(f).filter(row=>!row.hidden).map(row=>f.descendants(row).find(node=>node.tag==='button').textContent);
+const textOf=(f,node)=>[node.textContent,...f.descendants(node).map(child=>child.textContent)].filter(Boolean).join('\n');
+
+test('invitation manager shows all response outcomes and filters reusable links by each actual response',async()=>{
+  const f=await harness(managedEvent({oneTimeInvite:false,invitees:[
+    managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2,comment:'See you there.'},{name:'Taylor',status:'no',participants:0}]),
+    managedInvite('Sam',12,[{name:'Sam',status:'yes',participants:3}]),
+    managedInvite('Morgan',13,[{name:'Morgan',status:'maybe',participants:0}]),
+    managedInvite('Drew',14,[{name:'Drew',status:'later',participants:0}]),managedInvite('Jess',15)
+  ]}));
+  await f.findButton('event-list','Guest invitations').onclick();
+  const summary=textOf(f,f.ids.get('invitation-links-summary'));
+  assert.match(summary,/5 invitations/);assert.match(summary,/4 responses/);assert.match(summary,/5 people accepted/);
+  assert.deepEqual(f.ids.get('invitation-links-filter').children.map(option=>option.textContent),['All (5)','Accepted (2)','Declined (1)','Maybe (1)','Later (1)','Unanswered (2)']);
+  const alex=textOf(f,invitationRow(f,'Alex'));
+  assert.match(alex,/Taylor/);assert.match(alex,/Accepted/);assert.match(alex,/Declined/);assert.match(alex,/See you there\./);
+  for(const [filter,names] of [['all',['Alex','Sam','Morgan','Drew','Jess']],['yes',['Alex','Sam']],['no',['Alex']],['maybe',['Morgan']],['later',['Drew']],['unanswered',['Drew','Jess']]]){
+    f.ids.get('invitation-links-filter').value=filter;f.ids.get('invitation-links-filter').onchange();assert.deepEqual(visibleInvitations(f),names,filter);
+  }
+  assert.deepEqual(f.errors,[]);
+});
+
+test('invitation response filters combine with case-insensitive guest search and show an empty result',async()=>{
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}]),managedInvite('Sam',12,[{name:'Sam',status:'no',participants:0}]),managedInvite('Samira',13,[{name:'Samira',status:'yes',participants:1}])]}));
+  await f.findButton('event-list','Guest invitations').onclick();
+  assert.equal(f.ids.get('invitation-links-search').hidden,false);
+  f.ids.get('invitation-links-search').value='  sAm  ';f.ids.get('invitation-links-search').oninput();assert.deepEqual(visibleInvitations(f),['Sam','Samira']);
+  f.ids.get('invitation-links-filter').value='yes';f.ids.get('invitation-links-filter').onchange();assert.deepEqual(visibleInvitations(f),['Samira']);
+  f.ids.get('invitation-links-search').value='Nobody';f.ids.get('invitation-links-search').oninput();assert.deepEqual(visibleInvitations(f),[]);assert.equal(f.ids.get('invitation-links-empty').hidden,false);
+  f.ids.get('invitation-links-search').value='';f.ids.get('invitation-links-search').oninput();assert.deepEqual(visibleInvitations(f),['Alex','Samira']);assert.equal(f.ids.get('invitation-links-empty').hidden,true);
+});
+
+test('owner and co-host can append named guests with count rules without resetting existing invitations or current filters',async()=>{
+  for(const owner of [true,false]){
+    const existing=managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}]);
+    const f=await harness(managedEvent({isOwner:owner,isCoHost:!owner,invitees:[existing]}));
+    await f.findButton('event-list','Guest invitations').onclick();
+    f.ids.get('invitation-links-search').value='casey';f.ids.get('invitation-links-search').oninput();
+    f.ids.get('invitation-links-filter').value='unanswered';f.ids.get('invitation-links-filter').onchange();
+    f.ids.get('invitation-add-names').value='  Jamie = ?\nCasey = 2!  ';
+    await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});
+    const request=f.calls.find(call=>call.path.endsWith('/invitations/add'));
+    assert.equal(request.body.guestNames.trim(),'Jamie = ?\nCasey = 2!');assert.equal(request.body.version,'0000000000000000');assert.match(request.body.requestId,/^[a-f0-9-]{36}$/i);
+    assert.deepEqual(f.getEvent().invitees[0],existing);assert.equal(f.getEvent().invitees.length,3);
+    assert.equal(f.getEvent().invitees[1].participantMode,'ask');assert.equal(f.getEvent().invitees[2].participantMode,'confirm');assert.equal(f.getEvent().invitees[2].participants,2);
+    assert.equal(f.ids.get('invitation-add-names').value,'');assert.equal(f.ids.get('invitation-links-search').value,'casey');assert.equal(f.ids.get('invitation-links-filter').value,'unanswered');assert.deepEqual(visibleInvitations(f),['Casey']);
+    await rowAction(f,invitationRow(f,'Casey'),'Copy link').onclick();assert.equal(f.copied.at(-1),f.getEvent().invitees[2].url);
+    f.ids.get('invitation-add-names').value='Lee';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});
+    const requests=f.calls.filter(call=>call.path.endsWith('/invitations/add'));assert.equal(requests[1].body.version,'0000000000000001');assert.notEqual(requests[1].body.requestId,requests[0].body.requestId);assert.deepEqual(f.errors,[]);
+  }
+});
+
+test('removing one invitation asks whether to notify and sends the exact chosen action',async()=>{
+  for(const [label,notify] of [['Notify guest',true],['Remove silently',false]]){
+    const alex=managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}]),sam=managedInvite('Sam',12);
+    const f=await harness(managedEvent({invitees:[alex,sam]}));await f.findButton('event-list','Guest invitations').onclick();
+    const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();
+    assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).length,0);
+    for(const choice of ['Notify guest','Remove silently','Keep invite'])assert.ok(rowAction(f,row,choice));
+    const question=textOf(f,row);assert.match(question,/Alex/);assert.match(question,/notif|notify/i);
+    await rowAction(f,row,label).onclick();
+    assert.deepEqual(f.calls.find(call=>call.path.endsWith('/invitations/remove')).body,{token:alex.token,notify,confirm:true,version:'0000000000000000'});
+    assert.equal(invitationRow(f,'Alex'),undefined);assert.ok(invitationRow(f,'Sam'));assert.deepEqual(f.getEvent().invitees,[sam]);assert.deepEqual(f.errors,[]);
+  }
+});
+
+test('keeping an invitation cancels removal without any mutation',async()=>{
+  const alex=managedInvite('Alex',11,[{name:'Alex',status:'no',participants:0}]);
+  const f=await harness(managedEvent({invitees:[alex]}));await f.findButton('event-list','Guest invitations').onclick();
+  const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();await rowAction(f,row,'Keep invite').onclick();
+  assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).length,0);assert.deepEqual(f.getEvent().invitees,[alex]);assert.ok(invitationRow(f,'Alex'));
+});
+
+test('an unopened invitation offers silent removal and explains why there is no guest to notify',async()=>{
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','Guest invitations').onclick();
+  const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();
+  assert.equal(rowAction(f,row,'Notify guest').disabled,true);assert.equal(!!rowAction(f,row,'Remove silently').disabled,false);
+  assert.match(textOf(f,row),/not opened|no guest|not yet|cannot notify|can't notify/i);
+  await rowAction(f,row,'Notify guest').onclick();assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).length,0);
+  await rowAction(f,row,'Remove silently').onclick();assert.equal(f.getEvent().invitees.length,0);
+});
+
+test('an add validation error keeps guest input and existing links visible for correction',async()=>{
+  const alex=managedInvite('Alex',11),f=await harness(managedEvent({invitees:[alex]}),{invitationError:{status:400,message:'A ticket can include at most 10 people.'}});
+  await f.findButton('event-list','Guest invitations').onclick();f.ids.get('invitation-add-names').value='Casey = 20';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});
+  assert.equal(f.ids.get('invitation-add-names').value,'Casey = 20');assert.match(f.ids.get('invitation-links-status').textContent,/at most 10/);assert.equal(f.ids.get('invitation-add-submit').disabled,false);assert.deepEqual(f.getEvent().invitees,[alex]);assert.ok(invitationRow(f,'Alex'));
+  f.setInvitationError(null);f.ids.get('invitation-add-names').value='Casey = 2';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});assert.equal(f.getEvent().invitees.length,2);
+});
+
+test('a remove failure keeps the invitation and displays the server error instead of reporting success',async()=>{
+  const alex=managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}]),f=await harness(managedEvent({invitees:[alex]}),{invitationError:{status:400,message:'Refund this ticket before removing its invitation.'}});
+  await f.findButton('event-list','Guest invitations').onclick();const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();await rowAction(f,row,'Notify guest').onclick();
+  assert.deepEqual(f.getEvent().invitees,[alex]);assert.ok(invitationRow(f,'Alex'));assert.match(f.ids.get('invitation-links-status').textContent,/Refund this ticket/);assert.doesNotMatch(f.ids.get('invitation-links-status').textContent,/removed|notified/i);
+});
+
+test('a response arriving before removal refreshes the list and requires a new explicit choice',async()=>{
+  const alex=managedInvite('Alex',11),f=await harness(managedEvent({invitees:[alex]}));await f.findButton('event-list','Guest invitations').onclick();
+  f.ids.get('invitation-links-search').value='alex';f.ids.get('invitation-links-search').oninput();const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();
+  const responded=managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}]);f.setEvent({...f.getEvent(),invitationsVersion:'1111111111111111',invitees:[responded]});
+  await rowAction(f,row,'Remove silently').onclick();
+  assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).length,1);assert.deepEqual(f.getEvent().invitees,[responded]);assert.match(f.ids.get('invitation-links-status').textContent,/Invitations changed/);assert.match(textOf(f,invitationRow(f,'Alex')),/Accepted/);assert.equal(f.ids.get('invitation-links-search').value,'alex');
+  const freshRow=invitationRow(f,'Alex');await rowAction(f,freshRow,'Remove invite').onclick();await rowAction(f,freshRow,'Remove silently').onclick();
+  assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).at(-1).body.version,'1111111111111111');assert.equal(f.getEvent().invitees.length,0);
+});
+
+test('closing invitation management ignores a late add response and a later opening fetches current invitations',async()=>{
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','Guest invitations').onclick();
+  const release=f.holdNextInvitationMutation();f.ids.get('invitation-add-names').value='Casey';const adding=f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});
+  f.ids.get('invitation-links-close').onclick();assert.equal(f.ids.get('invitation-links-dialog').open,false);release();await adding;
+  assert.equal(f.ids.get('invitation-links-dialog').open,false);assert.equal(invitationRow(f,'Casey'),undefined);
+  await f.findButton('event-list','Guest invitations').onclick();assert.ok(invitationRow(f,'Casey'));
+});
+
+test('a pending invitation mutation blocks competing add and remove actions',async()=>{
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}])]}));await f.findButton('event-list','Guest invitations').onclick();
+  const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();const notify=rowAction(f,row,'Notify guest'),silent=rowAction(f,row,'Remove silently');
+  const release=f.holdNextInvitationMutation();const removing=notify.onclick();
+  assert.equal(silent.disabled,true);assert.equal(f.ids.get('invitation-add-submit').disabled,true);assert.equal(f.ids.get('invitation-add-names').disabled,true);
+  await silent.onclick();f.ids.get('invitation-add-names').value='Casey';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});
+  assert.equal(f.calls.filter(call=>/\/invitations\/(?:add|remove)$/.test(call.path)).length,1);
+  release();await removing;assert.equal(f.getEvent().invitees.length,0);assert.equal(f.ids.get('invitation-add-submit').disabled,false);
+});
+
+test('removing the last invitation keeps management available and new guests can be added later',async()=>{
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','Guest invitations').onclick();
+  const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();await rowAction(f,row,'Remove silently').onclick();
+  assert.equal(invitationRows(f).length,0);assert.match(f.ids.get('invitation-links-summary').textContent,/0 invitations/);
+  f.ids.get('invitation-links-close').onclick();assert.ok(f.findButton('event-list','Guest invitations'));await f.findButton('event-list','Guest invitations').onclick();
+  f.ids.get('invitation-add-names').value='Sam';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});assert.ok(invitationRow(f,'Sam'));
+});
+
+test('refresh gets current responses without clearing a search, response filter or guest draft',async()=>{
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','Guest invitations').onclick();
+  f.ids.get('invitation-links-search').value='alex';f.ids.get('invitation-links-search').oninput();f.ids.get('invitation-links-filter').value='yes';f.ids.get('invitation-links-filter').onchange();f.ids.get('invitation-add-names').value='Casey = ?';
+  assert.equal(visibleInvitations(f).length,0);const fresh=managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:3,comment:'Bringing my family.'}]);f.setEvent({...f.getEvent(),invitationsVersion:'1111111111111111',invitees:[fresh]});
+  await f.ids.get('invitation-links-refresh').onclick();
+  assert.deepEqual(visibleInvitations(f),['Alex']);assert.match(textOf(f,invitationRow(f,'Alex')),/3 people/);assert.match(textOf(f,invitationRow(f,'Alex')),/Bringing my family/);
+  assert.equal(f.ids.get('invitation-links-search').value,'alex');assert.equal(f.ids.get('invitation-links-filter').value,'yes');assert.equal(f.ids.get('invitation-add-names').value,'Casey = ?');assert.match(f.ids.get('invitation-links-status').textContent,/refreshed/i);
 });

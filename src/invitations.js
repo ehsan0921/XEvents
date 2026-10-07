@@ -14,8 +14,8 @@ function invitationHolder(e,token) {
 }
 export function invitationAvailable(e,id,token=e?.guests?.[id]?.invitationToken) {
   if(!e)return false;
-  if(!oneTimeInvites(e))return true;
   if(invitationMode(e)==='named' && !e.invitees?.[token])return false;
+  if(!oneTimeInvites(e))return true;
   const holder=invitationHolder(e,token);
   return !holder || holder===id;
 }
@@ -77,7 +77,8 @@ export function invitationSettings(input,e={}) {
     return {name,participants,...(match[4] ? {participantMode:'confirm'} : {})};
   });
   const names=entries.map(g=>g.name);
-  if(!names.length || names.length>100 || names.some(n=>n.length>100) || new Set(names).size!==names.length)throw new InputError('Use 1–100 unique guest names, up to 100 characters each. Add a label to distinguish guests with the same name.');
+  const emptyExisting=!!e.id && invitationMode(e)==='named' && !Object.keys(e.invitees || {}).length;
+  if(!names.length && !emptyExisting || names.length>100 || names.some(n=>n.length>100) || new Set(names).size!==names.length)throw new InputError('Use 1–100 unique guest names, up to 100 characters each. Add a label to distinguish guests with the same name.');
   const previous=Object.entries(e.invitees || {}),invitees={};
   const opened=token=>Object.values(e.guests || {}).some(g=>g.invitationToken===token);
   for(const [token,g] of previous)if(!names.includes(g.name) && (g.claimedBy || opened(token)))throw new InputError('A claimed invitation cannot be removed from the guest list.');

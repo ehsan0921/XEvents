@@ -53,6 +53,8 @@ Read the [invitation guide](invitations.md) for link ownership, response changes
 
 Hosts can review accepted responses and total people, with approval requests and unpaid acceptances counted separately from confirmed attendance. Filters distinguish accepted, pending, maybe, rejected, and unanswered guests. Named lists also show unopened guest placeholders; a shared booking link cannot identify people who never open it.
 
+**Guest invitations** combines personal links with response details, comments, attendee totals, response filters and guest-name search. Owners and co-hosts can add names without changing existing invitations, or remove an invitation with a choice to notify the guest or remove silently. Removal revokes the link and ticket; payment records are retained for separate refund handling.
+
 The main event actions include opening the event in chat, editing, copying the invite link, and shared media when available. Secondary actions sit under the three-dot menu.
 
 An owner can create multiple co-host links with optional labels. Each private link works once; after it is claimed, the owner sees the claimant's Telegram name, @handle when available, and numeric ID beside its label. Cancel an unused link or revoke a particular co-host without affecting other hosts. Revoked entries retain their status for the owner to review.

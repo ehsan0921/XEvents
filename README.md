@@ -1,263 +1,135 @@
-# XEvents — Free Open Source Event Management for Telegram
+# XEvents
 
-**Create events, share invitations, collect RSVPs and organise event photos in Telegram.** XEvents is a free, MIT-licensed event management project with a mobile Telegram Mini App for meetups, parties and community activities.
+**Open-source event management inside Telegram.**
 
-**[Try XEvents on Telegram](https://t.me/XEvents_bot)** · [Features](#event-management-features) · [Self-hosting](#self-host-your-own-telegram-event-planner) · [MIT licence](LICENSE)
+Create events, invite guests, collect RSVPs, issue tickets, check guests in with optional QR codes, accept payments, and share event media without leaving Telegram.
 
-## Free event planning for communities
+[![MIT licence](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Telegram Mini App](https://img.shields.io/badge/Telegram-Mini_App-26A5E4?logo=telegram&logoColor=white)](https://t.me/XEvents_bot) [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](docs/architecture.md) [![JavaScript](https://img.shields.io/badge/JavaScript-ES_modules-F7DF1E?logo=javascript&logoColor=black)](package.json)
 
-Organising a gathering should be simple: create an event, send a link and see who is coming. XEvents brings invitations, attendance responses, local times, reminders and shared media into the messaging app your community already uses.
+**[Try XEvents on Telegram →](https://t.me/XEvents_bot)**
 
-Built for sports clubs, friends, community organisers and volunteer groups, XEvents provides a free event planner and an open source RSVP system. Anyone can use, modify and self-host the source under MIT, including for commercial use.
+[Screenshots / demo](#see-xevents-in-action) · [Features](#features) · [Self-hosting](#run-xevents-yourself) · [Contributing](CONTRIBUTING.md)
 
-## Event management features
+## See XEvents in action
 
-| Feature | What you can do |
+Open **[@XEvents_bot](https://t.me/XEvents_bot)**, press **Start**, then choose **App**. Set your timezone in **Profile** and create your first event.
+
+Product screenshots are not checked in yet. The [screenshot capture guide](docs/screenshots/README.md) lists four real screens to capture: Home / Explore, Create event, a personal RSVP invitation, and a ticket with QR check-in.
+
+## Why XEvents?
+
+- **Meet people where they already are.** Hosts and guests use Telegram; there is no separate app to install.
+- **Choose how people join.** Share a ticket booking link or send personal invitations from a named guest list.
+- **Keep attendance clear.** Track replies and group sizes, issue tickets, and check guests in by code or optional QR scan.
+- **Control what guests see.** Make events private and restrict guest lists, media, locations, and joining details.
+- **Keep the memories together.** Collect event photos, videos, and files in a shared gallery.
+- **Host it yourself.** MIT-licensed JavaScript, a plain HTML/CSS Mini App, Cloudflare Workers, and D1.
+
+## Features
+
+| Area | What XEvents supports |
 | --- | --- |
-| Ticket booking links | Share one event link. Guests enter their name and get a ticket or request organiser approval, without RSVP options. |
-| Named invitations and RSVPs | Enter a guest list and share an individual link for each name. Use `Alex = ?` to ask for a count, `Alex = 2!` to confirm two attendees, or `Alex = 2` to start at two with a Change number button. Guests respond without entering their name again. |
-| Custom invitation message | Add your own short welcome or instructions to invitations alongside the event details. |
-| Telegram Mini App | Create and edit events with mobile date and time pickers. |
-| Local timezones | Save your timezone and view times locally, with daylight-saving validation. |
-| Flexible schedules | Set a start, duration or finish time, and a response deadline. |
-| Group attendance | Choose 1–5 people with buttons, or tap More for 6–10 when the organiser enables group selection. Each named invitation can ask for a count, request confirmation of a reserved count, or use a preset with a Change number button. Otherwise each response counts as one person. |
-| Organiser guest list | View accepted response and people totals, distinguish confirmed attendance from approval/payment requests, and filter accepted, pending, maybe, rejected and unanswered guests. |
-| Home and navigation | Home shows ongoing and upcoming plans, plus future public events or ideas for your next event. Footer order: Home, Explore with search, Create, My events, Profile. |
-| Personal profile | Set a name, optional photo and private phone number, timezone and price-display currency. Super admin access appears inside Profile only for the configured administrator. |
-| File previews | Images uploaded as documents and videos show gallery previews. Telegram thumbnails load when available; supported image/video files provide a fallback preview. |
-| Optional ticket QR and check-in | Confirmed guests get a unique ticket code. Enable QR codes to add a scannable ticket; the organiser can also enter its code to verify current approval and payment and check in the whole group. Repeat checks flag an existing check-in. Cancelled, revoked and finished tickets fail validation. QR codes contain no hosting URL. |
-| Guest information | Collect ticket names and opt-in phone numbers or comments. With phone collection off, guests are never asked for a phone number. |
-| Individual ticket request approval | In ticket booking mode, approve or reject each request before issuing its ticket. Named guest lists save RSVPs directly without a second approval. |
-| One-time invitation links | Lock each link to the first guest who completes an RSVP or ticket request. That guest can return and change their RSVP; forwarded links cannot be used by another account. Opening a link or choosing Later does not consume it. |
-| Event co-host | Privately invite one co-host with a one-use Telegram link. Co-hosts help edit details, manage guests, shared media and check-in; the owner controls payments, co-host access, cancellation and deletion. |
-| Location for approved ticket holders only | Enable approval and location privacy to withhold the address and private invitation details until the organiser approves the guest. |
-| Guest privacy | Choose whether guests can see the guest list, upload media or browse shared media. |
-| Event reminders | Personal and default reminders, including 2, 3 or 4 hours before the event. |
-| Paid events | Organisers can show any price as text, accept manual bank transfers, use an external payment link or collect Telegram Stars. Approval and verified payment protect private tickets and locations. |
-| Event banners | Add an image to invitations and the Mini App. |
-| Shared event media | Collect photos, videos and files; browse, save or send them to Telegram. |
-| Upload links and optional QR codes | Optionally allow media contributions without an RSVP. Links work with QR codes switched off. |
-| Public event discovery | Explore public events in your saved timezone; keep other events private. |
-| Event management | View upcoming and past events, edit, share, cancel or delete events. |
-| Administrator dashboard | A separately configured administrator can review all events and users. |
+| **Events** | Banners, custom invitation messages, local timezones, duration or finish time, reminders, and public discovery by saved timezone. |
+| **Invitations & RSVP** | Named guest links with Accept, Reject, Maybe, and Respond later; optional group counts; response deadlines; one-time links; one co-host per event. |
+| **Tickets & check-in** | Shared booking links, optional organiser approval, unique ticket codes, optional QR codes, group check-in, and guest check-in notifications. |
+| **Payments** | Free events, text prices with organiser-verified bank transfers or external payment links, and Telegram Stars. Stars payouts to organisers are manual. |
+| **Media** | Photos, videos, and files; previews; Save and Send to Telegram; optional media-only upload links. |
+| **Privacy** | Guest-list and media permissions; phone numbers and comments off by default; private locations released after the required response, approval, and payment. |
+| **Hosting** | A Worker serves the bot webhook, Mini App, and API. D1 stores records; Telegram hosts uploaded media. |
 
-## How to use XEvents
+[Full feature guide and examples](docs/features.md) · [Invitations and guest counts](docs/invitations.md) · [Payments and refunds](docs/payments.md)
 
-1. Open **[@XEvents_bot](https://t.me/XEvents_bot)** and press **Start**.
-2. Choose **App**, set your timezone and create an event.
+### Two ways to invite
 
-Use **App** in Telegram's bot menu or on an inline message button to open the authenticated Mini App. The reply-keyboard **App** shortcut sends an inline launcher first: Telegram's reply-keyboard Web App launch does not include signed identity data, which private database access requires. Every launcher uses the same app and database.
-3. Add the schedule, banner, optional invitation message and guest permissions.
-4. Choose **Ticket booking** and share one link, or choose **Named invitations**, enter your guest list and use **Guest invitations** to copy or share each personal link.
-5. Review responses in **My events** and approve guests when required.
+**Ticket booking:** share one link. Guests enter a ticket name and book or request a place. Enable individual approval when you need to review requests before releasing tickets and private locations. This mode has no RSVP choices.
 
-Named guests can change their response before the deadline. **Later** keeps these invitations in the pending list. Ticket guests use **Get ticket** or **Request ticket** and enter their ticket name. Organisers do not respond to their own events. Existing events retain their original RSVP links and responses.
+**Named invitations:** enter a guest list and send each person their own RSVP link. Their name is already filled in. Set group sizes with simple list syntax:
 
-The initial RSVP message shows only **Accept**, **Reject**, **Maybe**, and **Respond later**, plus any response deadline. Enabled guest-list, media, reminder and other event buttons appear after acceptance. **Ask for phone number** and **Ask for comments** are off by default for new events; organisers can turn them on under Guest options. Phone collection is strictly opt-in: when the organiser leaves it off, the response flow skips the phone step entirely. With contact details, comments and group selection off, a named guest's Accept, Reject or Maybe response saves immediately. Custom guest questions have been removed to keep responses simple.
+| Guest-list entry | Meaning |
+| --- | --- |
+| `Alex = ?` | Ask how many people are coming. |
+| `Sam = 2!` | Ask Sam to confirm two places. |
+| `Taylor = 2` | Reserve two; allow Change number. |
+| `Casey` | One person. |
 
-### Two ways to invite people
+Counts include the guest and range from 1 to 10. Named invitations save RSVPs directly and do not require organiser approval. See the [invitation guide](docs/invitations.md) for one-time links, deadlines, and co-host permissions.
 
-**Ticket booking** suits open workshops, community activities and paid events. Guests use a shared link, enter their name and provide phone numbers or comments only when the organiser enables those options. A free booking can issue its ticket immediately; approval and payment requirements hold the ticket and private location until satisfied.
+## Run XEvents yourself
 
-**Named invitations** suit a club roster, wedding guest list or private team dinner. Enter up to 100 unique guest names, one per line. Choose how each guest provides their group size, including themselves:
+You need **Node.js 22+**, npm, your own [Telegram bot](https://t.me/BotFather), and a Cloudflare account with Workers and D1.
 
-```text
-Alex = ?
-Sam = 2!
-Taylor = 2
-Casey
+1. **Clone and install.**
+
+   ```sh
+   git clone https://github.com/ehsan0921/XEvents.git
+   cd XEvents
+   npm ci
+   ```
+
+2. **Create a development bot** with BotFather. Keep its token private and use a different bot from production.
+3. **Configure local secrets.** Copy `.dev.vars.example` to `.dev.vars`, then fill in your development token and webhook secret. `SUPER_ADMIN_ID` is optional; blank disables the admin panel.
+
+   ```sh
+   cp .dev.vars.example .dev.vars
+   ```
+
+4. **Prepare local D1 storage.**
+
+   ```sh
+   npx wrangler d1 migrations apply xevents --local
+   ```
+
+5. **Run the Worker and Mini App locally.**
+
+   ```sh
+   npx wrangler dev
+   ```
+
+   Open `/app` on the local address Wrangler prints. Private data needs signed Telegram identity; an ordinary browser preview cannot sign you in. Follow the [Telegram testing instructions](docs/self-hosting.md#run-the-worker-locally) for a complete flow.
+
+6. **Check the project.** `npm test` runs the Node.js suite; `npm run test:worker` builds the Worker and runs local integration checks with mocked Telegram requests.
+7. **Deploy your instance.** The [self-hosting guide](docs/self-hosting.md) covers Cloudflare login, D1 creation, your own ignored production configuration, server-side secrets, remote migrations, deployment, and authenticated webhook setup.
+
+`npm start` runs a separate polling bot with JSON-file storage, rather than the hosted Mini App. It removes that bot's webhook on startup. See [standalone bot development](docs/self-hosting.md#standalone-polling-bot) before using it.
+
+## How it fits together
+
+```mermaid
+flowchart TD
+    Telegram[Telegram bot and Mini App] <-->|Webhook, Bot API and signed requests| Worker[Cloudflare Worker]
+    Worker <--> DB[(Cloudflare D1)]
+    Worker <--> Media[Telegram-hosted media]
 ```
 
-`Alex = ?` asks Alex how many people will attend. `Sam = 2!` asks Sam to confirm the two reserved places. `Taylor = 2` uses two attendees immediately and offers a **Change number** button. Counts must be whole numbers from 1 to 10, including the guest. A name without a count means one person. List mode has no general group-size question or organiser approval setting; each name controls its count and the RSVP saves directly. Payment requirements still apply to paid events.
+The Worker serves the Mini App and verifies Telegram identity. D1 holds events, guest responses, preferences, and queued messages. Telegram holds the uploaded files. Read the [architecture guide](docs/architecture.md) for the code map, delivery model, and scaling limits.
 
-Personal invitation previews and shared messages greet the guest by name, show the event date and time, state their reserved places or ask for a count, and include your custom invitation message. Shared invitation text omits restricted locations, including when the organiser shares a personal link. Guests receive private joining details in the bot after the required response, approval and payment steps are complete.
+## Free software, practical limits
 
-XEvents generates a separate link for each person and shows their organiser-assigned name when they open it. Accept, Decline, Tentative and Later do not ask for a name again. **One-time invitation links** starts on for named lists: the first completed Accept, Decline or Maybe response locks the link to that Telegram account. Opening it or choosing Later leaves it available. The same guest can change their response before the deadline, and choosing Later afterwards does not unlock the link. Send links privately to their intended guests; the link does not verify a person's real-world identity. Turn one-time use off only when you want more than one account to use the same named link. Shared ticket booking links start reusable; enable one-time use for a single booking link. A link with responses from multiple guests cannot be switched to one-time use.
+XEvents is free event management software you can use, modify, and self-host under MIT, including for commercial projects. It is designed for sports clubs, meetups, parties, workshops, and community activities.
 
-Names and unused links stay private to the hosts. Saved personal links remain stable during edits; removing an unopened guest revokes their link. Once opened, invitations cannot be removed or renamed and their count settings cannot be changed through the guest-list editor. Guests can update editable counts through **Change number**. Named invitation events are private and do not appear in Explore. Optional event settings are grouped into collapsed sections, with only essential details visible initially.
+There is no built-in event media count quota, but **unlimited free storage or hosting is not guaranteed**. Telegram restrictions and Cloudflare quotas still apply. Mini App downloads currently support files up to 20 MB; use **Send to Telegram** for larger files. Media is not an independent backup.
 
-Editing fetches the latest event data, including title, address, description, invitation message, guest list and payment settings, and previews the existing banner. Saving without a new image preserves the banner.
+Direct card processing, automatic organiser payouts, and calendar synchronisation are not implemented. See [hosting and storage limits](docs/architecture.md#operational-constraints) and the [payment guide](docs/payments.md) before planning a deployment.
 
-### Invite a co-host
+## Documentation
 
-In **My events**, open an event’s three-dot menu and choose **Co-host**, then expand its controls. Create a one-use link and share it privately with someone you trust: the first Telegram account to open it becomes that event’s co-host. The panel shows their Telegram name and @username, or **No Telegram username** when they do not have one. Opening the Mini App alone does not claim the role.
+| Guide | Start here when you want to… |
+| --- | --- |
+| [Features and examples](docs/features.md) | Understand the app and choose a workflow for your community. |
+| [Invitations](docs/invitations.md) | Set up RSVP lists, group counts, deadlines, privacy, or a co-host. |
+| [Payments](docs/payments.md) | Configure paid events, payment review, Stars, or refunds. |
+| [Self-hosting](docs/self-hosting.md) | Run your own bot, Mini App, and database. |
+| [Architecture](docs/architecture.md) | Find the relevant code and understand deployment constraints. |
+| [UX review](docs/UX-review.md) | Review expected user journeys and test boundaries. |
 
-Each event supports one active co-host. They can edit the schedule, banner and guest options; review and manage guest responses; share personal invitations; browse and contribute media; and check tickets in. Their events appear as **Co-hosting**. Payment settings remain read-only for the co-host, and only the owner can invite or remove a co-host, cancel or delete the event.
+## Contributing and security
 
-The owner can replace or cancel an unused invite link, or revoke the current co-host’s access and invite someone new. A replacement invalidates the previous unused link; revocation removes management access immediately. Existing guest responses and tickets stay intact. If someone claims a link while a confirmation is open, the panel refreshes and asks the owner to review the new state before trying again.
+Bug reports, accessibility improvements, translations, and focused pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 
-### Optional QR codes
-
-QR codes are an organiser setting and start **off** for new events. When off, guests do not see ticket QR options and the organiser cannot generate upload QR codes. Manual ticket codes, check-in by code and media upload links still work. Enable QR codes when scanning at the door or sharing a media upload poster is useful. Existing events without a saved QR setting keep their QR functionality; organisers can switch it off when editing.
-
-## Approve guests before sharing the event location
-
-For an invitation-only gathering, enable **Approve acceptance requests**. Guests can request to attend, but accepting does not immediately confirm their place. The organiser can **approve or reject each request individually**.
-
-With approval required, the event location and private invitation instructions are shared only after approval. Approved guests receive a personalised invitation ticket and can see their invitation details in the Mini App. Guests awaiting approval see a message explaining that the organiser will send the details after reviewing their response.
-
-This is useful for private training venues, members-only gatherings and events where the organiser wants to review attendance first. Tickets also support organiser check-in and optional paid admission. Recipients can still forward information they receive, so this controls disclosure through XEvents rather than preventing sharing outside the app.
-
-## Examples: sports clubs, meetups and community events
-
-### Sports club training and friendly matches
-
-A football, basketball or running club can organise a training session or friendly match, share its invitation in the club's Telegram group and collect player RSVPs. Add a custom invitation message such as “Bring your training kit and arrive 15 minutes early,” and set a reminder two hours before the start. For a private venue, approve each request before sharing the meeting location with confirmed ticket holders.
-
-### Club family days and social gatherings
-
-A tennis club or community sports association can enable group attendance so a member selects the total number coming, including themselves. One response for a family of four counts as four people. Alternatively, enter `Alex = 4` in a named guest list to assign that family's count in advance. Add a welcome message and collect photos through the event's shared media gallery.
-
-### Cycling rides, hikes and outdoor meetups
-
-Create a ride or hike with a start time, timezone and expected duration. Put the route difficulty and equipment list in the invitation message, review acceptance requests individually and release the meeting point after approval. A response deadline helps the organiser prepare the attendance list before departure.
-
-### Volunteer activities and community cleanups
-
-Share a public event for a park cleanup or volunteer day. Participants can find it through Explore when their saved timezone matches the event's timezone. Include meeting instructions, set reminders and share a media upload link for photos from the day. Enable QR codes if you also want to print an upload poster.
-
-### Workshops, hobby clubs and study groups
-
-A photography club, language exchange or study group can invite members to a workshop, include preparation instructions and keep the guest list private. Enable optional comments when participants should leave a note with their response. Enable media uploads and browsing when participants should share photos, videos or documents afterwards.
-
-### Private parties and members-only events
-
-Create a private birthday party, club dinner or community gathering with a banner and invitation link. Require individual approval to keep the address unavailable until a guest's request is approved. Set a response deadline, ask how many people are attending and review accepted and tentative responses in My events.
-
-## Free event media storage: how it works
-
-XEvents does not impose a built-in event media count quota. Telegram hosts uploaded photos, videos and files; the application stores file references and event metadata. This avoids maintaining a separate application media storage bucket.
-
-**Unlimited free storage is not guaranteed.** Telegram restrictions, Cloudflare database and execution quotas, and provider policies still apply. Free tiers may suit small communities; larger deployments may need paid capacity. Telegram-hosted media is not an independent backup. Deleting an event cannot remove copies already delivered to someone’s chat.
-
-Review the [Telegram Bot API](https://core.telegram.org/bots/api) and [Cloudflare platform limits](https://developers.cloudflare.com/workers/platform/limits/) before planning a large deployment.
-
-## Paid events with Telegram Stars
-
-Every organiser can enable **Paid event** when creating or editing an event in the Mini App. Choose **Manual bank transfer**, **External payment link**, or **Built-in Telegram Stars**, and write payment and refund terms. Manual methods accept prices as text, such as `AUD $20 each`, `£15 per family`, or `Members $10 / guests $15`. These prices are displayed as entered; XEvents does not convert or multiply them. External payment links must use HTTPS.
-
-For bank transfers and external links, guests receive payment instructions after approval when required. **I have paid — request review** sends the organiser a request to check receipt in their bank or payment provider. Only the organiser can confirm payment and release the ticket and private location. Clearing a payment record does not move or refund money; organisers handle these refunds outside XEvents.
-
-For Stars, choose a whole-number price per person or per group. For example, a workshop priced at 50 Stars per person costs 150 Stars for a group of three.
-
-**Admin → Owner fee settings** lets the owner set a default admission price and pricing unit for new events. A default of zero means Free. Existing event prices are unchanged. Free and Stars price tags appear in event views, Explore, settings and management.
-
-Local currency estimates update automatically from [Frankfurter's online exchange rates](https://frankfurter.dev/) and [Telegram's published USD reward value per Star](https://telegram.org/tos/bot-developers#6-2-4-rewards-for-stars). The app selects currency from the user's saved timezone when it identifies one currency, with a manual currency override for travel or ambiguous timezones. No currency-rate entry is required. Estimates show **organiser reward value**, not the guest's Stars purchase price, which varies by region and purchase channel. The rate date appears beside the price. Online data refreshes every six hours; a provider outage preserves recent cached data for up to seven days without blocking event creation or payments. Unsupported currencies have no monetary estimate. Checkout remains in Stars, and prices entered as text are unchanged.
-
-When approval is required, the organiser approves the guest before requesting payment. Guests review the terms and tap **Agree & pay with Stars** to receive a Telegram invoice. Tickets and private joining details unlock only after Telegram confirms successful payment, not simply after a checkout attempt.
-
-Stars payments go to the bot's balance, not directly to individual organisers. Stars are available to all organisers where Telegram permits their use. The bot owner handles organiser payouts manually; XEvents does not provide automatic payouts or split payments. Free events remain available to everyone. Event creation has no digital-only checkbox or event-type restriction. Hosts are responsible for checking the payment rules applicable to the goods or services they sell. See [Telegram's Stars payment documentation](https://core.telegram.org/bots/payments-stars).
-
-Use **Payments & refunds** in the event's three-dot menu or `/paysupport` in chat to review purchases. The seller can request a full refund with confirmation. Cancelling or deleting an event requests full refunds for its recorded paid orders. Refunds are marked complete only after confirmation; failed refunds can be retried through payment support. Payment records survive event deletion, but hosts must keep their database and backups safe.
-
-Paid bookings cannot change their RSVP or group size before a refund. Pricing, terms and group attendance settings cannot be changed while relevant payments are active. Provider balance and refund availability still apply. No real payment is made by the automated test suite; test your own checkout in Telegram's dedicated test environment before collecting payments.
-
-## Self-host your own Telegram event planner
-
-### Requirements
-
-- Node.js 22 or newer and npm.
-- Your own Telegram bot from [BotFather](https://t.me/BotFather).
-- A Cloudflare account for Workers and D1.
-
-### Install and verify
-
-```sh
-git clone https://github.com/ehsan0921/XEvents.git
-cd XEvents
-npm ci
-npm test
-npm run test:worker
-```
-
-Tests use mocked Telegram requests and local storage, without sending real bot messages.
-
-### Configure and deploy
-
-```sh
-npx wrangler login
-npx wrangler d1 create xevents
-```
-
-Update `wrangler.jsonc` with the returned database ID, your Worker name, your bot username without `@`, and your deployed HTTPS Mini App URL ending in `/app`. Checked-in values are placeholders and provide no access to the hosted XEvents service.
-
-Set credentials through the interactive secret prompts:
-
-```sh
-npx wrangler secret put TELEGRAM_BOT_TOKEN
-npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
-```
-
-Choose a strong random webhook secret using letters, numbers, underscores or hyphens. To enable the administrator dashboard, set your numeric Telegram user ID as a separate secret:
-
-```sh
-npx wrangler secret put SUPER_ADMIN_ID
-```
-
-Administrator access is disabled when this secret is absent. Requests are checked against Telegram’s verified identity, not a username or a client-provided role.
-
-`SUPER_ADMIN_ID` is listed blank in `.env.example` and `.dev.vars.example`; no personal admin ID is included in the public source. For local Worker development, copy `.dev.vars.example` to `.dev.vars` and enter your own values. `.dev.vars` is ignored by Git. Production reads the Cloudflare secret, so editing a sample file does not change the deployed administrator.
-
-```sh
-npx wrangler d1 migrations apply xevents --remote
-npm run deploy
-```
-
-Register the webhook with an HTTPS `POST` to your Worker’s `/setup` route, using the `X-Telegram-Bot-Api-Secret-Token` header with your webhook secret. Keep that header private. The route verifies bot identity and configures the webhook and commands. The app lives at `/app`; its bot menu is configured by the scheduled task.
-
-### Local bot development
-
-Copy `.env.example` to `.env`, set your own token and bot username, then run `npm start`. The local bot uses long polling and stores data in `data/`. Startup removes its webhook, so use a separate development bot. The Cloudflare deployment provides the hosted Mini App and scheduled reminders.
-
-## Security and privacy
-
-Production credentials, deployment configuration, databases and guest data are excluded from this public repository. Never commit tokens, webhook secrets, database exports or private user information. See [SECURITY.md](SECURITY.md).
-
-The Mini App verifies signed Telegram authentication data. Server checks enforce ownership, guest permissions and administrator access. Guest phone numbers are private to the organiser and configured administrator. Responses and optional comments are visible to other guests only when the organiser enables the guest list.
-
-The host controls the database and must protect personal information and backups. Public event listings expose titles, descriptions, banners and schedules; choose private visibility for sensitive gatherings.
-
-## Architecture and limitations
-
-- **Telegram bot:** button-driven invitations, RSVP conversations, reminders and uploads.
-- **Telegram Mini App:** event creation, timezone preferences, media gallery and discovery.
-- **Cloudflare Workers:** authenticated API, webhook and scheduled processing.
-- **Cloudflare D1:** event metadata, responses, preferences and durable outgoing messages.
-- **Telegram:** media hosting through reusable file IDs.
-
-The implementation targets small communities. It loads event records during processing and serialises writes; larger deployments should improve queries and capacity planning. Delivery is best effort, and retries can occasionally duplicate messages. People who never open an invitation cannot be listed or contacted.
-
-Invitation tickets confirm attendance and support check-in by code or optional QR scan. Paid admission supports Telegram Stars and organiser-verified bank transfers or external payment links. Direct card processing, automatic organiser payouts and calendar synchronisation are not implemented.
-
-## Frequently asked questions
-
-### Is XEvents a free event management tool?
-
-Yes. The source is free under MIT, and you can try the linked Telegram bot. Self-hosting costs depend on usage and provider pricing; the licence does not promise free hosting forever.
-
-### Can I send event invitations without a separate RSVP website?
-
-Yes. Guests open a Telegram invitation link and respond inside Telegram. The Mini App offers a convenient mobile interface.
-
-### Can people upload event photos without accepting an invitation?
-
-Yes, when the organiser enables the separate public media upload link. It opens a media-only flow. Browsing remains a separate permission.
-
-### Can I use XEvents for private events?
-
-Yes. Private events are absent from Explore. Organisers can restrict guest lists, shared media and locations, or require approval.
-
-### Can I modify XEvents or use it commercially?
-
-Yes. MIT permits use, modification, distribution and commercial use, subject to retaining its copyright and permission notice.
-
-## Contributing
-
-Bug reports, accessibility improvements, translations and focused pull requests are welcome. Run `npm test` and `npm run test:worker` before submitting code. Use fictional users and events in tests and examples.
+Keep tokens, private deployment configuration, databases, and real guest data out of commits, issues, and screenshots. Report security concerns privately as described in [SECURITY.md](SECURITY.md).
 
 ## Licence
 
-Copyright © 2026 XEvents contributors. Released under the [MIT licence](LICENSE).
+[MIT](LICENSE) · Copyright © 2026 XEvents contributors.
 
-**[Plan your next event on Telegram with XEvents](https://t.me/XEvents_bot).**
-
+**[Plan your next event with XEvents on Telegram →](https://t.me/XEvents_bot)**

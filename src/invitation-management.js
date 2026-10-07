@@ -8,7 +8,7 @@ const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('h
 const validToken=token=>typeof token==='string' && /^[a-f0-9]{32}$/.test(token);
 const validRequest=id=>typeof id==='string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id);
 const linkedGuests=(e,token)=>Object.entries(e.guests || {}).filter(([uid,g])=>Number(uid)!==e.owner && g.invitationToken===token);
-const guestLine=g=>`${g.name}${g.participantMode==='ask' ? ' = ?' : g.participants ? ` = ${g.participants}${g.participantMode==='confirm'?'!':''}`:''}`;
+const guestLine=g=>`${g.name}${g.participantMode==='ask' ? ' = ?' : g.participants ? ` = ${g.participants}${g.participantMode==='confirm'?'!':g.participantMode==='fixed'?'*':''}`:''}`;
 
 // Includes responses and payment/check-in changes so a stale removal cannot silently
 // remove a different response from the one the organiser reviewed.

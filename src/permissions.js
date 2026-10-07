@@ -24,12 +24,14 @@ export function invitationParticipants(event, guest) {
 }
 export function invitationParticipantMode(event,guest) {
   const invite=personalInvitation(event,guest);
-  if(['ask','confirm'].includes(invite?.participantMode))return invite.participantMode;
+  if(['ask','confirm','fixed'].includes(invite?.participantMode))return invite.participantMode;
   return invitationParticipants(event,guest)!==null ? 'preset' : 'default';
 }
 export function participantCount(event, guest) {
   const preset=invitationParticipants(event,guest);
-  if(invitationParticipantMode(event,guest)!=='default')return validParticipants(guest?.participants) ? guest.participants : preset ?? 1;
+  const mode=invitationParticipantMode(event,guest);
+  if(mode==='fixed')return preset ?? 1;
+  if(mode!=='default')return validParticipants(guest?.participants) ? guest.participants : preset ?? 1;
   return asksParticipantCount(event) && Number.isSafeInteger(guest?.participants) && guest.participants >= 1 && guest.participants <= 10000 ? guest.participants : 1;
 }
 export function responseCounts(event) {

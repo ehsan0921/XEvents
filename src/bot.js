@@ -18,6 +18,7 @@ const keyboard = (...rows) => ({ inline_keyboard: rows });
 const paired = buttons => Array.from({ length: Math.ceil(buttons.length / 2) }, (_, index) => buttons.slice(index * 2, index * 2 + 2));
 const name = u => [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || 'Guest';
 const clean = (s, max = 1000) => typeof s === 'string' ? s.trim().slice(0, max) : '';
+const changeCountLabel = count => `${count} ${count===1?'person':'people'} · Change`;
 const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name', app: 'App', picker: '🗓 Pick date & time', pending: '⏳ Pending invitations' };
 const reply = (...rows) => ({ keyboard: rows.map(row => row.map(text => typeof text === 'string' ? { text } : text)), resize_keyboard: true, is_persistent: true });
 // Reply-keyboard Web Apps omit signed initData. Use an inline launcher for authenticated access.
@@ -56,12 +57,12 @@ export class Bot {
     s.baseVersion ??= e.guests[id]?.responseVersion || 0;
     const count=participantCount(e,s.response);
     return this.send(id,`Confirm ${count} ${count===1?'person':'people'} attending?`,keyboard(
-      [button(`Yes, ${count}`,`count-confirm:${e.id}:yes:${s.countToken}`),button('Change number',`count-confirm:${e.id}:change:${s.countToken}`)],
+      [button(`Yes, ${count}`,`count-confirm:${e.id}:yes:${s.countToken}`),button(changeCountLabel(count),`count-confirm:${e.id}:change:${s.countToken}`)],
       [button('Cancel',`v:${e.id}`)]));
   }
   countEditable(e,id) {
     const g=e?.guests[id];
-    return !!(g && !isManager(e,id) && !e.cancelled && !responsesClosed(e) && !['reported','paid','processing','refund_pending','refund_failed'].includes(g.payment?.status) && !e.checkIns?.[g.ticket]);
+    return !!(g && invitationParticipantMode(e,g)!=='fixed' && !isManager(e,id) && !e.cancelled && !responsesClosed(e) && !['reported','paid','processing','refund_pending','refund_failed'].includes(g.payment?.status) && !e.checkIns?.[g.ticket]);
   }
   async chooseParticipants(id,e,s,count) {
     if(!this.countEditable(e,id) || s.baseVersion!==(e.guests[id]?.responseVersion || 0)){this.session(id);return this.card(id,e);}
@@ -144,13 +145,17 @@ export class Bot {
     if(step==='participants')return this.participantPicker(id,e);
     return this.prompt(id,personal ? 'Share your phone number, or tap Skip.' : 'Name for your ticket? Type it or use your Telegram name.');
   }
-  namedInvitationText(e,g,id,sharing=false) {
+  namedInvitationContent(e,g,id,sharing=false) {
     const visible=sharing ? !(hidesLocation(e) || requiresApproval(e) || paidEvent(e)) : canSeeLocation(e,id);
     const location=visible ? e.location || 'The organiser will share the location.' : paidEvent(e) ? requiresApproval(e) ? 'Location will be available after approval and payment.' : 'Location will be available after confirmed payment.' : requiresApproval(e) ? 'Location will be available after your response is approved.' : 'Location will be available after you accept.';
     const count=participantCount(e,g),mode=invitationParticipantMode(e,g);
     const deadline=e.responseDeadline ? '\n⏰ Respond by: '+eventTime({startsAt:e.responseDeadline,timezone:e.deadlineTimezone || e.timezone || 'UTC'},this.db.preferences[id]?.timezone)+(responsesClosed(e) ? '\nResponses closed — deadline passed.' : '') : '';
-    return `Dear ${g.name},\n\nYou are invited to ${e.title} on ${this.time(e,id)}.\n📍 ${location}\n\n${mode==='ask' || mode==='default' && asksParticipantCount(e) ? 'Choose how many people will attend when you accept (1–10).' : `The host has reserved ${count} ${count===1?'place':'places'} for you.`}\nPlease respond below.${deadline}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n`;
+    const intro=`Dear ${g.name},\n\nYou are invited to ${e.title} on ${this.time(e,id)}.\n📍 ${location}\n\n`;
+    const asks=mode==='ask' || mode==='default' && asksParticipantCount(e),places=`${count} ${count===1?'place':'places'}`;
+    const text=`${intro}${asks ? 'Choose how many people will attend when you accept (1–10).' : `The host has reserved ${places} for you.${mode==='fixed'?' This count is fixed.':''}`}\nPlease respond below.${deadline}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n`;
+    return {text,entities:asks ? [] : [{type:'bold',offset:intro.length+'The host has reserved '.length,length:places.length}]};
   }
+  namedInvitationText(e,g,id,sharing=false) { return this.namedInvitationContent(e,g,id,sharing).text; }
   personalLinks(id,e,page=0){return invitationLinksCard(this,id,e,page);}
   cohostCard(id,e,page=0){
     if(e.owner!==id)return this.send(id,'Only the owner can manage co-host access.');
@@ -208,7 +213,7 @@ export class Bot {
       if(s.draft.requireApproval===true)s.draft.hideLocation=true;
       s.draft.requireApproval=false;s.draft.askParticipantCount=false;
     }
-    if(invitationMode(s.draft)==='named' && !Object.keys(s.draft.invitees || {}).length){s.step='guestNames';return this.prompt(id,'Guest names, one per line. Alex = ? asks how many; Alex = 2! confirms two; Alex = 2 defaults to two. Max 10 people.');}
+    if(invitationMode(s.draft)==='named' && !Object.keys(s.draft.invitees || {}).length){s.step='guestNames';return this.prompt(id,'Guest names, one per line. Alex = ? asks; Alex = 2! confirms; Alex = 2 allows changes; Alex = 2* fixes two places. Max 10.');}
     const e = { ...s.draft, permissions: permissions(s.draft), id: randomBytes(8).toString('hex'), owner: id, guests: {}, media: [], cancelled: false, createdAt: new Date().toISOString() };
     this.db.events[e.id] = e; this.session(id); await this.home(id, invitationMode(e)==='named'?'🎉 Event ready! Open Personal invitations to share guest links.':'🎉 Event ready! Tap Share ticket link to invite people.'); return this.card(id, e);
   }
@@ -225,7 +230,7 @@ export class Bot {
       [button('✅ Accept', `r:${e.id}:yes:${e.guests[id]?.responseVersion || 0}`), button('❌ Reject', `r:${e.id}:no:${e.guests[id]?.responseVersion || 0}`)],
       [button('🤔 Maybe', `r:${e.id}:maybe:${e.guests[id]?.responseVersion || 0}`), button('⏳ Respond later', `r:${e.id}:later:${e.guests[id]?.responseVersion || 0}`)]
     ];
-    if(mode==='named' && this.countEditable(e,id) && (invitationParticipantMode(e,e.guests[id])==='preset' || accepted && invitationParticipantMode(e,e.guests[id])!=='default'))rows.push([button('Change number',`group:${e.id}:edit:${e.guests[id]?.responseVersion || 0}`)]);
+    if(mode==='named' && this.countEditable(e,id) && (invitationParticipantMode(e,e.guests[id])==='preset' || accepted && invitationParticipantMode(e,e.guests[id])!=='default'))rows.push([button(changeCountLabel(participantCount(e,e.guests[id])),`group:${e.id}:edit:${e.guests[id]?.responseVersion || 0}`)]);
     const extras = [];
     if (!e.cancelled && (host || accepted)) {
       if (host) extras.push(...(mode==='named' ? [this.appUrl ? this.miniButton('Personal invitations',`?invitations=${e.id}`) : button('Personal invitations',`invite-links:${e.id}`)] : [{ text: mode==='tickets' ? 'Share ticket link' : '📨 Invite people', url: `https://t.me/share/url?url=${encodeURIComponent(this.link(e))}&text=${encodeURIComponent([e.inviteMessage,e.title].filter(Boolean).join('\n\n'))}` }]), button('⚙️ Manage', `h:${e.id}`));
@@ -248,22 +253,28 @@ export class Bot {
     const visibility = can(e, id, 'guestList') ? 'Guest names and RSVP comments can be seen in the guest list.' : 'The organiser has kept the guest list private. Your response and comment are shared with the organiser.';
     const location = canSeeLocation(e, id) ? e.location || 'Location to follow' : paidEvent(e) ? requiresApproval(e) ? 'Shared after approval and confirmed payment' : 'Shared after confirmed payment' : requiresApproval(e) ? 'Shared after organiser approval' : 'Shared after acceptance';
     let text = `🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n\n🗓 ${this.time(e, id)}\n📍 ${location}\n\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n${[e.inviteMessage,e.description].filter(Boolean).join('\n\n')}\n\n${host ? (owner ? 'You’re the organiser.\n\n' : 'You’re the co-host.\n\n') : mode==='named' ? 'Personal invitation for '+e.guests[id].name+'\n\n'+(accepted ? '✅ Accepted\n\n' : '') : mode==='tickets' ? (accepted ? '🎟 Ticket '+(confirmed(e,e.guests[id]) ? 'confirmed' : 'requested')+'\n\n' : '') : accepted ? '✅ Accepted\n\n' : ''}${closed ? '⏰ Responses closed — deadline passed.\n\n' : ''}${e.responseDeadline ? 'Response deadline: ' + eventTime({ startsAt: e.responseDeadline, timezone: e.deadlineTimezone || e.timezone || 'UTC' }, this.db.preferences[id]?.timezone) + '\n\n' : ''}${counts}${host && mode!=='named' ? '\n\n'+(mode==='tickets' ? 'Ticket link:' : 'Invite people:')+'\n' + this.link(e) : ''}\n\n${visibility} `;
+    let invitationEntities=[];
     if(rsvpOnly){
       const deadline=e.responseDeadline ? '⏰ Respond by: '+eventTime({startsAt:e.responseDeadline,timezone:e.deadlineTimezone || e.timezone || 'UTC'},this.db.preferences[id]?.timezone)+'\n'+(closed ? 'Responses closed — deadline passed.\n' : '') : '';
-      const summary=mode==='named' ? (e.cancelled ? '🚫 Event cancelled\n' : '')+this.namedInvitationText(e,e.guests[id],id) : `🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n\n🗓 ${this.time(e,id)}\n${deadline}📍 ${location}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n`;
+      const content=mode==='named' ? this.namedInvitationContent(e,e.guests[id],id) : null,prefix=e.cancelled ? '🚫 Event cancelled\n' : '';
+      const summary=content ? prefix+content.text : `🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n\n🗓 ${this.time(e,id)}\n${deadline}📍 ${location}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n`;
+      if(content)invitationEntities=content.entities.map(entity=>({...entity,offset:entity.offset+prefix.length}));
       const limit=e.banner && withBanner ? Math.max(0,1024-summary.length) : 1500;
       const description=[e.inviteMessage,e.description].filter(Boolean).join('\n\n');text=summary+(description.length>limit ? description.slice(0,Math.max(0,limit-1)).replace(/[\uD800-\uDBFF]$/,'')+'…' : description);
     }
     if (e.banner && withBanner) {
-      const caption = text.length <= 1024 ? text : text.slice(0, 940).replace(/[\uD800-\uDBFF]$/, '') + '\n\nTap Full details to read more.';
+      const captionContent = text.length <= 1024 ? text : text.slice(0, 940).replace(/[\uD800-\uDBFF]$/, '');
+      const caption = captionContent + (text.length > 1024 ? '\n\nTap Full details to read more.' : '');
       if (text.length > 1024) rows.unshift([button('Full details', `details:${e.id}`)]);
       const offset = e.location && canSeeLocation(e, id) ? caption.indexOf('📍 ' + e.location) : -1;
-      return this.api('sendPhoto', { chat_id: id, photo: e.banner, caption, reply_markup: keyboard(...rows), ...(offset >= 0 && offset + 3 + e.location.length <= caption.length ? { caption_entities: [{ type: 'code', offset: offset + 3, length: e.location.length }] } : {}) });
+      const entities=[...(offset >= 0 && offset + 3 + e.location.length <= captionContent.length ? [{ type: 'code', offset: offset + 3, length: e.location.length }] : []),...invitationEntities.filter(entity=>entity.offset+entity.length<=captionContent.length)];
+      return this.api('sendPhoto', { chat_id: id, photo: e.banner, caption, reply_markup: keyboard(...rows), ...(entities.length ? { caption_entities:entities } : {}) });
     }
     for (let i = 0; i < text.length; i += 3900) {
       const chunk = text.slice(i, i + 3900);
       const offset = e.location && canSeeLocation(e, id) ? chunk.indexOf('📍 ' + e.location) : -1;
-      await this.send(id, chunk, i + 3900 >= text.length ? keyboard(...rows) : undefined, offset >= 0 && offset + 3 + e.location.length <= chunk.length ? [{ type: 'code', offset: offset + 3, length: e.location.length }] : undefined);
+      const entities=[...(offset >= 0 && offset + 3 + e.location.length <= chunk.length ? [{ type: 'code', offset: offset + 3, length: e.location.length }] : []),...invitationEntities.filter(entity=>entity.offset>=i && entity.offset+entity.length<=i+chunk.length).map(entity=>({...entity,offset:entity.offset-i}))];
+      await this.send(id, chunk, i + 3900 >= text.length ? keyboard(...rows) : undefined, entities.length ? entities : undefined);
     }
   }
   async handle(update) {
@@ -505,7 +516,7 @@ export class Bot {
       if (!s?.draft || s.step !== 'permissions' || s.token !== eid) return this.send(id, 'These creation buttons have expired. Use the latest buttons or start a new event.');
       if (action === 'pb') { s.step = 'banner'; return this.prompt(id, 'Send a photo for your event banner, or tap Skip.'); }
       if(arg==='mode-tickets'){s.draft.invitationMode='tickets';s.draft.oneTimeInvite=false;delete s.draft.invitees;return this.creationPermissions(id,s);}
-      if(arg==='mode-named'){if(s.draft.requireApproval===true)s.draft.hideLocation=true;s.draft.invitationMode='named';s.draft.oneTimeInvite=true;s.draft.isPublic=false;s.draft.requireApproval=false;s.draft.askParticipantCount=false;s.step='guestNames';return this.prompt(id,'Guest names, one per line. Alex = ? asks how many; Alex = 2! confirms two; Alex = 2 defaults to two. Max 10 people.');}
+      if(arg==='mode-named'){if(s.draft.requireApproval===true)s.draft.hideLocation=true;s.draft.invitationMode='named';s.draft.oneTimeInvite=true;s.draft.isPublic=false;s.draft.requireApproval=false;s.draft.askParticipantCount=false;s.step='guestNames';return this.prompt(id,'Guest names, one per line. Alex = ? asks; Alex = 2! confirms; Alex = 2 allows changes; Alex = 2* fixes two places. Max 10.');}
       if (arg === 'defaultReminder') { const index = reminderOptions.indexOf(s.draft.defaultReminder || 0); s.draft.defaultReminder = reminderOptions[(index + 1) % reminderOptions.length]; }
       if (action === 'pd') return this.finishCreation(id, s);
       if (Object.hasOwn(permissionLabels, arg)) s.draft.permissions[arg] = !s.draft.permissions[arg];

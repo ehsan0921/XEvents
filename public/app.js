@@ -95,7 +95,7 @@ function format(e, zone = selectedZone()) {
   return text;
 }
 function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener'); }
-function invitationGuestLine(guest){return guest.name+(guest.participantMode==='ask' ? ' = ?' : guest.participants ? ' = '+guest.participants+(guest.participantMode==='confirm' ? '!' : '') : '');}
+function invitationGuestLine(guest){return guest.name+(guest.participantMode==='ask' ? ' = ?' : guest.participants ? ' = '+guest.participants+(guest.participantMode==='confirm' ? '!' : guest.participantMode==='fixed' ? '*' : '') : '');}
 function inviteText(e,guest){
   const when=e.startsAt ? format(e,e.timezone || selectedZone()) : e.when;
   const paid=e.starPrice>0 || ['bank','link','stars'].includes(e.paymentMethod);
@@ -104,7 +104,7 @@ function inviteText(e,guest){
   const askCount=guest && (guest.participantMode==='ask' || (!guest.participants && e.askParticipantCount));
   const participants=guest?.participants || 1;
   const deadline=e.responseDeadline ? 'Please respond by '+format({startsAt:e.responseDeadline},e.timezone || selectedZone())+'.' : '';
-  return [guest ? `Dear ${guest.name},` : '',`You are invited to ${e.title}${when ? ' on '+when : ''}.`,location,priceLabel(e),guest ? askCount ? 'Please choose how many people will attend.' : `Host has reserved ${participants} ${participants===1?'place':'places'} for you.` : '',deadline,e.inviteMessage,'Please respond below.'].filter(Boolean).join('\n\n');
+  return [guest ? `Dear ${guest.name},` : '',`You are invited to ${e.title}${when ? ' on '+when : ''}.`,location,priceLabel(e),guest ? askCount ? 'Please choose how many people will attend.' : `Host has reserved ${participants} ${participants===1?'place':'places'} for you.${guest.participantMode==='fixed' ? ' This count is fixed.' : ''}` : '',deadline,e.inviteMessage,'Please respond below.'].filter(Boolean).join('\n\n');
 }
 function share(e) { if(e.invitationMode==='named' && isManager(e))return openNamedLinks(e);openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(inviteText(e))}`); }
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
@@ -409,7 +409,7 @@ async function openNamedLinks(event,selectedGuest){
       for(const [value,label] of [['all','All'],['yes','Accepted'],['no','Declined'],['maybe','Maybe'],['later','Later'],['unanswered','Unanswered']]){const option=document.createElement('option');option.value=value;option.textContent=label+' ('+guests.filter(guest=>matches(guest,value)).length+')';filter.append(option);}filter.value=selection;
       const rows=[];let selectedButton;
       for(const guest of guests){
-      const count=guest.participants || 1,countLabel=guest.participantMode==='ask' || (!guest.participants && e.askParticipantCount) ? 'Guest chooses attendee count' : count+' '+(count===1?'attendee':'attendees')+(guest.participants ? guest.participantMode==='confirm' ? ' · Confirm count on acceptance' : ' · Guest can change count' : '');
+      const count=guest.participants || 1,askCount=guest.participantMode==='ask' || (!guest.participants && e.askParticipantCount),countLabel=askCount ? 'Guest chooses attendee count' : count+' '+(count===1?'attendee':'attendees'),countRule=!askCount && guest.participants ? guest.participantMode==='confirm' ? ' · Confirm count on acceptance' : guest.participantMode==='fixed' ? ' · Fixed count' : ' · Guest can change count' : '';
       const replyList=responses(guest),responseLabel=replyList.length>1 ? replyList.length+' responses' : {yes:'Accepted',no:'Declined',maybe:'Maybe',later:'Awaiting RSVP'}[replyList[0]?.status] || 'Not opened';
       const linkLabel=oneTimeInviteEnabled(e) ? guest.claimed ? 'Locked to one guest' : 'One-time link' : 'Reusable link';
       const text=inviteText(e,guest)+'\n\n'+guest.url,row=element('article','','panel invitation-entry'+(guest===selected?' invitation-selected':''));
@@ -418,7 +418,7 @@ async function openNamedLinks(event,selectedGuest){
       const copyLink=async()=>{try{await navigator.clipboard.writeText(guest.url);if(generation===invitationLinksGeneration)$('invitation-links-status').textContent='Link copied for '+guest.name+'.';}catch{if(generation!==invitationLinksGeneration)return;preview.open=true;linkText.focus();linkText.select();$('invitation-links-status').textContent='Could not copy. Select and copy the personal link shown for '+guest.name+'.';}};
       const copy=action(guest.name,copyInvite,'primary invitation-copy');copy.setAttribute('aria-label','Copy invitation for '+guest.name);
       const actions=element('div','','event-actions invitation-actions');actions.append(action('Share invite',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(guest.url)}&text=${encodeURIComponent(inviteText(e,guest))}`)),action('Copy invite',copyInvite),action('Copy link',copyLink));
-      row.append(copy,element('p',countLabel+' · '+responseLabel+' · '+linkLabel,'small muted'));
+      const invitationState=element('p','','small muted');invitationState.append(element(askCount?'span':'strong',countLabel),element('span',countRule+' · '+responseLabel+' · '+linkLabel));row.append(copy,invitationState);
       if(replyList.length){
         const replyDetails=element('details','','invitation-responses');replyDetails.open=replyList.length===1;
         replyDetails.append(element('summary',replyList.length>1 ? 'View '+replyList.length+' responses' : 'Response details'));

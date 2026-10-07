@@ -47,6 +47,19 @@ test('adding guests keeps prior tokens, attendee syntax, completed responses and
   assert.equal(byName.Jordan.participantMode,'ask');assert.equal(byName.Casey.participantMode,'confirm');assert.equal(byName.Casey.participants,4);assert.equal(byName.Morgan.participants,5);
 });
 
+test('adding guests preserves fixed invitation counts and links for existing and new guests',()=>{
+  const f=fixture('Alex = 2*\nSam = 3'),prior=structuredClone(f.e.invitees);
+  Object.assign(claimInvitation(f.e,f.token,2),{status:'yes',participants:9});
+  assert.deepEqual(f.add('Jordan = 4*'),{added:1});
+  for(const token of Object.keys(prior))assert.deepEqual(f.e.invitees[token],prior[token]);
+  const invites=managedInvitations(f.e,'ExampleBot'),alex=invites.find(g=>g.name==='Alex'),jordan=invites.find(g=>g.name==='Jordan');
+  assert.equal(alex.participantMode,'fixed');assert.equal(alex.participants,2);assert.equal(alex.responses[0].participants,2);
+  assert.equal(jordan.participantMode,'fixed');assert.equal(jordan.participants,4);
+  const saved=JSON.parse(JSON.stringify(f.e));
+  assert.equal(saved.invitees[f.token].participantMode,'fixed');assert.equal(saved.invitees[f.token].participants,2);
+  assert.deepEqual(f.add('Jordan = 4*'),{added:0,alreadyAdded:true});
+});
+
 test('add rejects duplicates and total guest limits atomically',()=>{
   const f=fixture(),before=structuredClone(f.e);
   for(const input of ['Alex','New\nNew','New = 11','New = 0','X'.repeat(101),''])assert.throws(()=>f.add(input));

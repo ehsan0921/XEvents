@@ -25,7 +25,8 @@ test('default attendee count appears on the invite and accepts without asking',a
   const f=fixture();await f.open();
   const invitation=f.calls.at(-1);
   assert.match(invitation.text,/Dear Alex,/);assert.match(invitation.text,/invited to Club dinner on/);assert.match(invitation.text,/reserved 2 places/);
-  assert.match(invitation.text,/Private club house/);assert.ok(buttons(invitation).some(b=>b.text==='Change number'));
+  assert.match(invitation.text,/Private club house/);assert.ok(buttons(invitation).some(b=>b.text==='2 people · Change'));
+  const bold=invitation.entities.find(entity=>entity.type==='bold');assert.equal(invitation.text.slice(bold.offset,bold.offset+bold.length),'2 places');
   await f.accept();assert.equal(f.e.guests[2].status,'yes');assert.equal(participantCount(f.e,f.e.guests[2]),2);assert.equal(f.data.sessions[2],undefined);
   assert.equal(f.calls.some(c=>/Confirm 2|How many people/.test(c.text || '')),false);
 });
@@ -34,7 +35,8 @@ test('changing the default before acceptance preserves an unanswered invite and 
   const f=fixture();await f.open();await f.group();
   await f.size(3);assert.equal(f.e.guests[2].status,'later');assert.equal(f.e.guests[2].participants,3);
   assert.equal(f.calls.some(c=>c.chat_id===1 && c.text?.includes('People:')),false);
-  await f.open();assert.match(f.calls.at(-1).text,/reserved 3 places/);await f.accept();assert.equal(f.e.guests[2].participants,3);
+  await f.open();assert.match(f.calls.at(-1).text,/reserved 3 places/);assert.ok(buttons(f.calls.at(-1)).some(b=>b.text==='3 people · Change'));await f.accept();assert.equal(f.e.guests[2].participants,3);
+  assert.ok(buttons(f.calls.at(-1)).some(b=>b.text==='3 people · Change'));
 });
 
 test('question mark explicitly asks for 1–10 even when the event group option is off',async()=>{
@@ -49,6 +51,7 @@ test('exclamation mark requires confirmation and allows choosing another count',
   for(const change of [false,true]){
     const f=fixture('Alex = 2!');await f.open();await f.accept();
     assert.equal(f.data.sessions[2].step,'participantConfirm');assert.equal(f.e.guests[2].status,'later');assert.match(f.calls.at(-1).text,/Confirm 2 people/);
+    assert.ok(buttons(f.calls.at(-1)).some(b=>b.text==='2 people · Change'));
     if(change){await f.confirm('change');assert.equal(f.data.sessions[2].step,'participants');await f.size(4);}
     else await f.confirm('yes');
     assert.equal(f.e.guests[2].status,'yes');assert.equal(f.e.guests[2].participants,change?4:2);assert.equal(f.data.sessions[2],undefined);
@@ -86,8 +89,46 @@ test('paid, processing, reported, checked-in and expired invitations cannot chan
     else g.payment={status:lock};
     await f.group();await f.cb(`size:${f.e.id}:8:forged`);
     assert.equal(g.participants,2,lock);assert.equal(g.ticket,ticket,lock);assert.equal(f.data.sessions[2],undefined,lock);
-    assert.equal(buttons(f.calls.at(-1)).some(b=>b.text==='Change number'),false,lock);
+    assert.equal(buttons(f.calls.at(-1)).some(b=>b.callback_data?.startsWith('group:')),false,lock);
   }
+});
+
+test('fixed personal counts accept directly and reject forged changes before and after RSVP',async()=>{
+  const f=fixture('Alex = 2*');await f.open();
+  assert.match(f.calls.at(-1).text,/reserved 2 places for you\. This count is fixed\./);
+  assert.equal(buttons(f.calls.at(-1)).some(b=>b.callback_data?.startsWith('group:')),false);
+  await f.group();assert.equal(f.data.sessions[2],undefined);assert.equal(f.e.guests[2].participants,2);
+  await f.accept();assert.equal(f.e.guests[2].status,'yes');assert.equal(f.data.sessions[2],undefined);
+  assert.equal(f.calls.some(call=>/How many people|Confirm 2/.test(call.text || '')),false);
+  const ticket=f.e.guests[2].ticket,version=f.e.guests[2].responseVersion;
+  assert.equal(buttons(f.calls.at(-1)).some(b=>b.callback_data?.startsWith('group:')),false);
+  await f.group();assert.equal(f.data.sessions[2],undefined);
+  f.data.sessions[2]={event:f.e.id,step:'participants',response:{...f.e.guests[2]},countOnly:true,countToken:'forged',baseVersion:version};
+  await f.size(9);assert.equal(f.e.guests[2].participants,2);assert.equal(f.e.guests[2].ticket,ticket);
+  f.data.sessions[2]={event:f.e.id,step:'participantConfirm',response:{...f.e.guests[2]},countToken:'forged',baseVersion:version};
+  await f.confirm('change');assert.equal(f.e.guests[2].participants,2);assert.equal(f.e.guests[2].responseVersion,version);
+  assert.equal(f.e.guests[2].ticket,ticket);
+});
+
+test('count buttons use singular for one person',async()=>{
+  const f=fixture('Alex = 1');await f.open();assert.ok(buttons(f.calls.at(-1)).some(b=>b.text==='1 person · Change'));
+});
+
+test('banner invitation bolds the count while keeping its address copyable with Unicode names',async()=>{
+  const f=fixture('🎉 Alex = 2*',{banner:'fake-banner',title:'🏏 Club dinner',description:'Come along!'});await f.open();
+  const call=f.calls.at(-1);assert.equal(call.method,'sendPhoto');
+  const bold=call.caption_entities.find(entity=>entity.type==='bold'),address=call.caption_entities.find(entity=>entity.type==='code');
+  assert.equal(call.caption.slice(bold.offset,bold.offset+bold.length),'2 places');
+  assert.equal(call.caption.slice(address.offset,address.offset+address.length),'Private club house');
+  assert.equal(call.parse_mode,undefined);
+});
+
+test('truncated banner captions never include out-of-range count entities',async()=>{
+  const f=fixture('Alex = 2*',{banner:'fake-banner',description:'x'.repeat(1100),responseDeadline:'2099-10-23T00:00:00Z'});await f.open();
+  const initial=f.bot.namedInvitationContent(f.e,f.e.guests[2],2).entities[0].offset;
+  f.e.title+='x'.repeat(950-initial);await f.bot.card(2,f.e);
+  const call=f.calls.at(-1);assert.equal(call.method,'sendPhoto');assert.equal(call.caption_entities?.some(entity=>entity.type==='bold') || false,false);
+  assert.match(call.caption,/Tap Full details/);assert.ok((call.caption_entities || []).every(entity=>entity.offset+entity.length<=940));
 });
 
 test('unpaid Stars invoices expire when group size changes and late payment is refunded',async()=>{

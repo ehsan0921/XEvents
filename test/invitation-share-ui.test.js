@@ -9,11 +9,20 @@ const pricing=source.slice(source.indexOf('function priceLabel('),source.indexOf
 const {invitationGuestLine,inviteText}=new Function('selectedZone',pricing+source.slice(start,end)+'\nreturn {invitationGuestLine,inviteText};')(()=> 'Europe/London');
 const event={title:'Club dinner',location:'Private club address',startsAt:'2099-10-24T08:00:00Z',timezone:'Australia/Sydney',inviteMessage:'Bring your team scarf.'};
 
-test('editing named guests preserves ask, confirmation, editable preset and default count syntax',()=>{
+test('editing named guests preserves ask, confirmation, editable, fixed and default count syntax',()=>{
   assert.equal(invitationGuestLine({name:'Alex',participantMode:'ask'}),'Alex = ?');
   assert.equal(invitationGuestLine({name:'Sam',participants:2,participantMode:'confirm'}),'Sam = 2!');
   assert.equal(invitationGuestLine({name:'Taylor',participants:2}),'Taylor = 2');
+  assert.equal(invitationGuestLine({name:'Jordan',participants:2,participantMode:'fixed'}),'Jordan = 2*');
   assert.equal(invitationGuestLine({name:'Casey'}),'Casey');
+});
+
+test('fixed-count shared invitations state the reserved places without formatting markup',()=>{
+  const text=inviteText(event,{name:'Alex',participants:2,participantMode:'fixed'});
+  assert.match(text,/Dear Alex,/);
+  assert.match(text,/Host has reserved 2 places for you\./);
+  assert.match(text,/This count is fixed\./);
+  assert.doesNotMatch(text,/choose how many|Change number|<strong>|<b>|\*\*/);
 });
 
 test('personal sharing greets the guest, uses event time, states places and preserves the custom message',()=>{

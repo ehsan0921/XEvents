@@ -41,7 +41,7 @@ Choose the workflow that fits the event:
 
 The host does not respond to their own event. Phone collection and comments start off for new events. When phone collection is off, the response flow never asks for a number. Hosts can enable either option when needed; profile contact details do not automatically become an RSVP phone response. Custom guest questions are no longer offered in the creation or response flow.
 
-Group-size selection uses buttons for 1–5 people and **More** for 6–10. Counts include the responding guest. A named invitation can instead ask for a count (`Alex = ?`), confirm a reserved count (`Alex = 2!`), or use a preset with a **Change number** action (`Alex = 2`). With no count setting, one response means one person.
+Group-size selection uses buttons for 1–5 people and **More** for 6–10. Counts include the responding guest. A named invitation can instead ask for a count (`Alex = ?`), confirm a reserved count (`Alex = 2!`), use an editable preset (`Alex = 2`), or fix the count with no guest changes (`Alex = 2*`). Editable count buttons show the current selection, such as **2 people · Change**, and invitations emphasize the reserved count in bold. With no count setting, one response means one person.
 
 **Respond later** keeps an unanswered named invitation in the pending list. The Pending button is hidden when none remain. After acceptance, guests see Change response and the extra actions enabled by the host. Declined and tentative responses do not gain accepted-guest actions. Hosts receive response notifications; guests receive approval/rejection notifications when ticket booking requires review.
 

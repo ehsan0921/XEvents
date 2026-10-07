@@ -27,11 +27,13 @@ export function buildInvitationCopy(bot,id,event,token){
   requireHost(event,id);
   const invite=validToken(token) && event.invitees?.[token];
   if(!invite)throw new InputError('This personal invitation is no longer available. Open the invitation list again.');
-  const message=(bot.namedInvitationText(event,{...invite,invitationToken:token},id,true)+(event.inviteMessage || '')).trim();
+  const guest={...invite,invitationToken:token};
+  const content=bot.namedInvitationContent ? bot.namedInvitationContent(event,guest,id,true) : {text:bot.namedInvitationText(event,guest,id,true),entities:[]};
+  const message=(content.text+(event.inviteMessage || '')).trim();
   const url=namedLink(event,token,bot.username),text=message+'\n\n'+url;
   const appUrl=guestAppUrl(bot,event,token);
   const button=Array.from(text).length<=256 ? {text:invite.name,copy_text:{text}} : appUrl ? {text:invite.name,web_app:{url:appUrl}} : {text:invite.name,callback_data:`invite-copy:${event.id}:${token}`};
-  return {message,text,url,button};
+  return {message,text,url,button,entities:content.entities};
 }
 
 export function buildInvitationLinksCard(bot,id,event,page=0){
@@ -71,7 +73,8 @@ export async function invitationCopyCard(bot,id,event,token){
   for(let start=0;start<copy.text.length;){
     let end=Math.min(start+3900,copy.text.length);
     if(end<copy.text.length && /[\uD800-\uDBFF]/.test(copy.text[end-1]) && /[\uDC00-\uDFFF]/.test(copy.text[end]))end--;
-    await bot.send(id,copy.text.slice(start,end),end===copy.text.length ? markup : undefined);
+    const entities=copy.entities.filter(entity=>entity.offset>=start && entity.offset+entity.length<=end).map(entity=>({...entity,offset:entity.offset-start}));
+    await bot.send(id,copy.text.slice(start,end),end===copy.text.length ? markup : undefined,entities.length ? entities : undefined);
     start=end;
   }
 }

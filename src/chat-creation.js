@@ -190,7 +190,7 @@ export async function chatCreationCallback(bot,q){
     if(action==='banner')return ask(bot,id,s,'chat-banner','Send a banner photo, or tap Skip.',true);
     if(action==='mode')return modeCard(bot,id,s);
     if(action==='tickets'){Object.assign(s.draft,{invitationMode:'tickets',oneTimeInvite:false});delete s.draft.invitees;return options(bot,id,s);}
-    if(action==='named')return ask(bot,id,s,'chat-guests','Guest names, one per line.\nAlex = ? asks how many; Sam = 2! confirms two; Taylor = 2 reserves two. Max 10 per invitation.');
+    if(action==='named')return ask(bot,id,s,'chat-guests','Guest names, one per line.\nAlex = ? asks; Sam = 2! confirms; Taylor = 2 allows changes; Casey = 2* fixes two places. Max 10.');
     if(action==='permissions')return guestOptions(bot,id,s);
     if(action==='toggle'){
       const d=s.draft,named=invitationMode(d)==='named';

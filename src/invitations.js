@@ -1,6 +1,6 @@
 import {randomBytes} from 'node:crypto';
 import {InputError} from './time.js';
-import {responsesClosed,invitationParticipants} from './permissions.js';
+import {responsesClosed,invitationParticipants,invitationParticipantMode} from './permissions.js';
 export {invitationParticipants,invitationParticipantMode} from './permissions.js';
 
 export const invitationMode=e=>e.invitationMode || 'legacy';
@@ -70,11 +70,11 @@ export function invitationSettings(input,e={}) {
   if(typeof input.guestNames!=='string' || input.guestNames.length>10000)throw new InputError('Enter guest names, one per line, up to 10,000 characters.');
   const entries=input.guestNames.split('\n').map(n=>n.trim()).filter(Boolean).map(line=>{
     if(!line.includes('='))return {name:line};
-    const match=line.match(/^([^=]*?)\s*=\s*(?:(\?)|(\d+)\s*(!)?)\s*$/),participants=Number(match?.[3]);
-    if(!match || !match[1].trim() || (!match[2] && (!Number.isSafeInteger(participants) || participants<1 || participants>10)))throw new InputError('Use Name = 1–10, Name = ?, or Name = 2! to set attendee choices.');
+    const match=line.match(/^([^=]*?)\s*=\s*(?:(\?)|(\d+)\s*([!*])?)\s*$/),participants=Number(match?.[3]);
+    if(!match || !match[1].trim() || (!match[2] && (!Number.isSafeInteger(participants) || participants<1 || participants>10)))throw new InputError('Use Name = 1–10, Name = ?, Name = 2!, or Name = 2* to set attendee choices.');
     const name=match[1].trim();
     if(match[2])return {name,participantMode:'ask'};
-    return {name,participants,...(match[4] ? {participantMode:'confirm'} : {})};
+    return {name,participants,...(match[4] ? {participantMode:match[4]==='*'?'fixed':'confirm'} : {})};
   });
   const names=entries.map(g=>g.name);
   const emptyExisting=!!e.id && invitationMode(e)==='named' && !Object.keys(e.invitees || {}).length;
@@ -107,6 +107,6 @@ export function claimInvitation(e,token,id) {
   e.guests[id].name=invite.name;
   const participants=invitationParticipants(e,e.guests[id]);
   const selected=e.guests[id].participants;
-  if(participants!==null && (!Number.isSafeInteger(selected) || selected<1 || selected>10))e.guests[id].participants=participants;
+  if(participants!==null && (invitationParticipantMode(e,e.guests[id])==='fixed' || !Number.isSafeInteger(selected) || selected<1 || selected>10))e.guests[id].participants=participants;
   return e.guests[id];
 }

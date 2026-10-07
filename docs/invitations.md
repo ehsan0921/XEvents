@@ -57,17 +57,19 @@ Enter one guest per line, with up to 100 unique names. Each name can contain up 
 Alex = ?
 Sam = 2!
 Taylor = 2
+Jordan = 2*
 Casey
 ```
 
 | Entry | What happens when the guest accepts |
 | --- | --- |
 | `Alex = ?` | Alex is asked how many people are coming. |
-| `Sam = 2!` | Sam confirms two people or chooses Change number. |
-| `Taylor = 2` | Two attendees are used immediately; Change number is available. |
+| `Sam = 2!` | Sam confirms two people or chooses a different count. |
+| `Taylor = 2` | Two attendees are used immediately; the count can be changed. |
+| `Jordan = 2*` | Exactly two attendees; the count is fixed and cannot be changed by the guest. |
 | `Casey` | One attendee; no group-size question. |
 
-Counts include the invited guest and must be whole numbers from **1 to 10**. The picker shows 1–5, with **More** for 6–10. Named lists have no general “ask how many” or organiser approval setting; each name determines its own count behaviour.
+Counts include the invited guest and must be whole numbers from **1 to 10**. The picker shows 1–5, with **More** for 6–10. Editable invitations show the current count on the button, for example **2 people · Change**. A fixed `*` invitation skips the count question and has no count-change button, before or after acceptance. Named lists have no general “ask how many” or organiser approval setting; each name determines its own count behaviour.
 
 A guest's selected count survives reopening the invitation. Editable counts can be changed before or after acceptance while the response deadline remains open. After acceptance, changing the count updates the attendance total and replaces the old ticket code. Count changes are blocked after check-in, while a manual payment report needs review, or while payment/refund processing or a paid booking is active. An unpaid Stars invoice becomes invalid if the count changes; see [payment safeguards](payments.md#changes-and-refunds).
 
@@ -87,7 +89,7 @@ Editing loads the latest event details, including the invitation message, guest 
 
 ## Responding and returning later
 
-A named invitation initially offers **Accept**, **Reject**, **Maybe** and **Respond later**, with any response deadline shown in the message. A plain `Name = N` invitation also offers **Change number**. After acceptance, the RSVP choices are replaced by **Change response** and the enabled event tools, such as guest lists, reminders or shared media.
+A named invitation initially offers **Accept**, **Reject**, **Maybe** and **Respond later**, with any response deadline shown in the message. The reserved attendee count is shown in bold. A plain `Name = N` invitation also offers a count button such as **2 people · Change**; the label follows the guest's current selection. `Name = N*` keeps the reserved count fixed and omits that button. After acceptance, the RSVP choices are replaced by **Change response** and the enabled event tools, such as guest lists, reminders or shared media.
 
 With phone and comments off, Accept, Reject and Maybe save without those questions. Accept may still ask for or confirm a count when the name uses `?` or `!`. If phone collection is off, the bot skips the phone step entirely. If enabled, guests can share their own Telegram contact, type a number or skip it. Comments are optional when enabled. Custom guest questions are no longer prompted.
 

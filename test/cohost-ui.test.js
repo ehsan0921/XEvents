@@ -41,8 +41,8 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
       if(invitationError)return response({error:invitationError.message},invitationError.status || 400);
       let invitees=[...event.invitees];
       if(path.endsWith('/add'))for(const line of body.guestNames.split('\n').filter(line=>line.trim())){
-        const match=line.match(/^\s*(.*?)\s*(?:=\s*(\?|\d+!?))?\s*$/),rule=match[2],guestToken=(++token).toString(16).padStart(32,'0');
-        invitees.push({name:match[1],token:guestToken,url:'https://t.me/test?start=i_'+event.id+'_'+guestToken,participants:rule && rule!=='?' ? parseInt(rule,10) : null,participantMode:rule==='?' ? 'ask' : rule?.endsWith('!') ? 'confirm' : null,claimed:false,status:null,responses:[],responseCounts:{yes:0,no:0,maybe:0,later:0}});
+        const match=line.match(/^\s*(.*?)\s*(?:=\s*(\?|\d+[!*]?))?\s*$/),rule=match[2],guestToken=(++token).toString(16).padStart(32,'0');
+        invitees.push({name:match[1],token:guestToken,url:'https://t.me/test?start=i_'+event.id+'_'+guestToken,participants:rule && rule!=='?' ? parseInt(rule,10) : null,participantMode:rule==='?' ? 'ask' : rule?.endsWith('!') ? 'confirm' : rule?.endsWith('*') ? 'fixed' : null,claimed:false,status:null,responses:[],responseCounts:{yes:0,no:0,maybe:0,later:0}});
       }
       else invitees=invitees.filter(guest=>guest.token!==body.token);
       event={...event,invitees,invitationsVersion:(++revision).toString(16).padStart(16,'0')};
@@ -150,20 +150,20 @@ test('claimed co-host without a username shows an explicit fallback and owner pa
 });
 
 test('named edits hide general count and approval controls, retain per-name rules and preserve private locations',async()=>{
-  const f=await harness(eventFixture({requireApproval:true,askParticipantCount:true,hideLocation:false,invitees:[{name:'Alex',participants:2,participantMode:'confirm'},{name:'Sam',participantMode:'ask'}]}));
+  const f=await harness(eventFixture({requireApproval:true,askParticipantCount:true,hideLocation:false,invitees:[{name:'Alex',participants:2,participantMode:'confirm'},{name:'Sam',participantMode:'ask'},{name:'Jordan',participants:4,participantMode:'fixed'}]}));
   await f.findButton('event-list','Edit event').onclick();
   for(const id of ['require-approval-option','ask-participant-count-option'])assert.equal(f.ids.get(id).hidden,true);
   for(const id of ['require-approval','ask-participant-count']){assert.equal(f.ids.get(id).checked,false);assert.equal(f.ids.get(id).disabled,true);}
   assert.equal(f.ids.get('hide-location').checked,true);assert.equal(f.ids.get('hide-location').disabled,false);
   assert.equal(f.ids.get('one-time-invite').checked,true);assert.match(f.ids.get('one-time-invite-note').textContent,/Respond later does not lock/);
-  assert.equal(f.ids.get('guest-names').value,'Alex = 2!\nSam = ?');
+  assert.equal(f.ids.get('guest-names').value,'Alex = 2!\nSam = ?\nJordan = 4*');
   for(const id of ['extra-details','timing-options','stars-panel','guest-permissions','media-options'])assert.equal(f.ids.get(id).open,false);
   // Even stale UI state cannot re-enable the two general options in the named payload.
   f.ids.get('require-approval').checked=true;f.ids.get('ask-participant-count').checked=true;
   await f.ids.get('event-form').onsubmit({preventDefault(){}});
   const saved=f.calls.find(call=>call.path.endsWith('/schedule')).body;
   assert.equal(saved.requireApproval,false);assert.equal(saved.askParticipantCount,false);assert.equal(saved.hideLocation,true);assert.equal(saved.oneTimeInvite,true);
-  assert.equal(saved.guestNames,'Alex = 2!\nSam = ?');assert.equal(saved.starPrice,100);
+  assert.equal(saved.guestNames,'Alex = 2!\nSam = ?\nJordan = 4*');assert.equal(saved.starPrice,100);
 });
 
 test('new forms default to reusable tickets and one-time named links while respecting an unchecked choice',async()=>{
@@ -206,10 +206,10 @@ test('collapsed settings expand for invalid required fields and payment errors',
 test('personal invitation rows distinguish an unanswered open link from a locked RSVP and a reusable link',async()=>{
   const f=await harness(eventFixture({oneTimeInvite:true,invitees:[{name:'Alex',status:'later',claimed:false,url:'https://t.me/test?start=alex'},{name:'Sam',status:'yes',claimed:true,url:'https://t.me/test?start=sam'}]}));
   await f.findButton('event-list','Guest invitations').onclick();
-  let rows=f.descendants(f.ids.get('invitation-links-list')).filter(node=>node.tag==='p').map(node=>node.textContent).join('\n');
+  let rows=f.descendants(f.ids.get('invitation-links-list')).filter(node=>['p','span'].includes(node.tag)).map(node=>node.textContent).join('\n');
   assert.match(rows,/Awaiting RSVP · One-time link/);assert.match(rows,/Accepted · Locked to one guest/);assert.doesNotMatch(rows,/Not opened/);
   f.setEvent({...f.getEvent(),oneTimeInvite:false});await f.findButton('event-list','Guest invitations').onclick();
-  rows=f.descendants(f.ids.get('invitation-links-list')).filter(node=>node.tag==='p').map(node=>node.textContent).join('\n');
+  rows=f.descendants(f.ids.get('invitation-links-list')).filter(node=>['p','span'].includes(node.tag)).map(node=>node.textContent).join('\n');
   assert.match(rows,/Accepted · Reusable link/);assert.match(f.ids.get('invitation-links-note').textContent,/more than one guest/);
 });
 
@@ -361,12 +361,15 @@ test('owner and co-host can append named guests with count rules without resetti
     await f.findButton('event-list','Guest invitations').onclick();
     f.ids.get('invitation-links-search').value='casey';f.ids.get('invitation-links-search').oninput();
     f.ids.get('invitation-links-filter').value='unanswered';f.ids.get('invitation-links-filter').onchange();
-    f.ids.get('invitation-add-names').value='  Jamie = ?\nCasey = 2!  ';
+    f.ids.get('invitation-add-names').value='  Jamie = ?\nCasey = 2!\nJordan = 2*\nTaylor = 3  ';
     await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});
     const request=f.calls.find(call=>call.path.endsWith('/invitations/add'));
-    assert.equal(request.body.guestNames.trim(),'Jamie = ?\nCasey = 2!');assert.equal(request.body.version,'0000000000000000');assert.match(request.body.requestId,/^[a-f0-9-]{36}$/i);
-    assert.deepEqual(f.getEvent().invitees[0],existing);assert.equal(f.getEvent().invitees.length,3);
+    assert.equal(request.body.guestNames.trim(),'Jamie = ?\nCasey = 2!\nJordan = 2*\nTaylor = 3');assert.equal(request.body.version,'0000000000000000');assert.match(request.body.requestId,/^[a-f0-9-]{36}$/i);
+    assert.deepEqual(f.getEvent().invitees[0],existing);assert.equal(f.getEvent().invitees.length,5);
     assert.equal(f.getEvent().invitees[1].participantMode,'ask');assert.equal(f.getEvent().invitees[2].participantMode,'confirm');assert.equal(f.getEvent().invitees[2].participants,2);
+    assert.equal(f.getEvent().invitees[3].participantMode,'fixed');assert.equal(f.getEvent().invitees[3].participants,2);assert.equal(f.getEvent().invitees[4].participants,3);assert.equal(f.getEvent().invitees[4].participantMode,null);
+    const fixed=invitationRow(f,'Jordan');assert.ok(f.descendants(fixed).some(node=>node.tag==='strong' && node.textContent==='2 attendees'));assert.match(textOf(f,fixed),/Fixed count/);assert.doesNotMatch(textOf(f,fixed),/Guest can change count/);
+    await rowAction(f,fixed,'Copy invite').onclick();assert.match(f.copied.at(-1),/Host has reserved 2 places for you\. This count is fixed\./);assert.doesNotMatch(f.copied.at(-1),/<strong>|<b>|\*\*/);
     assert.equal(f.ids.get('invitation-add-names').value,'');assert.equal(f.ids.get('invitation-links-search').value,'casey');assert.equal(f.ids.get('invitation-links-filter').value,'unanswered');assert.deepEqual(visibleInvitations(f),['Casey']);
     await rowAction(f,invitationRow(f,'Casey'),'Copy link').onclick();assert.equal(f.copied.at(-1),f.getEvent().invitees[2].url);
     f.ids.get('invitation-add-names').value='Lee';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});

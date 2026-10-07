@@ -135,3 +135,16 @@ test('empty named lists show a concise empty state and retain host navigation',(
   assert.match(card.text,/No named invitations yet/);assert.equal(guestButtons(card).length,0);
   assert.deepEqual(card.reply_markup.inline_keyboard,[[{text:'Back to organiser tools',callback_data:`h:${f.event.id}`}]]);
 });
+
+test('native invitation previews bold fixed places without adding markup to clipboard or share text',async()=>{
+  const f=fixture();f.event.invitees[f.token]={name:'🎉 Alex',participants:2,participantMode:'fixed'};
+  f.event.title='🏏 Club dinner';f.event.inviteMessage='Please come!';
+  const calls=[],real=new Bot({data:{events:{[f.event.id]:f.event},sessions:{},preferences:{}}},async(method,params)=>{calls.push({method,...params});return {};},'ExampleBot');
+  const copy=buildInvitationCopy(real,1,f.event,f.token);await invitationCopyCard(real,1,f.event,f.token);
+  const call=calls.at(-1),bold=call.entities.find(entity=>entity.type==='bold');
+  assert.equal(call.text.slice(bold.offset,bold.offset+bold.length),'2 places');
+  assert.match(copy.text,/reserved 2 places for you\. This count is fixed\./);assert.doesNotMatch(copy.text,/<b>|\*\*|Alex = 2\*/);
+  assert.equal(call.text,copy.text);
+  const share=call.reply_markup.inline_keyboard.flat().find(button=>button.url);
+  assert.equal(new URL(share.url).searchParams.get('text'),copy.message);
+});

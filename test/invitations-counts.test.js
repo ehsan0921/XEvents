@@ -64,32 +64,32 @@ test('phone collection requires an explicit organiser opt-in for every invitatio
   }
 });
 
-test('attendee syntax distinguishes always ask, confirm proposal, editable preset and event defaults',()=>{
-  const e=event('Alex = ?\nBea = 2!\nChris = 4\nDana'),tokens=Object.keys(e.invitees);
+test('attendee syntax distinguishes always ask, confirm proposal, editable preset, fixed count and event defaults',()=>{
+  const e=event('Alex = ?\nBea = 2!\nChris = 4\nDana\nEli = 2*'),tokens=Object.keys(e.invitees);
   const invites=Object.values(e.invitees);
   assert.deepEqual(invites.map(g=>[g.name,g.participantMode,g.participants]),[
-    ['Alex','ask',undefined],['Bea','confirm',2],['Chris',undefined,4],['Dana',undefined,undefined]
+    ['Alex','ask',undefined],['Bea','confirm',2],['Chris',undefined,4],['Dana',undefined,undefined],['Eli','fixed',2]
   ]);
   const guests=tokens.map((token,index)=>claimInvitation(e,token,index+2));
-  assert.deepEqual(guests.map(g=>invitationParticipantMode(e,g)),['ask','confirm','preset','default']);
-  assert.deepEqual(guests.map(g=>invitationParticipants(e,g)),[null,2,4,null]);
-  assert.deepEqual(guests.map(g=>g.participants),[undefined,2,4,undefined]);
-  assert.deepEqual(guests.map(g=>participantCount(e,g)),[1,2,4,1]);
+  assert.deepEqual(guests.map(g=>invitationParticipantMode(e,g)),['ask','confirm','preset','default','fixed']);
+  assert.deepEqual(guests.map(g=>invitationParticipants(e,g)),[null,2,4,null,2]);
+  assert.deepEqual(guests.map(g=>g.participants),[undefined,2,4,undefined,2]);
+  assert.deepEqual(guests.map(g=>participantCount(e,g)),[1,2,4,1,2]);
 });
 
 test('attendee syntax supports whitespace and rejects malformed asks, confirmations and unsafe numbers',()=>{
-  const e=event('  Alex Smith  =  ?  \n  Bea   =  10  !  ');
+  const e=event('  Alex Smith  =  ?  \n  Bea   =  10  !  \n  Chris  =  1  *  \n  Dana=10*');
   assert.deepEqual(Object.values(e.invitees).map(g=>[g.name,g.participantMode,g.participants]),[
-    ['Alex Smith','ask',undefined],['Bea','confirm',10]
+    ['Alex Smith','ask',undefined],['Bea','confirm',10],['Chris','fixed',1],['Dana','fixed',10]
   ]);
-  for(const guestNames of ['Alex = 0!','Alex = 11!','Alex = 1.5!','Alex = !','Alex = 2!!','Alex = ?!','Alex = ??','Alex = ?2','Alex = 2?','Alex = 9007199254740992','Alex = ? = 2',' = ?'])assert.throws(()=>invitationSettings({invitationMode:'named',guestNames}),/attendee choices/);
-  for(const guestNames of ['Alex = ?\nAlex = 2!','Alex\nAlex = ?'])assert.throws(()=>invitationSettings({invitationMode:'named',guestNames}),/unique guest names/);
+  for(const guestNames of ['Alex = 0!','Alex = 11!','Alex = 1.5!','Alex = !','Alex = 2!!','Alex = ?!','Alex = ??','Alex = ?2','Alex = 2?','Alex = 9007199254740992','Alex = ? = 2',' = ?','Alex = 0*','Alex = 11*','Alex = 1.5*','Alex = *','Alex = ?*','Alex = 2**','Alex = 2!*','Alex = 2*!'])assert.throws(()=>invitationSettings({invitationMode:'named',guestNames}),/attendee choices/);
+  for(const guestNames of ['Alex = ?\nAlex = 2!','Alex\nAlex = ?','Alex = 2\nAlex = 2*'])assert.throws(()=>invitationSettings({invitationMode:'named',guestNames}),/unique guest names/);
 });
 
 test('unclaimed invitations retain tokens while changing mode and clear obsolete fields',()=>{
   const e=event('Alex = 3'),token=Object.keys(e.invitees)[0];
   for(const [guestNames,participantMode,participants] of [
-    ['Alex = ?','ask',undefined],['Alex = 2!','confirm',2],['Alex = 4',undefined,4],['Alex',undefined,undefined]
+    ['Alex = ?','ask',undefined],['Alex = 2!','confirm',2],['Alex = 2*','fixed',2],['Alex = 4',undefined,4],['Alex',undefined,undefined]
   ]){
     Object.assign(e,invitationSettings({guestNames},e));
     assert.deepEqual(Object.keys(e.invitees),[token]);
@@ -98,7 +98,7 @@ test('unclaimed invitations retain tokens while changing mode and clear obsolete
 });
 
 test('claimed invitations lock both proposed count and mode while unchanged settings preserve references',()=>{
-  const variants=['Alex','Alex = ?','Alex = 2!','Alex = 2','Alex = 3'];
+  const variants=['Alex','Alex = ?','Alex = 2!','Alex = 2','Alex = 3','Alex = 2*','Alex = 3*'];
   for(const guestNames of variants){
     const e=event(guestNames),token=Object.keys(e.invitees)[0];claimInvitation(e,token,2);
     const unchanged=invitationSettings({guestNames},e);
@@ -149,5 +149,36 @@ test('old plain presets remain editable by guests while bare and non-named invit
   for(const invitationMode of ['legacy','tickets',undefined]){
     const other={...e,invitationMode};assert.equal(invitationParticipantMode(other,guest),'default');assert.equal(invitationParticipants(other,guest),null);
     assert.equal(participantCount(other,guest),1);other.askParticipantCount=true;assert.equal(participantCount(other,guest),4);
+  }
+});
+
+test('fixed invitations use the organiser count despite a stale or tampered guest selection',()=>{
+  for(const count of [1,2,10]){
+    const e=event(`Alex = ${count}*`),token=Object.keys(e.invitees)[0],guest=claimInvitation(e,token,2);
+    guest.status='yes';e.askParticipantCount=true;
+    for(const selected of [undefined,null,0,1,3,10,11,'4',NaN,Infinity]){
+      guest.participants=selected;
+      assert.equal(participantCount(e,guest),count);
+      assert.equal(responseCounts(e).participants,count);
+    }
+    consumeInvitation(e,2,guest);
+    assert.equal(claimInvitation(e,token,2),guest);
+    assert.equal(guest.participants,count);assert.equal(guest.status,'yes');
+    assert.equal(invitationParticipantMode(e,guest),'fixed');
+  }
+});
+
+test('fixed invitation mode survives serialization and reopens with its assigned count',()=>{
+  const e=event('Alex = 2*'),token=Object.keys(e.invitees)[0];
+  claimInvitation(e,token,2);
+  const restored=JSON.parse(JSON.stringify(e));
+  const unchanged=invitationSettings({guestNames:'Alex = 2*'},restored);
+  assert.equal(unchanged.invitees[token],restored.invitees[token]);
+  assert.equal(claimInvitation(restored,token,2).participants,2);
+  assert.equal(invitationParticipantMode(restored,restored.guests[2]),'fixed');
+  for(const invitationMode of ['tickets','legacy',undefined]){
+    const other={...restored,invitationMode};
+    assert.equal(invitationParticipantMode(other,restored.guests[2]),'default');
+    assert.equal(invitationParticipants(other,restored.guests[2]),null);
   }
 });

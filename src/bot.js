@@ -1,5 +1,5 @@
 import {paymentMethod,paidEvent} from './event-payment.js';
-import {invitationMode,claimInvitation,namedLink,invitationSettings,invitationParticipants} from './invitations.js';
+import {invitationMode,claimInvitation,namedLink,invitationSettings,invitationParticipantMode} from './invitations.js';
 import {manualInstructions,manualReport,manualConfirm} from './manual-payment.js';
 import { priceText } from './pricing.js';
 import { randomBytes } from 'node:crypto';
@@ -38,11 +38,40 @@ export class Bot {
   }
   prompt(id, text) { return this.send(id, text, this.inputKeyboard(this.db.sessions[id])); }
   participantPicker(id,e,more=false) {
+    const s=this.db.sessions[id];
+    if(!s || s.event!==e.id)return this.card(id,e);
+    s.countToken ||= randomBytes(4).toString('hex');
+    s.baseVersion ??= e.guests[id]?.responseVersion || 0;
     const start=more?6:1;
     return this.send(id,'How many people? Include yourself. Max 10.',keyboard(
-      Array.from({length:5},(_,i)=>button(String(start+i),`size:${e.id}:${start+i}`)),
-      [button(more?'1–5':'More · 6–10',`size:${e.id}:${more?'first':'more'}`)],
+      Array.from({length:5},(_,i)=>button(String(start+i),`size:${e.id}:${start+i}:${s.countToken}`)),
+      [button(more?'1–5':'More · 6–10',`size:${e.id}:${more?'first':'more'}:${s.countToken}`)],
       [button('Cancel',`v:${e.id}`)]));
+  }
+  participantConfirmation(id,e,s) {
+    s.step='participantConfirm';s.countToken ||= randomBytes(4).toString('hex');
+    s.baseVersion ??= e.guests[id]?.responseVersion || 0;
+    const count=participantCount(e,s.response);
+    return this.send(id,`Confirm ${count} ${count===1?'person':'people'} attending?`,keyboard(
+      [button(`Yes, ${count}`,`count-confirm:${e.id}:yes:${s.countToken}`),button('Change number',`count-confirm:${e.id}:change:${s.countToken}`)],
+      [button('Cancel',`v:${e.id}`)]));
+  }
+  countEditable(e,id) {
+    const g=e?.guests[id];
+    return !!(g && e.owner!==id && !e.cancelled && !responsesClosed(e) && !['reported','paid','processing','refund_pending','refund_failed'].includes(g.payment?.status) && !e.checkIns?.[g.ticket]);
+  }
+  async chooseParticipants(id,e,s,count) {
+    if(!this.countEditable(e,id) || s.baseVersion!==(e.guests[id]?.responseVersion || 0)){this.session(id);return this.card(id,e);}
+    if(!Number.isSafeInteger(count) || count<1 || count>10)return this.participantPicker(id,e);
+    const explicit=invitationParticipantMode(e,s.response)!=='default';
+    s.response.participants=explicit || e.askParticipantCount===true ? count : 1;
+    if(s.countOnly){
+      if(s.response.participants===participantCount(e,e.guests[id])){this.session(id);return this.card(id,e);}
+      if(s.response.status==='yes')return this.saveResponse(id,e,s.response);
+      e.guests[id]={...e.guests[id],participants:s.response.participants,responseVersion:(e.guests[id].responseVersion || 0)+1};
+      this.session(id);return this.card(id,e);
+    }
+    return this.afterIdentity(id,e,s);
   }
   hasPending(id) { return Object.values(this.db.events).some(e => e.owner !== id && invitationMode(e)!=='tickets' && !e.cancelled && e.guests[id]?.status === 'later'); }
   home(id, text = 'Welcome to XEvents 🎉\nOpen the app to create events, or tap My events to see your invitations.') { return this.send(id, text, homeKeyboard(this.appUrl)); }
@@ -102,23 +131,35 @@ export class Bot {
     if(['paid','processing','refund_pending','refund_failed'].includes(e.guests[id]?.payment?.status))return this.card(id,e);
     const response={...(e.guests[id] || {name:name(from),phone:''}),answers:[],status:'yes'};
     const personal=invitationMode(e)==='named';
-    const preset=invitationParticipants(e,response);
-    const step=personal ? e.askParticipantCount && preset===null ? 'participants':'phone' : 'name';
-    if(personal)response.participants=preset ?? 1;
+    const countMode=invitationParticipantMode(e,response);
+    const step=personal ? countMode==='ask' || (countMode==='default' && e.askParticipantCount) ? 'participants' : countMode==='confirm' ? 'participantConfirm' : 'phone' : 'name';
+    if(personal)response.participants=participantCount(e,response);
     this.session(id,{event:e.id,step,response});
+    if(step==='participantConfirm')return this.participantConfirmation(id,e,this.db.sessions[id]);
     if(personal && step!=='participants')return this.afterIdentity(id,e,this.db.sessions[id]);
     if(step==='participants')return this.participantPicker(id,e);
     return this.prompt(id,personal ? 'Share your phone number, or tap Skip.' : 'Name for your ticket? Type it or use your Telegram name.');
   }
+  namedInvitationText(e,g,id,sharing=false) {
+    const visible=sharing ? !(e.hideLocation || e.requireApproval || paidEvent(e)) : canSeeLocation(e,id);
+    const location=visible ? e.location || 'The organiser will share the location.' : paidEvent(e) ? 'Location will be available after approval and payment.' : e.requireApproval ? 'Location will be available after your response is approved.' : 'Location will be available after you accept.';
+    const count=participantCount(e,g),mode=invitationParticipantMode(e,g);
+    const deadline=e.responseDeadline ? '\n⏰ Respond by: '+eventTime({startsAt:e.responseDeadline,timezone:e.deadlineTimezone || e.timezone || 'UTC'},this.db.preferences[id]?.timezone)+(responsesClosed(e) ? '\nResponses closed — deadline passed.' : '') : '';
+    return `Dear ${g.name},\n\nYou are invited to ${e.title} on ${this.time(e,id)}.\n📍 ${location}\n\n${mode==='ask' || mode==='default' && e.askParticipantCount ? 'Choose how many people will attend when you accept (1–10).' : `The host has reserved ${count} ${count===1?'place':'places'} for you.`}\nPlease respond below.${deadline}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n`;
+  }
   async personalLinks(id,e){
     if(e.owner!==id)return this.send(id,'Only the organiser can see personal invitation links.');
-    for(const [token,g] of Object.entries(e.invitees || {}))await this.send(id,`Invitation for ${g.name}${g.claimedBy ? ' — linked to a Telegram account' : ''}\n${namedLink(e,token,this.username)}\nThis link belongs to one guest and binds to the first Telegram account that opens it.`,keyboard([{text:'Share this invitation',url:`https://t.me/share/url?url=${encodeURIComponent(namedLink(e,token,this.username))}&text=${encodeURIComponent([`Invitation for ${g.name}: ${e.title}`,g.participants ? `People: ${g.participants}` : '',e.inviteMessage].filter(Boolean).join('\n\n'))}`} ]));
+    for(const [token,g] of Object.entries(e.invitees || {})){
+      const text=this.namedInvitationText(e,{...g,invitationToken:token},id,true)+(e.inviteMessage || '');
+      await this.send(id,`${text.trim()}\n\n${namedLink(e,token,this.username)}${g.claimedBy ? '\nLinked to a Telegram account.' : ''}`,keyboard([{text:'Share this invitation',url:`https://t.me/share/url?url=${encodeURIComponent(namedLink(e,token,this.username))}&text=${encodeURIComponent(text.trim())}`} ]));
+    }
   }
   async saveResponse(id, e, response) {
     if(e.guests[id]?.payment?.status==='reported')return this.send(id,'The organiser is reviewing your payment. Ask them to resolve or clear the report before changing your response.');
     if (['paid','processing','refund_pending','refund_failed'].includes(e.guests[id]?.payment?.status)) return this.send(id,'Your paid or processing booking cannot be changed. Contact /paysupport to request a refund first.');
     if (responsesClosed(e)) { this.session(id); await this.home(id, 'The response deadline has passed. Your unfinished response was not saved.'); return this.card(id, e); }
     const previous=e.guests[id];
+    if(e.checkIns?.[previous?.ticket]){this.session(id);return this.send(id,'You are already checked in. Contact the organiser to change your invitation.',keyboard([button('Back to event',`v:${e.id}`)]));}
     if(previous?.status===response.status && response.status==='yes' && previous.approval==='approved' && JSON.stringify(previous.answers || [])===JSON.stringify(response.answers || []) && previous.name===response.name && previous.phone===response.phone && previous.comment===response.comment && participantCount(e,previous)===participantCount(e,response)){this.session(id);return this.card(id,e);}
     response.responseVersion=(previous?.responseVersion || 0)+1;
     if (response.status === 'yes') {
@@ -135,7 +176,7 @@ export class Bot {
     return this.card(id, e);
   }
   async finishCreation(id, s) {
-    if(invitationMode(s.draft)==='named' && !Object.keys(s.draft.invitees || {}).length){s.step='guestNames';return this.prompt(id,'Guest names, one per line. Add = 3 for three attendees (1–10). Each guest gets their own link.');}
+    if(invitationMode(s.draft)==='named' && !Object.keys(s.draft.invitees || {}).length){s.step='guestNames';return this.prompt(id,'Guest names, one per line. Alex = ? asks how many; Alex = 2! confirms two; Alex = 2 defaults to two. Max 10 people.');}
     const e = { ...s.draft, permissions: permissions(s.draft), id: randomBytes(8).toString('hex'), owner: id, guests: {}, media: [], cancelled: false, createdAt: new Date().toISOString() };
     this.db.events[e.id] = e; this.session(id); await this.home(id, '🎉 Your event is ready! Tap Invite people below to share it.'); return this.card(id, e);
   }
@@ -152,6 +193,7 @@ export class Bot {
       [button('✅ Accept', `r:${e.id}:yes:${e.guests[id]?.responseVersion || 0}`), button('❌ Reject', `r:${e.id}:no:${e.guests[id]?.responseVersion || 0}`)],
       [button('🤔 Maybe', `r:${e.id}:maybe:${e.guests[id]?.responseVersion || 0}`), button('⏳ Respond later', `r:${e.id}:later:${e.guests[id]?.responseVersion || 0}`)]
     ];
+    if(mode==='named' && this.countEditable(e,id) && (invitationParticipantMode(e,e.guests[id])==='preset' || accepted && invitationParticipantMode(e,e.guests[id])!=='default'))rows.push([button('Change number',`group:${e.id}:edit:${e.guests[id]?.responseVersion || 0}`)]);
     const extras = [];
     if (!e.cancelled && (host || accepted)) {
       if (host) extras.push(...(mode==='named' ? [this.appUrl ? this.miniButton('Personal invitations',`?invitations=${e.id}`) : button('Personal invitations',`invite-links:${e.id}`)] : [{ text: mode==='tickets' ? 'Share ticket link' : '📨 Invite people', url: `https://t.me/share/url?url=${encodeURIComponent(this.link(e))}&text=${encodeURIComponent([e.inviteMessage,e.title].filter(Boolean).join('\n\n'))}` }]), button('⚙️ Manage', `h:${e.id}`));
@@ -176,7 +218,7 @@ export class Bot {
     let text = `🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n\n🗓 ${this.time(e, id)}\n📍 ${location}\n\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n${[e.inviteMessage,e.description].filter(Boolean).join('\n\n')}\n\n${host ? 'You’re the organiser.\n\n' : mode==='named' ? 'Personal invitation for '+e.guests[id].name+'\n\n'+(accepted ? '✅ Accepted\n\n' : '') : mode==='tickets' ? (accepted ? '🎟 Ticket '+(confirmed(e,e.guests[id]) ? 'confirmed' : 'requested')+'\n\n' : '') : accepted ? '✅ Accepted\n\n' : ''}${closed ? '⏰ Responses closed — deadline passed.\n\n' : ''}${e.responseDeadline ? 'Response deadline: ' + eventTime({ startsAt: e.responseDeadline, timezone: e.deadlineTimezone || e.timezone || 'UTC' }, this.db.preferences[id]?.timezone) + '\n\n' : ''}${counts}${host && mode!=='named' ? '\n\n'+(mode==='tickets' ? 'Ticket link:' : 'Invite people:')+'\n' + this.link(e) : ''}\n\n${visibility} `;
     if(rsvpOnly){
       const deadline=e.responseDeadline ? '⏰ Respond by: '+eventTime({startsAt:e.responseDeadline,timezone:e.deadlineTimezone || e.timezone || 'UTC'},this.db.preferences[id]?.timezone)+'\n'+(closed ? 'Responses closed — deadline passed.\n' : '') : '';
-      const summary=`🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n${mode==='named' ? 'Invitation for '+e.guests[id].name+(invitationParticipants(e,e.guests[id])!==null ? ' · '+invitationParticipants(e,e.guests[id])+' '+(invitationParticipants(e,e.guests[id])===1?'person':'people') : '')+'\n' : ''}\n🗓 ${this.time(e,id)}\n${deadline}📍 ${location}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n`;
+      const summary=mode==='named' ? (e.cancelled ? '🚫 Event cancelled\n' : '')+this.namedInvitationText(e,e.guests[id],id) : `🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n\n🗓 ${this.time(e,id)}\n${deadline}📍 ${location}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n`;
       const limit=e.banner && withBanner ? Math.max(0,1024-summary.length) : 1500;
       const description=[e.inviteMessage,e.description].filter(Boolean).join('\n\n');text=summary+(description.length>limit ? description.slice(0,Math.max(0,limit-1)).replace(/[\uD800-\uDBFF]$/,'')+'…' : description);
     }
@@ -264,7 +306,7 @@ export class Bot {
       }
       return this.home(id);
     }
-    if (command === '/help') { this.session(id); return this.home(id, 'Create an event in App. Share a ticket link, or create named RSVP invitations. Add = 3 after a guest name to invite three people.\n\nPhone sharing, comments, QR codes and shared media appear only when enabled. Organisers can approve guests and keep the location private until approval.'); }
+    if (command === '/help') { this.session(id); return this.home(id, 'Create an event in App. Share a ticket link, or create named RSVP invitations.\nAlex = ? asks how many; Alex = 2! confirms two; Alex = 2 defaults to two with a Change number button. Max 10 people.\n\nPhone sharing, comments, QR codes and shared media appear only when enabled. Organisers can approve guests and keep the location private until approval.'); }
     if (command === '/events') {
       this.session(id);
       const events = Object.values(this.db.events).filter(e => this.allowed(e, id) && !e.cancelled && (e.owner === id || e.guests[id]?.status !== 'no'));
@@ -330,9 +372,9 @@ export class Bot {
     }
     if (s.step === 'participants') {
       if (!/^(?:[1-9]|10)$/.test(text)) return this.participantPicker(id,e);
-      s.response.participants = e.askParticipantCount === true ? Number(text) : 1;
-      return this.afterIdentity(id,e,s);
+      return this.chooseParticipants(id,e,s,Number(text));
     }
+    if(s.step==='participantConfirm')return this.participantConfirmation(id,e,s);
     if (s.step === 'phone') {
       if(!asksPhone(e))return this.afterIdentity(id,e,s);
       if (m.contact && m.contact.user_id !== id) return this.prompt(id, 'Please share your own contact, type your number, or tap Skip.');
@@ -410,7 +452,7 @@ export class Bot {
       if (!s?.draft || s.step !== 'permissions' || s.token !== eid) return this.send(id, 'These creation buttons have expired. Use the latest buttons or start a new event.');
       if (action === 'pb') { s.step = 'banner'; return this.prompt(id, 'Send a photo for your event banner, or tap Skip.'); }
       if(arg==='mode-tickets'){s.draft.invitationMode='tickets';delete s.draft.invitees;return this.creationPermissions(id,s);}
-      if(arg==='mode-named'){s.draft.invitationMode='named';s.draft.isPublic=false;s.step='guestNames';return this.prompt(id,'Guest names, one per line. Example: Alex = 3. Counts must be 1–10.');}
+      if(arg==='mode-named'){s.draft.invitationMode='named';s.draft.isPublic=false;s.step='guestNames';return this.prompt(id,'Guest names, one per line. Alex = ? asks how many; Alex = 2! confirms two; Alex = 2 defaults to two. Max 10 people.');}
       if (arg === 'defaultReminder') { const index = reminderOptions.indexOf(s.draft.defaultReminder || 0); s.draft.defaultReminder = reminderOptions[(index + 1) % reminderOptions.length]; }
       if (action === 'pd') return this.finishCreation(id, s);
       if (Object.hasOwn(permissionLabels, arg)) s.draft.permissions[arg] = !s.draft.permissions[arg];
@@ -442,14 +484,29 @@ export class Bot {
     const hostActions = ['h', 'a', 'x', 'z', 'edit', 'rotate', 'remove', 'permissions', 'toggle', 'approve', 'reject', 'banner', 'delete', 'delete-confirm'];
     if (hostActions.includes(action) && e.owner !== id) return this.send(id, 'Only the organiser can do that.');
     const required = { g: 'guestList', u: 'uploadMedia', m: 'viewMedia' }[action];
+    if(action==='group'){
+      const g=e.guests[id];
+      if(invitationMode(e)!=='named' || invitationParticipantMode(e,g)==='default' || !this.countEditable(e,id))return this.card(id,e);
+      if(version!==String(g.responseVersion || 0))return this.send(id,'This invitation has changed. Open the event to change your number.',keyboard([button('Open event',`v:${e.id}`)]));
+      await this.clearButtons(id,q.message);
+      this.session(id,{event:e.id,step:'participants',response:{...g},countOnly:true});
+      return this.participantPicker(id,e);
+    }
+    if(action==='count-confirm'){
+      const s=this.db.sessions[id];
+      if(s?.event!==eid || s.step!=='participantConfirm' || version!==s.countToken || !this.countEditable(e,id) || s.baseVersion!==(e.guests[id]?.responseVersion || 0))return this.card(id,e);
+      if(!['yes','change'].includes(arg))return this.participantConfirmation(id,e,s);
+      await this.clearButtons(id,q.message);
+      if(arg==='change'){s.step='participants';return this.participantPicker(id,e);}
+      return this.chooseParticipants(id,e,s,participantCount(e,s.response));
+    }
     if(action==='size') {
       const session=this.db.sessions[id];
-      if(session?.event!==eid || session.step!=='participants' || responsesClosed(e))return this.card(id,e);
+      if(session?.event!==eid || session.step!=='participants' || version!==session.countToken || !this.countEditable(e,id))return this.card(id,e);
       await this.clearButtons(id,q.message);
       if(arg==='more' || arg==='first')return this.participantPicker(id,e,arg==='more');
       if(!/^(?:[1-9]|10)$/.test(arg))return this.participantPicker(id,e);
-      session.response.participants=e.askParticipantCount ? Number(arg):1;
-      return this.afterIdentity(id,e,session);
+      return this.chooseParticipants(id,e,session,Number(arg));
     }
     if (required && !can(e, id, required)) return this.send(id, 'The organiser has not enabled this option for guests.');
     if (action === 'v') { this.session(id); await this.home(id, 'Use the event buttons below.'); return this.card(id, e); }

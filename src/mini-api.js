@@ -73,7 +73,7 @@ export function publicEvent(e, id, username) {
     askPhone:asksPhone(e),askComments:asksComments(e),
     ...(e.owner===id ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,approval:g.approval || null,confirmed:confirmed(e,g),participants:g.status==='yes'?participantCount(e,g):0,paymentStatus:g.payment?.status || null})),...Object.values(e.invitees || {}).filter(g=>!g.claimedBy).map(g=>({id:null,name:g.name,status:'unopened',participants:0,confirmed:false}))]} : {}),
     inviteMessage:e.inviteMessage || '',qrEnabled:e.qrEnabled!==false,
-    ...(e.owner===id ? {invitees:Object.entries(e.invitees || {}).map(([token,g])=>({name:g.name,participants:g.participants || null,claimed:!!g.claimedBy,status:g.claimedBy ? e.guests[g.claimedBy]?.status : null,url:namedLink(e,token,username)}))} : {}),
+    ...(e.owner===id ? {invitees:Object.entries(e.invitees || {}).map(([token,g])=>({name:g.name,participants:g.participants || null,participantMode:g.participantMode || null,claimed:!!g.claimedBy,status:g.claimedBy ? e.guests[g.claimedBy]?.status : null,url:namedLink(e,token,username)}))} : {}),
     id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
     endsAt: e.endsAt || null, durationMinutes: e.durationMinutes || null, endMode: e.endMode || 'none', endDate: e.endDate || '', endTime: e.endTime || '',

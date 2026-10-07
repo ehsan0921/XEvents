@@ -36,10 +36,11 @@ test('group-size buttons show 1–5 then 6–10, reject excess and expose roster
   await f.msg(2,`/start i_${f.e.id}_${Object.keys(f.e.invitees)[0]}`);await f.cb(2,`r:${f.e.id}:yes`);
   const sizes=()=>f.calls.at(-1).reply_markup.inline_keyboard[0].map(b=>b.text);
   assert.deepEqual(sizes(),['1','2','3','4','5']);assert.ok(f.calls.at(-1).text.length<70);
-  await f.cb(2,`size:${f.e.id}:more`);assert.deepEqual(sizes(),['6','7','8','9','10']);
-  await f.cb(2,`size:${f.e.id}:11`);assert.equal(f.data.sessions[2].step,'participants');
-  await f.cb(2,`size:${f.e.id}:10`);assert.equal(f.e.guests[2].participants,10);assert.equal(f.data.sessions[2],undefined);
-  await f.cb(2,`size:${f.e.id}:2`);assert.equal(f.e.guests[2].participants,10);
+  const countToken=f.data.sessions[2].countToken;
+  await f.cb(2,`size:${f.e.id}:more:${countToken}`);assert.deepEqual(sizes(),['6','7','8','9','10']);
+  await f.cb(2,`size:${f.e.id}:11:${countToken}`);assert.equal(f.data.sessions[2].step,'participants');
+  await f.cb(2,`size:${f.e.id}:10:${countToken}`);assert.equal(f.e.guests[2].participants,10);assert.equal(f.data.sessions[2],undefined);
+  await f.cb(2,`size:${f.e.id}:2:${countToken}`);assert.equal(f.e.guests[2].participants,10);
   const owner=publicEvent(f.e,1,'ExampleBot');assert.equal(owner.guestRoster.length,2);assert.equal(owner.guestRoster[0].participants,10);assert.equal(owner.guestRoster[1].status,'unopened');
   assert.equal(publicEvent(f.e,2,'ExampleBot').guestRoster,undefined);
   await f.msg(1,`/start manage_${f.e.id}`);assert.ok(f.calls.some(c=>c.chat_id===1 && c.text?.includes('Accepted: 1 responses · 10 people')));

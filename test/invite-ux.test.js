@@ -61,8 +61,8 @@ test('custom invitation message reaches event cards and public or personal Teleg
     const share=new URL(shares[0].url);assert.ok(share.searchParams.get('text').includes(inviteMessage));
     assert.ok(share.searchParams.get('url').includes(mode==='named' ? `start=i_${f.e.id}_` : `start=e_${f.e.id}`));
     if(mode==='named'){
-      assert.ok(share.searchParams.get('text').includes('Invitation for Alex'));
-      assert.ok(share.searchParams.get('text').includes('People: 3'));
+      assert.ok(share.searchParams.get('text').includes('Dear Alex,'));
+      assert.ok(share.searchParams.get('text').includes('3 places'));
     }
   }
 });

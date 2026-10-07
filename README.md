@@ -15,12 +15,12 @@ Built for sports clubs, friends, community organisers and volunteer groups, XEve
 | Feature | What you can do |
 | --- | --- |
 | Ticket booking links | Share one event link. Guests enter their name and get a ticket or request organiser approval, without RSVP options. |
-| Named invitations and RSVPs | Enter a guest list and share an individual link for each name. Use `Alex = 3` to assign three attendees to that invitation. Guests accept, decline, choose tentative or respond later without entering their name again. |
+| Named invitations and RSVPs | Enter a guest list and share an individual link for each name. Use `Alex = ?` to ask for a count, `Alex = 2!` to confirm two attendees, or `Alex = 2` to start at two with a Change number button. Guests respond without entering their name again. |
 | Custom invitation message | Add your own short welcome or instructions to invitations alongside the event details. |
 | Telegram Mini App | Create and edit events with mobile date and time pickers. |
 | Local timezones | Save your timezone and view times locally, with daylight-saving validation. |
 | Flexible schedules | Set a start, duration or finish time, and a response deadline. |
-| Group attendance | Choose 1–5 people with buttons, or tap More for 6–10 when the organiser enables group selection. Named invitations can instead have a fixed group size of 1–10, without asking the guest again. Otherwise each response counts as one person. |
+| Group attendance | Choose 1–5 people with buttons, or tap More for 6–10 when the organiser enables group selection. Each named invitation can ask for a count, request confirmation of a reserved count, or use a preset with a Change number button. Otherwise each response counts as one person. |
 | Organiser guest list | View accepted response and people totals, distinguish confirmed attendance from approval/payment requests, and filter accepted, pending, maybe, rejected and unanswered guests. |
 | Home and navigation | Home shows ongoing and upcoming plans, plus future public events or ideas for your next event. Footer order: Home, Explore with search, Create, My events, Profile. |
 | Personal profile | Set a name, optional photo and private phone number, timezone and price-display currency. Super admin access appears inside Profile only for the configured administrator. |
@@ -57,17 +57,20 @@ The initial RSVP message shows only **Accept**, **Reject**, **Maybe**, and **Res
 
 **Ticket booking** suits open workshops, community activities and paid events. Guests use a shared link, enter their name and provide phone numbers or comments only when the organiser enables those options. A free booking can issue its ticket immediately; approval and payment requirements hold the ticket and private location until satisfied.
 
-**Named invitations** suit a club roster, wedding guest list or private team dinner. Enter up to 100 unique guest names, one per line. Add `= 3` after a name to reserve an invitation for three attendees, including that guest:
+**Named invitations** suit a club roster, wedding guest list or private team dinner. Enter up to 100 unique guest names, one per line. Choose how each guest provides their group size, including themselves:
 
 ```text
-Alex = 3
-Sam = 1
-Taylor
+Alex = ?
+Sam = 2!
+Taylor = 2
+Casey
 ```
 
-Assigned group sizes must be whole numbers from 1 to 10. Guests with a fixed count skip the attendee picker. A name without a count uses the event's group selection setting, or one person when group selection is off.
+`Alex = ?` asks Alex how many people will attend. `Sam = 2!` asks Sam to confirm the two reserved places. `Taylor = 2` uses two attendees immediately and offers a **Change number** button. Counts must be whole numbers from 1 to 10, including the guest. A name without a count uses the event's group selection setting, or one person when group selection is off.
 
-XEvents generates a separate link for each person and shows their organiser-assigned name when they open it. Accept, Decline, Tentative and Later do not ask for a name again. Send each link only to its intended guest: it binds to the first Telegram account that opens it, rather than verifying a person's real-world identity. Another account cannot claim that link. Names and unused links stay private to the organiser. Saved personal links remain stable during edits; removing an unopened guest revokes their link. Claimed invitations cannot be removed or renamed, and their assigned attendee counts cannot be changed through the guest-list editor. Named invitation events are private and do not appear in Explore.
+Personal invitation previews and shared messages greet the guest by name, show the event date and time, state their reserved places or ask for a count, and include your custom invitation message. Shared invitation text omits restricted locations, including when the organiser shares a personal link. Guests receive private joining details in the bot after the required response, approval and payment steps are complete.
+
+XEvents generates a separate link for each person and shows their organiser-assigned name when they open it. Accept, Decline, Tentative and Later do not ask for a name again. Send each link only to its intended guest: it binds to the first Telegram account that opens it, rather than verifying a person's real-world identity. Another account cannot claim that link. Names and unused links stay private to the organiser. Saved personal links remain stable during edits; removing an unopened guest revokes their link. Claimed invitations cannot be removed or renamed, and their count settings cannot be changed through the guest-list editor. Guests can update editable counts through **Change number**. Named invitation events are private and do not appear in Explore.
 
 Editing fetches the latest event data, including title, address, description, invitation message, guest list and payment settings, and previews the existing banner. Saving without a new image preserves the banner.
 

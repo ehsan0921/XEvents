@@ -82,7 +82,16 @@ function format(e, zone = selectedZone()) {
   return new Intl.DateTimeFormat('en-AU', { timeZone: zone, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(e.startsAt)) + ` (${zone})` + (e.endsAt ? '\nFinishes: ' + format({ startsAt: e.endsAt }, zone) : '');
 }
 function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener'); }
-function inviteText(e,guest){return [guest ? `Invitation for ${guest.name}: ${e.title}` : `You're invited to ${e.title}!`,guest?.participants ? `People: ${guest.participants}` : '',e.inviteMessage].filter(Boolean).join('\n\n');}
+function invitationGuestLine(guest){return guest.name+(guest.participantMode==='ask' ? ' = ?' : guest.participants ? ' = '+guest.participants+(guest.participantMode==='confirm' ? '!' : '') : '');}
+function inviteText(e,guest){
+  const when=e.startsAt ? format({startsAt:e.startsAt},e.timezone || selectedZone()) : e.when;
+  const paid=e.starPrice>0 || ['bank','link','stars'].includes(e.paymentMethod);
+  const privateLocation=e.hideLocation || e.requireApproval || e.locationAfterApproval || paid;
+  const location=e.location && !privateLocation ? `At ${e.location}.` : paid ? e.requireApproval ? 'Location will be available after organiser approval and confirmed payment.' : 'Location will be available after confirmed payment.' : e.requireApproval ? 'Location will be available after organiser approval.' : 'Location will be available after your response.';
+  const askCount=guest && (guest.participantMode==='ask' || (!guest.participants && e.askParticipantCount));
+  const participants=guest?.participants || 1;
+  return [guest ? `Dear ${guest.name},` : '',`You are invited to ${e.title}${when ? ' on '+when : ''}.`,location,guest ? askCount ? 'Please choose how many people will attend.' : `Host has reserved ${participants} ${participants===1?'place':'places'} for you.` : '',e.inviteMessage,'Please respond below.'].filter(Boolean).join('\n\n');
+}
 function share(e) { if(e.invitationMode==='named' && e.isOwner)return openNamedLinks(e);openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(inviteText(e))}`); }
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
 function action(text, fn, className = 'secondary') { const b = element('button', text, className); b.type = 'button'; b.onclick = async () => { if(b.disabled)return; b.disabled=true; try { await fn(); } catch(error) { notice(error.message); } finally { b.disabled=false; } }; return b; }
@@ -265,7 +274,8 @@ async function openNamedLinks(event){
     if(!e.isOwner)throw Error('Only the organiser can see invitation links.');
     const list=$('invitation-links-list');list.replaceChildren();
     for(const guest of e.invitees || []){
-      const row=element('article','','panel');row.append(element('h3',guest.name),element('p',(guest.participants ? guest.participants+' attendees · ' : '')+(guest.claimed ? 'Linked to a Telegram account · '+(guest.status || 'Not responded') : 'Not opened yet'),'small muted'),element('p',inviteText(e,guest),'invite-message'),element('p',guest.url,'invite-link'));
+      const count=guest.participants || 1,countLabel=guest.participantMode==='ask' || (!guest.participants && e.askParticipantCount) ? 'Guest chooses attendee count' : count+' '+(count===1?'attendee':'attendees')+(guest.participants ? guest.participantMode==='confirm' ? ' · Confirm count on acceptance' : ' · Guest can change count' : '');
+      const row=element('article','','panel');row.append(element('h3',guest.name),element('p',countLabel+' · '+(guest.claimed ? 'Linked to a Telegram account · '+(guest.status || 'Not responded') : 'Not opened yet'),'small muted'),element('p',inviteText(e,guest),'invite-message'),element('p',guest.url,'invite-link'));
       row.append(action('Copy personal link',async()=>{try{await navigator.clipboard.writeText(guest.url);notice('Personal invitation copied for '+guest.name);}catch{notice('Select and copy the link shown for '+guest.name);}}),action('Share invitation',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(guest.url)}&text=${encodeURIComponent(inviteText(e,guest))}`)));list.append(row);
     }
     $('invitation-links-dialog').showModal();
@@ -299,7 +309,7 @@ function setupForm(event = null) {
   updateEnding();
   const scheduleOnly = compactPicker;
   $('title').value=event?.title || '';$('location').value=event?.location || '';$('description').value=event?.description || '';$('invite-message').value=event?.inviteMessage || '';
-  $('invitation-mode-panel').hidden=compactPicker;$('legacy-invitation-mode').hidden=event?.invitationMode!=='legacy';$('invitation-mode').value=event?.invitationMode || 'tickets';$('guest-names').value=(event?.invitees || []).map(g=>g.name+(g.participants ? ' = '+g.participants : '')).join('\n');updateInvitationMode();
+  $('invitation-mode-panel').hidden=compactPicker;$('legacy-invitation-mode').hidden=event?.invitationMode!=='legacy';$('invitation-mode').value=event?.invitationMode || 'tickets';$('guest-names').value=(event?.invitees || []).map(invitationGuestLine).join('\n');updateInvitationMode();
   $('event-details').hidden = scheduleOnly; $('optional-details').hidden = scheduleOnly;
   $('banner-panel').hidden = compactPicker; $('banner-preview').hidden = true;
   const bannerGeneration=++bannerLoadGeneration;if(bannerPreviewUrl){URL.revokeObjectURL(bannerPreviewUrl);bannerPreviewUrl=null;}

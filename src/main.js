@@ -3,6 +3,7 @@ import { open, unlink } from 'node:fs/promises';
 import { Store } from './store.js';
 import { Bot } from './bot.js';
 import { refundResult } from './payments.js';
+import { botCommands } from './telegram-menu.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token || token === 'replace_with_your_bot_token') {
@@ -40,10 +41,7 @@ try {
   const me = await api('getMe');
   bot = new Bot(store, api, me.username);
   await api('deleteWebhook', { drop_pending_updates: false });
-  await api('setMyCommands', { commands: [
-    { command: 'new', description: 'Create an event' }, { command: 'events', description: 'Your events and invitations' },
-    { command: 'cancel', description: 'Stop current input' }, { command: 'help', description: 'How XEvents works' }
-  ] });
+  await api('setMyCommands', { commands: botCommands });
   console.log(`@${me.username} is running. Press Ctrl+C to stop.`);
   while (!stopping) {
     try {
@@ -53,7 +51,7 @@ try {
         catch (error) {
           console.error(error.message.replaceAll(token, '[redacted]'));
           const chat = update.message?.chat?.id || update.callback_query?.from?.id;
-          if (chat) await bot.send(chat, 'Something went wrong. Open /events and try again.').catch(() => {});
+          if (chat) await bot.home(chat, 'Something went wrong. Tap My events and try again.').catch(() => {});
         }
         store.data.offset = update.update_id + 1;
         await store.save();

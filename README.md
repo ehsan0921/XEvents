@@ -12,7 +12,7 @@ Create events, invite guests, collect RSVPs, issue tickets, check guests in with
 
 ## See XEvents in action
 
-Open **[@XEvents_bot](https://t.me/XEvents_bot)** and press **Start**. Choose **🎉 Create event** for a short chat flow, or **App** for the full event form. In chat, type the title and location, choose a date and time with buttons, then review and create. You can change the timezone before picking a date; App users can save it in **Profile**.
+Open **[@XEvents_bot](https://t.me/XEvents_bot)** and press **Start**. Choose **🎉 Create event** for a short chat flow, or Telegram's built-in **App** button for the full event form. In chat, type the title and location, choose a date and time with buttons, then review and create. You can change the timezone before picking a date; App users can save it in **Profile**.
 
 Product screenshots are not checked in yet. The [screenshot capture guide](docs/screenshots/README.md) lists four real screens to capture: Home / Explore, Create event, a personal RSVP invitation, and a ticket with QR check-in.
 

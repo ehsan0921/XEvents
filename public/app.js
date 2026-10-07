@@ -354,28 +354,28 @@ function renderEvents() {
     if (e.startsAt && selectedZone() !== e.timezone) card.append(element('p', 'Organiser time: ' + format({ startsAt: e.startsAt }, e.timezone), 'small muted'));
     if (e.counts) card.append(element('div', e.invitationMode==='tickets' ? `${e.counts.yes} confirmed bookings · ${e.counts.participants} people · ${e.counts.pending} approval requests · ${e.counts.awaitingPayment} awaiting payment` : `${e.counts.participants} people coming (${e.counts.yes} responses) · ${e.counts.pendingParticipants || 0} people awaiting approval · ${e.counts.awaitingPayment || 0} awaiting payment · ${e.counts.maybe} tentative · ${e.counts.no} declined · ${e.counts.later} later`, 'counts'));
     else card.append(element('div', 'Guest list is private to the organiser.', 'counts'));
-    const actions = element('div', '', 'event-actions'); actions.append(action('Open event in chat ↗', () => openTelegram(e.inviteUrl), 'primary'));
-    if (isManager(e) && !e.cancelled) actions.append(action('Edit event', () => editEvent(e.id)));
-    if(isManager(e))actions.append(action('Guest list',()=>openGuestList(e.id)));
-    if(isManager(e) && !e.cancelled)actions.append(action(e.qrEnabled!==false?'Scan tickets':'Check tickets',()=>openCheckin(e.id)));
-    if(e.ticket && e.qrEnabled!==false)actions.append(action('Ticket QR',()=>openTicket(e.id)));
-    if((e.starPrice || ['bank','link'].includes(e.paymentMethod)) && !isManager(e) && e.status==='yes' && e.approval==='approved' && e.paymentStatus!=='paid')actions.append(action(e.starPrice?'⭐ Pay with Stars':'Payment instructions',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=pay_'+e.id)));
-    if(e.invitationMode==='named' && isManager(e))actions.append(action('Guest invitations',()=>openNamedLinks(e)));else actions.append(action('Copy link', async () => { try { await navigator.clipboard.writeText(e.inviteUrl); notice('✓ Event link copied.'); } catch { notice('Could not copy the link. Use Share invite under the three-dot menu.'); } }));
+    const actions = element('div', '', 'event-actions'); actions.append(action('💬 Open in chat', () => openTelegram(e.inviteUrl), 'primary'));
+    if (isManager(e) && !e.cancelled) actions.append(action('✏️ Edit event', () => editEvent(e.id)));
+    if(isManager(e))actions.append(action('👥 Guest list',()=>openGuestList(e.id)));
+    if(isManager(e) && !e.cancelled)actions.append(action(e.qrEnabled!==false?'📷 Scan tickets':'🎟 Check tickets',()=>openCheckin(e.id)));
+    if(e.ticket && e.qrEnabled!==false)actions.append(action('🔳 Ticket QR',()=>openTicket(e.id)));
+    if((e.starPrice || ['bank','link'].includes(e.paymentMethod)) && !isManager(e) && e.status==='yes' && e.approval==='approved' && e.paymentStatus!=='paid')actions.append(action(e.starPrice?'⭐ Pay with Stars':'💳 Payment instructions',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=pay_'+e.id)));
+    if(e.invitationMode==='named' && isManager(e))actions.append(action('✉️ Guest invitations',()=>openNamedLinks(e)));else actions.append(action('📋 Copy link', async () => { try { await navigator.clipboard.writeText(e.inviteUrl); notice('✓ Event link copied.'); } catch { notice('Could not copy the link. Use Share invite under the three-dot menu.'); } }));
     const more = document.createElement('details'); more.className = 'event-more';
     const moreToggle = element('summary','⋯'); moreToggle.setAttribute('aria-label',`More options for ${e.title}`);
     const extraActions = element('div','','event-more-panel'); more.append(moreToggle,extraActions);
     if(isManager(e) && !e.cancelled)extraActions.append(action('✏️ Edit event',()=>editEvent(e.id)));
-    extraActions.append(action('Share invite', () => share(e)));
-    if(e.isOwner && !e.cancelled)extraActions.append(action('Co-hosts',()=>openCoHost(e.id)));
-    if(e.starPrice || ['bank','link'].includes(e.paymentMethod))extraActions.append(action(e.isOwner?'Payments & refunds':'Payment support',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=payments')));
+    extraActions.append(action('📤 Share invite', () => share(e)));
+    if(e.isOwner && !e.cancelled)extraActions.append(action('🤝 Co-hosts',()=>openCoHost(e.id)));
+    if(e.starPrice || ['bank','link'].includes(e.paymentMethod))extraActions.append(action(e.isOwner?'💳 Payments & refunds':'💬 Payment support',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=payments')));
     if (isManager(e) || (e.status==='yes' && e.permissions.viewMedia)) {
       actions.append(action('🗂 Shared media', () => openGallery(e.id)));
     }
-    if (isManager(e) && e.uploadLink) extraActions.append(e.qrEnabled!==false ? action('Upload link & QR code', () => showQr(e.id)) : action('Share upload link',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.uploadLink)}`)));
+    if (isManager(e) && e.uploadLink) extraActions.append(e.qrEnabled!==false ? action('📎 Upload link & QR', () => showQr(e.id)) : action('📤 Share upload link',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.uploadLink)}`)));
     if(e.isOwner && !e.cancelled)extraActions.append(action('🛑 Cancel event',()=>cancelEvent(e),'danger-button'));
-    if (e.location) extraActions.append(action('Copy address', async () => { try { await navigator.clipboard.writeText(e.location); notice('✓ Address copied.'); } catch { notice('Select and copy the address shown on the event.'); } }));
+    if (e.location) extraActions.append(action('📍 Copy address', async () => { try { await navigator.clipboard.writeText(e.location); notice('✓ Address copied.'); } catch { notice('Select and copy the address shown on the event.'); } }));
     if (e.upcoming && (isManager(e) || e.status==='yes')) {
-      const label = element('label', 'Event reminder'); const select = document.createElement('select'); select.setAttribute('aria-label', `Reminder for ${e.title}`);
+      const label = element('label', '🔔 Event reminder'); const select = document.createElement('select'); select.setAttribute('aria-label', `Reminder for ${e.title}`);
       for (const [minutes,text] of [[0,'Off'],[15,'15 minutes before'],[60,'1 hour before'],[120,'2 hours before'],[180,'3 hours before'],[240,'4 hours before'],[1440,'1 day before']]) { const option = element('option',text); option.value=minutes; option.disabled=minutes > 0 && Date.parse(e.startsAt)-minutes*60000 <= Date.now(); select.append(option); }
       select.value=e.reminder || 0;
       select.onchange=async () => { select.disabled=true; try { const result=await api(`events/${e.id}/reminder`,{minutes:Number(select.value)}); Object.assign(e,result.event); notice(e.reminder ? '🔔 Reminder saved. We’ll message you in Telegram.' : 'Reminder turned off.'); } catch(err) { select.value=e.reminder || 0; notice(err.message); } finally { select.disabled=false; } };

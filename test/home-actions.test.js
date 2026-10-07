@@ -152,6 +152,6 @@ test('Three-dot menu includes Edit and one owner-only cancellation entry',async(
     const cancel=f.button(menu,'🛑 Cancel event');assert.equal(!!cancel,role==='owner');
     if(cancel){await cancel.onclick();assert.deepEqual(f.calls.at(-1),{kind:'cancel',args:[e]});}
     assert.equal(f.buttons(menu).filter(button=>/Cancel event|Delete event/.test(button.textContent)).length,role==='owner'?1:0);
-    assert.equal(f.button(menu,'Delete event'),undefined,'Deletion is a choice inside the cancellation flow.');
+    assert.equal(f.button(menu,'🗑 Delete event'),undefined,'Deletion is a choice inside the cancellation flow.');
   }
 });

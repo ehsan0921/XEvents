@@ -21,8 +21,8 @@ const clean = (s, max = 1000) => typeof s === 'string' ? s.trim().slice(0, max) 
 const changeCountLabel = count => `${count} ${count===1?'person':'people'} · Change`;
 const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name', app: 'App', picker: '🗓 Pick date & time', pending: '⏳ Pending invitations' };
 const reply = (...rows) => ({ keyboard: rows.map(row => row.map(text => typeof text === 'string' ? { text } : text)), resize_keyboard: true, is_persistent: true });
-// Reply-keyboard Web Apps omit signed initData. Use an inline launcher for authenticated access.
-const homeKeyboard = () => reply([menu.app, menu.events], [menu.new]);
+// The authenticated App launcher lives in Telegram's built-in chat menu.
+const homeKeyboard = () => reply([menu.new, menu.events], [menu.help]);
 
 export class Bot {
   constructor(store, api, username, appUrl) { this.store = store; this.api = api; this.username = username; this.appUrl = appUrl; this.store.data.preferences ||= {}; }
@@ -78,7 +78,7 @@ export class Bot {
     return this.afterIdentity(id,e,s);
   }
   hasPending(id) { return Object.values(this.db.events).some(e => this.allowed(e,id) && !isManager(e,id) && invitationMode(e)!=='tickets' && !e.cancelled && e.guests[id]?.status === 'later'); }
-  home(id, text = 'Welcome to XEvents 🎉\nTap Create event to plan here in chat, or App for the full planner.') { return this.send(id, text, homeKeyboard(this.appUrl)); }
+  home(id, text = 'Welcome to XEvents 🎉\nTap Create event or My events below.') { return this.send(id, text, homeKeyboard()); }
   session(id, value) { if (value) this.db.sessions[id] = value; else delete this.db.sessions[id]; }
   link(e) { return `https://t.me/${this.username}?start=e_${e.id}`; }
   miniButton(text, params = '') { return { text, web_app: { url: this.appUrl + params } }; }
@@ -246,7 +246,6 @@ export class Bot {
       if (canSeeLocation(e, id) && e.location) extras.push(e.location.length <= 256 ? { text: '📋 Copy address', copy_text: { text: e.location } } : button('📋 Copy address', `address:${e.id}`));
       if (host && shareUploadLink(e,this.username)) extras.push(this.appUrl && e.qrEnabled!==false ? this.miniButton('Upload QR code',`?qr=${e.id}`) : {text:'Share upload link',url:`https://t.me/share/url?url=${encodeURIComponent(shareUploadLink(e,this.username))}`});
     }
-    if (this.appUrl && host) extras.push(this.miniButton('App', `?event=${e.id}`));
     if (owner) extras.push(button('Delete event', `delete:${e.id}`));
     rows.push(...paired(extras));
     if(!rsvpOnly)rows.push([button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
@@ -317,7 +316,7 @@ export class Bot {
     if (command === '/pending') { this.session(id); return this.pendingInvitations(id); }
     if (command === '/app' && this.appUrl) {
       await this.api('setChatMenuButton',{chat_id:id,menu_button:{type:'web_app',text:'App',web_app:{url:this.appUrl}}}).catch(()=>{});
-      return this.send(id, 'Your events and settings.', keyboard([this.miniButton('App')]));
+      return this.send(id, 'Use the built-in App button beside the message field.', current ? this.inputKeyboard(current) : homeKeyboard());
     }
     if (command === '/picker' && this.appUrl) {
       if (!current || !(current.step === 'when' || (current.step === 'edit' && current.field === 'when'))) return this.home(id, 'Start creating an event or edit an event’s time first.');
@@ -360,7 +359,7 @@ export class Bot {
       }
       return this.home(id);
     }
-    if (command === '/help') { this.session(id); return this.home(id, 'Tap Create event to plan in chat, or App for the full planner. Pick a date, time and timezone with buttons, then review and create.\nMore options adds named invitations, a banner, reminders and guest settings. Phone sharing, comments, QR codes and media start off.'); }
+    if (command === '/help') { this.session(id); return this.home(id, 'Tap Create event to plan in chat, or My events to manage invitations.'+(this.appUrl ? '\nUse the built-in App button for the full planner.' : '')+'\nPick a date, time and location, then review and create. More options adds named invitations, a banner, reminders and guest settings.'); }
     if (command === '/events') {
       this.session(id);
       const events = Object.values(this.db.events).filter(e => this.allowed(e, id) && !e.cancelled && (isManager(e,id) || e.guests[id]?.status !== 'no'));
@@ -378,9 +377,9 @@ export class Bot {
       this.session(id, { step: 'title', draft: {invitationMode:'tickets',askPhone:false,askComments:false,qrEnabled:false} });
       return this.prompt(id, 'Let’s create your event. What is its name? (up to 100 characters)');
     }
-    if (text.startsWith('/') && command !== '/skip' && command !== '/done') return this.send(id, 'Choose a menu button, or tap Cancel input to leave this step.', current ? this.inputKeyboard(current) : homeKeyboard(this.appUrl));
+    if (text.startsWith('/') && command !== '/skip' && command !== '/done') return this.send(id, 'Choose a menu button, or tap Cancel input to leave this step.', current ? this.inputKeyboard(current) : homeKeyboard());
     const s = this.db.sessions[id];
-    if (!s) return this.home(id, 'Choose Create event, App or My events below.');
+    if (!s) return this.home(id, 'Choose Create event or My events below.');
     if(s.flow==='chat-create')return chatCreationMessage(this,id,typeof m.text==='string'?m.text.trim():text,s,m);
     if (s.step === 'banner') {
       const target = s.draft || this.db.events[s.event];

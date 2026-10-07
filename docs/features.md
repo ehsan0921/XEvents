@@ -4,7 +4,7 @@ XEvents is an open-source event planner for Telegram. The bot handles event crea
 
 [Try XEvents](https://t.me/XEvents_bot) · [Invitations](invitations.md) · [Payments](payments.md) · [Self-hosting](self-hosting.md)
 
-Use **App** in Telegram's bot menu or on an inline message button to open the authenticated Mini App. The reply-keyboard **App** shortcut first sends an inline launcher, which supplies the signed identity needed for private API access. Every launcher opens the same app and database; a normal browser URL alone does not authenticate a Telegram user.
+Use Telegram's built-in **App** button beside the message field to open the authenticated Mini App. The chat keyboard provides Create event, My events and Help, without a duplicate App button. Contextual buttons still open specific galleries, invitations and pickers. These launchers open the same app and database; a normal browser URL alone does not authenticate a Telegram user. The command menu contains only Help, Cancel input and Payment support.
 
 ## Events and schedules
 
@@ -14,7 +14,7 @@ Create an event with a title, location, description, optional banner, and option
 
 Tap **🎉 Create event** in the bot's main menu when you prefer chat or cannot open the Mini App. Type a title, choose a day and time, add a location or choose to provide it later, then review and create. Date and time choices use buttons, with text input for another date or a custom time. The displayed timezone comes from your profile when available; otherwise it is explicitly UTC, with a **Change timezone** option.
 
-The short flow creates a free, private event with a shared ticket link. **More options** lets you change the details, use a named guest list, add a description, invitation message or banner, enable guest options, and set a duration, response deadline or reminder. Phone collection, comments, media and QR codes start off. The Mini App is optional for this flow; `/new` remains available for the older text sequence.
+The short flow creates a free, private event with a shared ticket link. **More options** lets you change the details, use a named guest list, add a description, invitation message or banner, enable guest options, and set a duration, response deadline or reminder. Phone collection, comments, media and QR codes start off. The Mini App is optional for this flow.
 
 Guests can save their timezone in Profile. XEvents displays the event locally and includes the organiser's time when it differs. Changing a profile timezone does not move the event's actual start time.
 
@@ -55,7 +55,7 @@ Hosts can review accepted responses and total people, with approval requests and
 
 **Guest invitations** combines personal links with response details, comments, attendee totals, response filters and guest-name search. Owners and co-hosts can add guests individually with name, count and attendee settings, or paste a list of names. The individual form is also available when creating or editing an event. Existing links and responses stay intact. The **Guest list** includes Add guest and personal-invitation shortcuts, with Revoke invitation opening a choice to notify the guest or remove silently. Removal revokes the link and ticket; payment records are retained for separate refund handling.
 
-The main event actions include opening the event in chat, editing, copying the invite link, and shared media when available. Secondary actions sit under the three-dot menu, including another Edit event shortcut and an owner-only Cancel event action.
+The main event actions use matching icons and a two-column layout for editing, guest management, invitation links and shared media, with a full-width Open in chat button. Secondary actions sit under the three-dot menu, including another Edit event shortcut and an owner-only Cancel event action. Sharing, co-hosts, payments, upload links, copying the address and reminders each have a recognisable icon.
 
 An owner can create multiple co-host links with optional labels. Each private link works once; after it is claimed, the owner sees the claimant's Telegram name, @handle when available, and numeric ID beside its label. Cancel an unused link or revoke a particular co-host without affecting other hosts. Revoked entries retain their status for the owner to review.
 

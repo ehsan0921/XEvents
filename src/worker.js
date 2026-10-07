@@ -4,6 +4,7 @@ import { rememberUser } from './admin.js';
 import { sendDueReminders } from './reminders.js';
 import { checkout, refundResult } from './payments.js';
 import {refreshOnlineRates} from './exchange.js';
+import { botCommands, botCommandsVersion } from './telegram-menu.js';
 
 export async function authorized(request, secret) {
   if (!secret) return false;
@@ -98,10 +99,7 @@ export default {
       if (me.result.username.toLowerCase() !== env.BOT_USERNAME.toLowerCase()) return Response.json({ configured: false, error: 'Bot username mismatch' }, { status: 409 });
       const hook = await telegram(env, 'setWebhook', { url: `${url.origin}/telegram`, secret_token: env.TELEGRAM_WEBHOOK_SECRET, max_connections: 1, allowed_updates: ['message', 'callback_query', 'pre_checkout_query'], drop_pending_updates: false });
       if (!hook.ok) return Response.json({ configured: false, error: 'Webhook setup failed', code: hook.error_code }, { status: 502 });
-      await telegram(env, 'setMyCommands', { commands: [
-        { command: 'new', description: 'Create an event' }, { command: 'events', description: 'Your events and invitations' },
-        { command: 'cancel', description: 'Stop current input' }, { command: 'help', description: 'How XEvents works' }
-      ] });
+      await telegram(env, 'setMyCommands', { commands: botCommands });
       const info = await telegram(env, 'getWebhookInfo', {});
       return Response.json({ configured: true, bot: me.result.username, webhook: info.result?.url, pendingUpdates: info.result?.pending_update_count });
     }
@@ -135,10 +133,12 @@ export async function configureMiniApp(env) {
   const payments = await env.DB.prepare("SELECT value FROM app_settings WHERE key='stars-webhook'").first();
   if(payments?.value !== env.APP_URL && env.TELEGRAM_WEBHOOK_SECRET) {
     const hook=await telegram(env,'setWebhook',{url:new URL('/telegram',env.APP_URL).href,secret_token:env.TELEGRAM_WEBHOOK_SECRET,max_connections:1,allowed_updates:['message','callback_query','pre_checkout_query'],drop_pending_updates:false});
-    if(hook.ok) {
-      const commands=await telegram(env,'setMyCommands',{commands:[{command:'new',description:'Create an event'},{command:'events',description:'Your events and invitations'},{command:'cancel',description:'Stop current input'},{command:'help',description:'How XEvents works'},{command:'paysupport',description:'Payment support and refunds'},{command:'terms',description:'Payment terms'}]});
-      if(commands.ok)await env.DB.prepare("INSERT INTO app_settings(key,value) VALUES ('stars-webhook',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(env.APP_URL).run();
-    }
+    if(hook.ok)await env.DB.prepare("INSERT INTO app_settings(key,value) VALUES ('stars-webhook',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(env.APP_URL).run();
+  }
+  const commands = await env.DB.prepare("SELECT value FROM app_settings WHERE key='bot-commands'").first();
+  if (commands?.value !== botCommandsVersion) {
+    const result = await telegram(env, 'setMyCommands', { commands: botCommands });
+    if (result.ok) await env.DB.prepare("INSERT INTO app_settings(key,value) VALUES ('bot-commands',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(botCommandsVersion).run();
   }
   const setting = await env.DB.prepare("SELECT value FROM app_settings WHERE key='mini-menu'").first();
   const menuVersion=`App:${env.APP_URL}`;

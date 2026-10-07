@@ -76,12 +76,12 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
 
 test('co-host events expose management actions and keep payment fields read-only',async()=>{
   const f=await harness(eventFixture({isOwner:false,isCoHost:true}));
-  for(const label of ['Edit event','Guest list','Scan tickets','Guest invitations','🗂 Shared media'])assert.ok(f.findButton('event-list',label),label+' should be available');
-  for(const label of ['Co-hosts','Cancel event','Delete event','Payments & refunds'])assert.equal(f.findButton('event-list',label),undefined,label+' should remain owner-only');
+  for(const label of ['✏️ Edit event','👥 Guest list','📷 Scan tickets','✉️ Guest invitations','🗂 Shared media'])assert.ok(f.findButton('event-list',label),label+' should be available');
+  for(const label of ['🤝 Co-hosts','🛑 Cancel event','🗑 Delete event','💳 Payments & refunds'])assert.equal(f.findButton('event-list',label),undefined,label+' should remain owner-only');
   assert.ok(f.descendants(f.ids.get('home-upcoming')).some(node=>node.textContent==='Co-hosting'));
   assert.ok(f.descendants(f.ids.get('event-list')).some(node=>node.textContent==='CO-HOSTING'));
-  assert.ok(f.descendants(f.ids.get('event-list')).some(node=>node.tag==='label' && node.textContent==='Event reminder'));
-  await f.findButton('event-list','Edit event').onclick();
+  assert.ok(f.descendants(f.ids.get('event-list')).some(node=>node.tag==='label' && node.textContent==='🔔 Event reminder'));
+  await f.findButton('event-list','✏️ Edit event').onclick();
   assert.equal(f.ids.get('payment-owner-note').hidden,false);
   for(const id of ['stars-enabled','payment-method','stars-price','stars-pricing','payment-terms','display-price','payment-instructions','payment-url'])assert.equal(f.ids.get(id).disabled,true,id+' must be read-only');
   assert.equal(f.ids.get('stars-price').value,100);
@@ -96,7 +96,7 @@ test('co-host events expose management actions and keep payment fields read-only
 
 test('owner creates multiple labelled co-host links without replacing earlier links and cancels one exact entry',async()=>{
   const f=await harness(eventFixture());
-  await f.findButton('event-list','Co-hosts').onclick();
+  await f.findButton('event-list','🤝 Co-hosts').onclick();
   assert.equal(f.ids.get('cohost-dialog').open,true);
   assert.equal(f.ids.get('cohost-settings').open,false);
   f.ids.get('cohost-label').value='  Door team  ';
@@ -126,7 +126,7 @@ test('owner creates multiple labelled co-host links without replacing earlier li
 test('a co-host claimed during cancellation is refreshed and cannot be revoked by a stale confirmation',async()=>{
   const linkId='aaaaaaaaaaaaaaaa',otherId='bbbbbbbbbbbbbbbb';
   const f=await harness(eventFixture({cohostLinks:[pendingLink(linkId,'Door'),activeLink(otherId,'Registration',{id:3,name:'Sam',username:'sam'})],cohostVersion:'1111111111111111'}));
-  await f.findButton('event-list','Co-hosts').onclick();
+  await f.findButton('event-list','🤝 Co-hosts').onclick();
   const cancel=f.findButton('cohost-list','Cancel invite').onclick();
   f.setEvent({...f.getEvent(),cohostLinks:[activeLink(linkId,'Door',{name:'Alex Smith'}),activeLink(otherId,'Registration',{id:3,name:'Sam',username:'sam'})],cohostVersion:'2222222222222222'});
   f.ids.get('confirm-proceed').onclick();await cancel;
@@ -145,14 +145,14 @@ test('a co-host claimed during cancellation is refreshed and cannot be revoked b
 
 test('claimed co-host without a username shows an explicit fallback and owner payments remain editable',async()=>{
   const f=await harness(eventFixture({cohostLinks:[activeLink('aaaaaaaaaaaaaaaa','Support',{username:null})]}));
-  await f.findButton('event-list','Co-hosts').onclick();assert.ok(f.descendants(f.ids.get('cohost-list')).some(node=>node.textContent==='Alex · No Telegram username · ID 2'));
-  f.ids.get('cohost-close').onclick();await f.findButton('event-list','Edit event').onclick();
+  await f.findButton('event-list','🤝 Co-hosts').onclick();assert.ok(f.descendants(f.ids.get('cohost-list')).some(node=>node.textContent==='Alex · No Telegram username · ID 2'));
+  f.ids.get('cohost-close').onclick();await f.findButton('event-list','✏️ Edit event').onclick();
   assert.equal(f.ids.get('payment-owner-note').hidden,true);assert.equal(f.ids.get('stars-price').disabled,false);assert.equal(f.ids.get('payment-terms').disabled,false);
 });
 
 test('named edits hide general count and approval controls, retain per-name rules and preserve private locations',async()=>{
   const f=await harness(eventFixture({requireApproval:true,askParticipantCount:true,hideLocation:false,invitees:[{name:'Alex',participants:2,participantMode:'confirm'},{name:'Sam',participantMode:'ask'},{name:'Jordan',participants:4,participantMode:'fixed'}]}));
-  await f.findButton('event-list','Edit event').onclick();
+  await f.findButton('event-list','✏️ Edit event').onclick();
   for(const id of ['require-approval-option','ask-participant-count-option'])assert.equal(f.ids.get(id).hidden,true);
   for(const id of ['require-approval','ask-participant-count']){assert.equal(f.ids.get(id).checked,false);assert.equal(f.ids.get(id).disabled,true);}
   assert.equal(f.ids.get('hide-location').checked,true);assert.equal(f.ids.get('hide-location').disabled,false);
@@ -186,16 +186,16 @@ test('new forms default to reusable tickets and one-time named links while respe
 
 test('existing reusable named links and legacy ticket defaults load without being changed',async()=>{
   const named=await harness(eventFixture({oneTimeInvite:false}));
-  await named.findButton('event-list','Edit event').onclick();assert.equal(named.ids.get('one-time-invite').checked,false);
+  await named.findButton('event-list','✏️ Edit event').onclick();assert.equal(named.ids.get('one-time-invite').checked,false);
   const tickets=await harness(eventFixture({invitationMode:'tickets',requireApproval:true,askParticipantCount:true}));
-  await tickets.findButton('event-list','Edit event').onclick();assert.equal(tickets.ids.get('one-time-invite').checked,false);
+  await tickets.findButton('event-list','✏️ Edit event').onclick();assert.equal(tickets.ids.get('one-time-invite').checked,false);
   assert.equal(tickets.ids.get('require-approval').checked,true);assert.equal(tickets.ids.get('ask-participant-count').checked,true);
   assert.equal(tickets.ids.get('require-approval-option').hidden,false);assert.equal(tickets.ids.get('ask-participant-count-option').hidden,false);
 });
 
 test('collapsed settings expand for invalid required fields and payment errors',async()=>{
   const f=await harness(eventFixture(),{scheduleError:'Payment and refund terms is required.'});
-  await f.findButton('event-list','Edit event').onclick();
+  await f.findButton('event-list','✏️ Edit event').onclick();
   const payment=f.ids.get('stars-panel');payment.tagName='DETAILS';
   f.ids.get('payment-terms').parentElement=payment;
   f.ids.get('event-form').listeners.invalid({target:f.ids.get('payment-terms')});
@@ -206,10 +206,10 @@ test('collapsed settings expand for invalid required fields and payment errors',
 
 test('personal invitation rows distinguish an unanswered open link from a locked RSVP and a reusable link',async()=>{
   const f=await harness(eventFixture({oneTimeInvite:true,invitees:[{name:'Alex',status:'later',claimed:false,url:'https://t.me/test?start=alex'},{name:'Sam',status:'yes',claimed:true,url:'https://t.me/test?start=sam'}]}));
-  await f.findButton('event-list','Guest invitations').onclick();
+  await f.findButton('event-list','✉️ Guest invitations').onclick();
   let rows=f.descendants(f.ids.get('invitation-links-list')).filter(node=>['p','span'].includes(node.tag)).map(node=>node.textContent).join('\n');
   assert.match(rows,/Awaiting RSVP · One-time link/);assert.match(rows,/Accepted · Locked to one guest/);assert.doesNotMatch(rows,/Not opened/);
-  f.setEvent({...f.getEvent(),oneTimeInvite:false});await f.findButton('event-list','Guest invitations').onclick();
+  f.setEvent({...f.getEvent(),oneTimeInvite:false});await f.findButton('event-list','✉️ Guest invitations').onclick();
   rows=f.descendants(f.ids.get('invitation-links-list')).filter(node=>['p','span'].includes(node.tag)).map(node=>node.textContent).join('\n');
   assert.match(rows,/Accepted · Reusable link/);assert.match(f.ids.get('invitation-links-note').textContent,/more than one guest/);
 });
@@ -217,7 +217,7 @@ test('personal invitation rows distinguish an unanswered open link from a locked
 test('guest invitation actions copy the full invitation or only that guest link and preserve sharing',async()=>{
   const f=await harness(eventFixture({paymentMethod:'free',starPrice:0,endsAt:'2099-10-24T10:00:00Z',responseDeadline:'2099-10-23T08:00:00Z',inviteMessage:'Bring a scarf.',invitees:[{name:'Alex',participants:2,url:'https://t.me/test?start=alex'},{name:'Sam',participantMode:'ask',url:'https://t.me/test?start=sam'}]}));
   f.setEvent({...f.getEvent(),title:'Updated club evening'});
-  await f.findButton('event-list','Guest invitations').onclick();
+  await f.findButton('event-list','✉️ Guest invitations').onclick();
   await f.findButton('invitation-links-list','Alex').onclick();
   const alex=f.copied.at(-1);
   assert.match(alex,/^Dear Alex,/);assert.match(alex,/You are invited to Updated club evening on/);assert.match(alex,/Australia\/Sydney/);
@@ -242,14 +242,14 @@ test('guest invitation actions copy the full invitation or only that guest link 
 test('owner and co-host copy actions never include acceptance, approval or payment-protected addresses',async()=>{
   for(const owner of [true,false])for(const privacy of [{hideLocation:true},{requireApproval:true},{locationAfterApproval:true},{paymentMethod:'bank'},{paymentMethod:'link'},{paymentMethod:'stars',starPrice:25}]){
     const f=await harness(eventFixture({paymentMethod:'free',starPrice:0,isOwner:owner,isCoHost:!owner,location:'SECRET VENUE',...privacy}));
-    await f.findButton('event-list','Guest invitations').onclick();await f.findButton('invitation-links-list','Copy invite').onclick();
+    await f.findButton('event-list','✉️ Guest invitations').onclick();await f.findButton('invitation-links-list','Copy invite').onclick();
     assert.doesNotMatch(f.copied.at(-1),/SECRET VENUE/);assert.match(f.copied.at(-1),/Location will be available after/);assert.match(f.copied.at(-1),/\n\nhttps:\/\/t\.me\/test\?start=guest$/);
   }
 });
 
 test('copied paid invitations retain the configured Stars or manual text price',async()=>{
   for(const [pricing,expected] of [[{paymentMethod:'stars',starPrice:25,starPricing:'person'},'25 Stars per person'],[{paymentMethod:'stars',starPrice:50,starPricing:'group'},'50 Stars per group'],[{paymentMethod:'bank',starPrice:0,displayPrice:'AUD $20 each'},'Paid · AUD $20 each'],[{paymentMethod:'link',starPrice:0,displayPrice:'Members £15 / guests £20'},'Paid · Members £15 / guests £20']]){
-    const f=await harness(eventFixture(pricing));await f.findButton('event-list','Guest invitations').onclick();await f.findButton('invitation-links-list','Copy invite').onclick();assert.ok(f.copied.at(-1).includes(expected));
+    const f=await harness(eventFixture(pricing));await f.findButton('event-list','✉️ Guest invitations').onclick();await f.findButton('invitation-links-list','Copy invite').onclick();assert.ok(f.copied.at(-1).includes(expected));
   }
 });
 
@@ -257,7 +257,7 @@ test('explicit copy preserves long custom invitations without putting their text
   const inviteMessage='Bring your friends, a warm scarf and your favourite snack. '.repeat(16).trim();
   const url='https://t.me/test?start=personal_link';
   const f=await harness(eventFixture({paymentMethod:'free',starPrice:0,inviteMessage,invitees:[{name:'Alex',participants:3,url}]}));
-  await f.findButton('event-list','Guest invitations').onclick();
+  await f.findButton('event-list','✉️ Guest invitations').onclick();
   await f.findButton('invitation-links-list','Copy invite').onclick();
   const text=f.copied.at(-1);assert.ok(text.length>1000);assert.ok(text.includes(inviteMessage));assert.match(text,/^Dear Alex,/);assert.ok(text.endsWith('\n\n'+url));
   await f.findButton('invitation-links-list','Copy link').onclick();assert.equal(f.copied.at(-1),url);
@@ -266,7 +266,7 @@ test('explicit copy preserves long custom invitations without putting their text
 test('denied or unavailable clipboard exposes selectable full text and a denied copy can recover',async()=>{
   for(const clipboardMode of ['denied','absent']){
     const f=await harness(eventFixture({hideLocation:true,inviteMessage:'Bring a scarf.'}),{clipboardMode});
-    await f.findButton('event-list','Guest invitations').onclick();
+    await f.findButton('event-list','✉️ Guest invitations').onclick();
     const copy=f.findButton('invitation-links-list','Copy invite');await copy.onclick();
     const nodes=f.descendants(f.ids.get('invitation-links-list')),fullText=nodes.find(node=>node.tag==='textarea');
     assert.equal(nodes.find(node=>node.tag==='details').open,true);assert.equal(fullText.readOnly,true);assert.equal(fullText.focused,true);assert.equal(fullText.selected,true);
@@ -280,7 +280,7 @@ test('link-only copy failures expose a selectable personal URL and can recover w
   for(const clipboardMode of ['denied','absent']){
     const url='https://t.me/test?start=guest';
     const f=await harness(eventFixture({hideLocation:true,inviteMessage:'Bring a scarf.'}),{clipboardMode});
-    await f.findButton('event-list','Guest invitations').onclick();
+    await f.findButton('event-list','✉️ Guest invitations').onclick();
     const copy=f.findButton('invitation-links-list','Copy link');await copy.onclick();
     const nodes=f.descendants(f.ids.get('invitation-links-list')),link=nodes.find(node=>node.tag==='input' && node.attributes['aria-label']==='Personal link for Alex');
     assert.ok(link);assert.equal(link.value,url);assert.equal(link.readOnly,true);assert.equal(link.focused,true);assert.equal(link.selected,true);
@@ -311,7 +311,7 @@ test('unknown guest deep links do not select another guest, and large lists can 
 
 test('invitation links recheck current manager access before exposing personal copy actions',async()=>{
   const f=await harness(eventFixture());f.setEvent({...f.getEvent(),isOwner:false,isManager:false,isCoHost:false,invitees:[]});
-  await f.findButton('event-list','Guest invitations').onclick();
+  await f.findButton('event-list','✉️ Guest invitations').onclick();
   assert.equal(f.ids.get('invitation-links-dialog').open,false);assert.equal(f.ids.get('invitation-links-list').children.length,0);assert.match(f.ids.get('notice').textContent,/Only event managers/);
 });
 
@@ -333,7 +333,7 @@ test('invitation manager shows all response outcomes and filters reusable links 
     managedInvite('Morgan',13,[{name:'Morgan',status:'maybe',participants:0}]),
     managedInvite('Drew',14,[{name:'Drew',status:'later',participants:0}]),managedInvite('Jess',15)
   ]}));
-  await f.findButton('event-list','Guest invitations').onclick();
+  await f.findButton('event-list','✉️ Guest invitations').onclick();
   const summary=textOf(f,f.ids.get('invitation-links-summary'));
   assert.match(summary,/5 invitations/);assert.match(summary,/4 responses/);assert.match(summary,/5 people accepted/);
   assert.deepEqual(f.ids.get('invitation-links-filter').children.map(option=>option.textContent),['All (5)','Accepted (2)','Declined (1)','Maybe (1)','Later (1)','Unanswered (2)']);
@@ -347,7 +347,7 @@ test('invitation manager shows all response outcomes and filters reusable links 
 
 test('invitation response filters combine with case-insensitive guest search and show an empty result',async()=>{
   const f=await harness(managedEvent({invitees:[managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}]),managedInvite('Sam',12,[{name:'Sam',status:'no',participants:0}]),managedInvite('Samira',13,[{name:'Samira',status:'yes',participants:1}])]}));
-  await f.findButton('event-list','Guest invitations').onclick();
+  await f.findButton('event-list','✉️ Guest invitations').onclick();
   assert.equal(f.ids.get('invitation-links-search').hidden,false);
   f.ids.get('invitation-links-search').value='  sAm  ';f.ids.get('invitation-links-search').oninput();assert.deepEqual(visibleInvitations(f),['Sam','Samira']);
   f.ids.get('invitation-links-filter').value='yes';f.ids.get('invitation-links-filter').onchange();assert.deepEqual(visibleInvitations(f),['Samira']);
@@ -359,7 +359,7 @@ test('owner and co-host can append named guests with count rules without resetti
   for(const owner of [true,false]){
     const existing=managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}]);
     const f=await harness(managedEvent({isOwner:owner,isCoHost:!owner,invitees:[existing]}));
-    await f.findButton('event-list','Guest invitations').onclick();
+    await f.findButton('event-list','✉️ Guest invitations').onclick();
     f.ids.get('invitation-links-search').value='casey';f.ids.get('invitation-links-search').oninput();
     f.ids.get('invitation-links-filter').value='unanswered';f.ids.get('invitation-links-filter').onchange();
     f.ids.get('invitation-add-names').value='  Jamie = ?\nCasey = 2!\nJordan = 2*\nTaylor = 3  ';
@@ -381,7 +381,7 @@ test('owner and co-host can append named guests with count rules without resetti
 test('removing one invitation asks whether to notify and sends the exact chosen action',async()=>{
   for(const [label,notify] of [['Notify guest',true],['Remove silently',false]]){
     const alex=managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}]),sam=managedInvite('Sam',12);
-    const f=await harness(managedEvent({invitees:[alex,sam]}));await f.findButton('event-list','Guest invitations').onclick();
+    const f=await harness(managedEvent({invitees:[alex,sam]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
     const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();
     assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).length,0);
     for(const choice of ['Notify guest','Remove silently','Keep invite'])assert.ok(rowAction(f,row,choice));
@@ -394,13 +394,13 @@ test('removing one invitation asks whether to notify and sends the exact chosen 
 
 test('keeping an invitation cancels removal without any mutation',async()=>{
   const alex=managedInvite('Alex',11,[{name:'Alex',status:'no',participants:0}]);
-  const f=await harness(managedEvent({invitees:[alex]}));await f.findButton('event-list','Guest invitations').onclick();
+  const f=await harness(managedEvent({invitees:[alex]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
   const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();await rowAction(f,row,'Keep invite').onclick();
   assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).length,0);assert.deepEqual(f.getEvent().invitees,[alex]);assert.ok(invitationRow(f,'Alex'));
 });
 
 test('an unopened invitation offers silent removal and explains why there is no guest to notify',async()=>{
-  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','Guest invitations').onclick();
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
   const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();
   assert.equal(rowAction(f,row,'Notify guest').disabled,true);assert.equal(!!rowAction(f,row,'Remove silently').disabled,false);
   assert.match(textOf(f,row),/not opened|no guest|not yet|cannot notify|can't notify/i);
@@ -410,19 +410,19 @@ test('an unopened invitation offers silent removal and explains why there is no 
 
 test('an add validation error keeps guest input and existing links visible for correction',async()=>{
   const alex=managedInvite('Alex',11),f=await harness(managedEvent({invitees:[alex]}),{invitationError:{status:400,message:'A ticket can include at most 10 people.'}});
-  await f.findButton('event-list','Guest invitations').onclick();f.ids.get('invitation-add-names').value='Casey = 20';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});
+  await f.findButton('event-list','✉️ Guest invitations').onclick();f.ids.get('invitation-add-names').value='Casey = 20';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});
   assert.equal(f.ids.get('invitation-add-names').value,'Casey = 20');assert.match(f.ids.get('invitation-links-status').textContent,/at most 10/);assert.equal(f.ids.get('invitation-add-submit').disabled,false);assert.deepEqual(f.getEvent().invitees,[alex]);assert.ok(invitationRow(f,'Alex'));
   f.setInvitationError(null);f.ids.get('invitation-add-names').value='Casey = 2';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});assert.equal(f.getEvent().invitees.length,2);
 });
 
 test('a remove failure keeps the invitation and displays the server error instead of reporting success',async()=>{
   const alex=managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}]),f=await harness(managedEvent({invitees:[alex]}),{invitationError:{status:400,message:'Refund this ticket before removing its invitation.'}});
-  await f.findButton('event-list','Guest invitations').onclick();const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();await rowAction(f,row,'Notify guest').onclick();
+  await f.findButton('event-list','✉️ Guest invitations').onclick();const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();await rowAction(f,row,'Notify guest').onclick();
   assert.deepEqual(f.getEvent().invitees,[alex]);assert.ok(invitationRow(f,'Alex'));assert.match(f.ids.get('invitation-links-status').textContent,/Refund this ticket/);assert.doesNotMatch(f.ids.get('invitation-links-status').textContent,/removed|notified/i);
 });
 
 test('a response arriving before removal refreshes the list and requires a new explicit choice',async()=>{
-  const alex=managedInvite('Alex',11),f=await harness(managedEvent({invitees:[alex]}));await f.findButton('event-list','Guest invitations').onclick();
+  const alex=managedInvite('Alex',11),f=await harness(managedEvent({invitees:[alex]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
   f.ids.get('invitation-links-search').value='alex';f.ids.get('invitation-links-search').oninput();const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();
   const responded=managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}]);f.setEvent({...f.getEvent(),invitationsVersion:'1111111111111111',invitees:[responded]});
   await rowAction(f,row,'Remove silently').onclick();
@@ -432,15 +432,15 @@ test('a response arriving before removal refreshes the list and requires a new e
 });
 
 test('closing invitation management ignores a late add response and a later opening fetches current invitations',async()=>{
-  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','Guest invitations').onclick();
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
   const release=f.holdNextInvitationMutation();f.ids.get('invitation-add-names').value='Casey';const adding=f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});
   f.ids.get('invitation-links-close').onclick();assert.equal(f.ids.get('invitation-links-dialog').open,false);release();await adding;
   assert.equal(f.ids.get('invitation-links-dialog').open,false);assert.equal(invitationRow(f,'Casey'),undefined);
-  await f.findButton('event-list','Guest invitations').onclick();assert.ok(invitationRow(f,'Casey'));
+  await f.findButton('event-list','✉️ Guest invitations').onclick();assert.ok(invitationRow(f,'Casey'));
 });
 
 test('a pending invitation mutation blocks competing add and remove actions',async()=>{
-  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}])]}));await f.findButton('event-list','Guest invitations').onclick();
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}])]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
   const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();const notify=rowAction(f,row,'Notify guest'),silent=rowAction(f,row,'Remove silently');
   const release=f.holdNextInvitationMutation();const removing=notify.onclick();
   assert.equal(silent.disabled,true);assert.equal(f.ids.get('invitation-add-submit').disabled,true);assert.equal(f.ids.get('invitation-add-names').disabled,true);
@@ -450,15 +450,15 @@ test('a pending invitation mutation blocks competing add and remove actions',asy
 });
 
 test('removing the last invitation keeps management available and new guests can be added later',async()=>{
-  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','Guest invitations').onclick();
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
   const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();await rowAction(f,row,'Remove silently').onclick();
   assert.equal(invitationRows(f).length,0);assert.match(f.ids.get('invitation-links-summary').textContent,/0 invitations/);
-  f.ids.get('invitation-links-close').onclick();assert.ok(f.findButton('event-list','Guest invitations'));await f.findButton('event-list','Guest invitations').onclick();
+  f.ids.get('invitation-links-close').onclick();assert.ok(f.findButton('event-list','✉️ Guest invitations'));await f.findButton('event-list','✉️ Guest invitations').onclick();
   f.ids.get('invitation-add-names').value='Sam';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});assert.ok(invitationRow(f,'Sam'));
 });
 
 test('refresh gets current responses without clearing a search, response filter or guest draft',async()=>{
-  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','Guest invitations').onclick();
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
   f.ids.get('invitation-links-search').value='alex';f.ids.get('invitation-links-search').oninput();f.ids.get('invitation-links-filter').value='yes';f.ids.get('invitation-links-filter').onchange();f.ids.get('invitation-add-names').value='Casey = ?';
   assert.equal(visibleInvitations(f).length,0);const fresh=managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:3,comment:'Bringing my family.'}]);f.setEvent({...f.getEvent(),invitationsVersion:'1111111111111111',invitees:[fresh]});
   await f.ids.get('invitation-links-refresh').onclick();
@@ -481,7 +481,7 @@ test('one-by-one guests append to an unsaved event list and preserve every atten
 
 test('individual guest controls reject duplicate names, malformed names, invalid counts and the guest limit without losing drafts',async()=>{
   const f=await harness(managedEvent({invitees:[managedInvite('Alex',11,[{id:8,name:'Alex',status:'yes',participants:2}])]}));
-  await f.findButton('event-list','Edit event').onclick();const original=f.ids.get('guest-names').value;
+  await f.findButton('event-list','✏️ Edit event').onclick();const original=f.ids.get('guest-names').value;
   f.ids.get('guest-single-name').value='alex';await f.ids.get('guest-single-add').onclick();assert.match(f.ids.get('guest-single-status').textContent,/already in the list/);assert.equal(f.ids.get('guest-names').value,original);
   f.ids.get('guest-single-name').value='Bad = 2';await f.ids.get('guest-single-add').onclick();assert.match(f.ids.get('guest-single-status').textContent,/without =/);
   f.ids.get('guest-single-name').value='Sam';f.ids.get('guest-single-mode').value='fixed';f.ids.get('guest-single-count').value='11';await f.ids.get('guest-single-add').onclick();assert.match(f.ids.get('guest-single-status').textContent,/1 to 10/);assert.equal(f.ids.get('guest-names').value,original);
@@ -490,7 +490,7 @@ test('individual guest controls reject duplicate names, malformed names, invalid
 
 test('individual invitation additions use current versions, preserve existing responses and keep a separate bulk draft',async()=>{
   const original=managedInvite('Alex',11,[{id:9,name:'Alex',status:'yes',participants:2}]);
-  const f=await harness(managedEvent({isOwner:false,isCoHost:true,invitees:[original]}));await f.findButton('event-list','Guest invitations').onclick();
+  const f=await harness(managedEvent({isOwner:false,isCoHost:true,invitees:[original]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
   f.ids.get('invitation-add-names').value='Bulk draft = ?';f.ids.get('invitation-single-name').value='Taylor';f.ids.get('invitation-single-mode').value='fixed';f.ids.get('invitation-single-mode').onchange();f.ids.get('invitation-single-count').value='4';
   await f.ids.get('invitation-single-add').onclick();
   const request=f.calls.find(call=>call.path.endsWith('/invitations/add'));assert.equal(request.body.guestNames,'Taylor = 4*');assert.equal(request.body.version,'0000000000000000');assert.match(request.body.requestId,/^[a-f0-9-]{36}$/i);
@@ -499,7 +499,7 @@ test('individual invitation additions use current versions, preserve existing re
 });
 
 test('individual invitation errors preserve settings and reuse the idempotency request when retried',async()=>{
-  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}),{invitationError:{message:'Please try again.'}});await f.findButton('event-list','Guest invitations').onclick();
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}),{invitationError:{message:'Please try again.'}});await f.findButton('event-list','✉️ Guest invitations').onclick();
   f.ids.get('invitation-single-name').value='Sam';f.ids.get('invitation-single-mode').value='confirm';f.ids.get('invitation-single-count').value='3';await f.ids.get('invitation-single-add').onclick();
   assert.equal(f.ids.get('invitation-single-name').value,'Sam');assert.equal(f.ids.get('invitation-single-mode').value,'confirm');assert.equal(f.ids.get('invitation-single-count').value,'3');assert.match(f.ids.get('invitation-single-status').textContent,/Please try again/);
   f.setInvitationError(null);await f.ids.get('invitation-single-add').onclick();const requests=f.calls.filter(call=>call.path.endsWith('/invitations/add'));assert.equal(requests[0].body.requestId,requests[1].body.requestId);assert.equal(f.getEvent().invitees.length,2);
@@ -508,38 +508,38 @@ test('individual invitation errors preserve settings and reuse the idempotency r
 test('guest roster opens manual additions and revokes the exact invitation mapped by response ID',async()=>{
   const wrong=managedInvite('Alex',11,[{id:18,name:'Sam',status:'yes',participants:2}]),right=managedInvite('Sam',12,[{id:19,name:'Alex',status:'maybe',participants:0}]);
   const f=await harness(managedEvent({invitees:[wrong,right],guestRoster:[{id:19,name:'Alex',status:'maybe',participants:0},{id:null,name:'Unopened',status:'unopened',participants:0}]}));
-  await f.findButton('event-list','Guest list').onclick();assert.equal(f.ids.get('guest-list-add').hidden,false);
+  await f.findButton('event-list','👥 Guest list').onclick();assert.equal(f.ids.get('guest-list-add').hidden,false);
   await f.findButton('guest-list-rows','🚫 Revoke invitation').onclick();assert.equal(f.ids.get('guest-list-dialog').open,false);assert.equal(f.ids.get('invitation-links-dialog').open,true);
   const row=invitationRow(f,'Sam'),panel=f.descendants(row).find(node=>node.className==='invitation-remove');assert.equal(panel.hidden,false);assert.equal(f.descendants(invitationRow(f,'Alex')).find(node=>node.className==='invitation-remove').hidden,true);
   await rowAction(f,row,'Remove silently').onclick();assert.equal(f.calls.find(call=>call.path.endsWith('/invitations/remove')).body.token,right.token);
-  f.ids.get('invitation-links-close').onclick();await f.findButton('event-list','Guest list').onclick();await f.ids.get('guest-list-add').onclick();assert.equal(f.ids.get('guest-list-dialog').open,false);assert.equal(f.ids.get('invitation-add').open,true);assert.equal(f.ids.get('invitation-single').open,true);assert.equal(f.ids.get('invitation-single-name').focused,true);
+  f.ids.get('invitation-links-close').onclick();await f.findButton('event-list','👥 Guest list').onclick();await f.ids.get('guest-list-add').onclick();assert.equal(f.ids.get('guest-list-dialog').open,false);assert.equal(f.ids.get('invitation-add').open,true);assert.equal(f.ids.get('invitation-single').open,true);assert.equal(f.ids.get('invitation-single-name').focused,true);
 });
 
 test('ticket-booking guest rosters omit named-invite add and revoke controls',async()=>{
-  const f=await harness(managedEvent({invitationMode:'tickets',invitees:[],guestRoster:[{id:19,name:'Alex',status:'yes',participants:1,confirmed:true}]}));await f.findButton('event-list','Guest list').onclick();
+  const f=await harness(managedEvent({invitationMode:'tickets',invitees:[],guestRoster:[{id:19,name:'Alex',status:'yes',participants:1,confirmed:true}]}));await f.findButton('event-list','👥 Guest list').onclick();
   assert.equal(f.ids.get('guest-list-add').hidden,true);assert.equal(f.ids.get('guest-list-invitations').hidden,true);assert.equal(f.findButton('guest-list-rows','🚫 Revoke invitation'),undefined);assert.ok(f.ids.get('guest-list-manage').onclick);
 });
 
 test('individual additions share the mutation guard and cannot update a closed invitation dialog',async()=>{
-  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','Guest invitations').onclick();
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
   const release=f.holdNextInvitationMutation();f.ids.get('invitation-single-name').value='Sam';const adding=f.ids.get('invitation-single-add').onclick();
   assert.equal(f.ids.get('invitation-single-add').disabled,true);assert.equal(f.ids.get('invitation-add-submit').disabled,true);assert.equal(f.ids.get('invitation-single-mode').disabled,true);
   await rowAction(f,invitationRow(f,'Alex'),'Remove invite').onclick();assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).length,0);
   f.ids.get('invitation-links-close').onclick();release();await adding;assert.equal(f.ids.get('invitation-links-dialog').open,false);assert.equal(f.ids.get('invitation-single-name').value,'Sam');
-  await f.findButton('event-list','Guest invitations').onclick();assert.ok(invitationRow(f,'Sam'));assert.equal(f.ids.get('invitation-single-name').value,'');assert.equal(f.ids.get('invitation-single-add').disabled,false);
+  await f.findButton('event-list','✉️ Guest invitations').onclick();assert.ok(invitationRow(f,'Sam'));assert.equal(f.ids.get('invitation-single-name').value,'');assert.equal(f.ids.get('invitation-single-add').disabled,false);
 });
 
 test('unopened roster revocation uses its personal link and finished events disable guest mutations',async()=>{
   const invite=managedInvite('Alex',11),f=await harness(managedEvent({invitees:[invite],guestRoster:[{id:null,name:'Alex',status:'unopened',participants:0}]}));
-  await f.findButton('event-list','Guest list').onclick();await f.findButton('guest-list-rows','🚫 Revoke invitation').onclick();
+  await f.findButton('event-list','👥 Guest list').onclick();await f.findButton('guest-list-rows','🚫 Revoke invitation').onclick();
   const row=invitationRow(f,'Alex');assert.equal(f.descendants(row).find(node=>node.className==='invitation-remove').hidden,false);assert.equal(rowAction(f,row,'Notify guest').disabled,true);
-  f.ids.get('invitation-links-close').onclick();f.setEvent({...f.getEvent(),group:'Past events'});await f.findButton('event-list','Guest list').onclick();assert.equal(f.ids.get('guest-list-add').disabled,true);assert.equal(f.findButton('guest-list-rows','🚫 Revoke invitation').disabled,true);
+  f.ids.get('invitation-links-close').onclick();f.setEvent({...f.getEvent(),group:'Past events'});await f.findButton('event-list','👥 Guest list').onclick();assert.equal(f.ids.get('guest-list-add').disabled,true);assert.equal(f.findButton('guest-list-rows','🚫 Revoke invitation').disabled,true);
   await f.ids.get('guest-list-invitations').onclick();assert.equal(f.ids.get('invitation-single-add').disabled,true);assert.equal(f.ids.get('invitation-add-submit').disabled,true);await f.ids.get('invitation-single-add').onclick();assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/add')).length,0);
 });
 
 test('the edit page exposes cancel and delete only to the owner and hides them for new events',async()=>{
   const owner=await harness(eventFixture());
-  await owner.findButton('event-list','Edit event').onclick();
+  await owner.findButton('event-list','✏️ Edit event').onclick();
   assert.equal(owner.ids.get('edit-event-actions').hidden,false);
   assert.equal(owner.ids.get('edit-cancel-event').disabled,false);
   assert.equal(owner.ids.get('create-view').hidden,false);
@@ -549,7 +549,7 @@ test('the edit page exposes cancel and delete only to the owner and hides them f
   assert.equal(owner.ids.get('event-end-dialog').open,false);
 
   const cohost=await harness(eventFixture({isOwner:false,isCoHost:true}));
-  await cohost.findButton('event-list','Edit event').onclick();
+  await cohost.findButton('event-list','✏️ Edit event').onclick();
   assert.equal(cohost.ids.get('edit-event-actions').hidden,true);
   assert.equal(await cohost.ids.get('edit-cancel-event').onclick(),false);
   assert.equal(await cohost.ids.get('edit-delete-event').onclick(),false);
@@ -559,7 +559,7 @@ test('the edit page exposes cancel and delete only to the owner and hides them f
 
 test('edit cancellation can delete in one request and clears the stale editor and cached event',async()=>{
   const original=eventFixture(),f=await harness(original);
-  await f.findButton('event-list','Edit event').onclick();
+  await f.findButton('event-list','✏️ Edit event').onclick();
   f.ids.get('title').value='Unsaved title';
   const ending=f.ids.get('edit-cancel-event').onclick();
   assert.equal(f.ids.get('event-end-dialog').open,true);
@@ -577,7 +577,7 @@ test('edit cancellation can delete in one request and clears the stale editor an
   assert.equal(f.ids.get('create-view').hidden,true);
   assert.equal(f.ids.get('events-view').hidden,false);
   assert.equal(f.descendants(f.ids.get('event-list')).filter(node=>node.tag==='article').length,0);
-  assert.equal(f.findButton('event-list','Edit event'),undefined);
+  assert.equal(f.findButton('event-list','✏️ Edit event'),undefined);
   assert.equal(await f.ids.get('edit-cancel-event').onclick(),null,'the stale edit target was cleared');
   assert.equal(f.calls.filter(call=>/\/(?:cancel|delete)$/.test(call.path)).length,1);
   f.ids.get('hero-create').onclick();
@@ -588,7 +588,7 @@ test('edit cancellation can delete in one request and clears the stale editor an
 
 test('edit cancellation keeps the record unless delete is explicitly selected',async()=>{
   const original=eventFixture(),f=await harness(original);
-  await f.findButton('event-list','Edit event').onclick();
+  await f.findButton('event-list','✏️ Edit event').onclick();
   const ending=f.ids.get('edit-cancel-event').onclick();
   assert.equal(f.ids.get('event-end-delete').checked,false);
   await f.ids.get('event-end-confirm').onclick();
@@ -601,7 +601,7 @@ test('edit cancellation keeps the record unless delete is explicitly selected',a
 
 test('edit delete opens the dedicated permanent deletion dialog and honours Keep event',async()=>{
   const f=await harness(eventFixture());
-  await f.findButton('event-list','Edit event').onclick();
+  await f.findButton('event-list','✏️ Edit event').onclick();
   const keeping=f.ids.get('edit-delete-event').onclick();
   assert.equal(f.ids.get('event-end-title').textContent,'Delete event?');
   assert.equal(f.ids.get('event-end-delete-option').hidden,true);

@@ -28,6 +28,7 @@ Built for sports clubs, friends, community organisers and volunteer groups, XEve
 | Optional ticket QR and check-in | Confirmed guests get a unique ticket code. Enable QR codes to add a scannable ticket; the organiser can also enter its code to verify current approval and payment and check in the whole group. Repeat checks flag an existing check-in. Cancelled, revoked and finished tickets fail validation. QR codes contain no hosting URL. |
 | Guest information | Collect ticket names and opt-in phone numbers or comments. With phone collection off, guests are never asked for a phone number. |
 | Individual request approval | Approve or reject each acceptance request separately before issuing an invitation ticket. |
+| Event co-host | Privately invite one co-host with a one-use Telegram link. Co-hosts help edit details, manage guests, shared media and check-in; the owner controls payments, co-host access, cancellation and deletion. |
 | Location for approved ticket holders only | Enable approval and location privacy to withhold the address and private invitation details until the organiser approves the guest. |
 | Guest privacy | Choose whether guests can see the guest list, upload media or browse shared media. |
 | Event reminders | Personal and default reminders, including 2, 3 or 4 hours before the event. |
@@ -73,6 +74,14 @@ Personal invitation previews and shared messages greet the guest by name, show t
 XEvents generates a separate link for each person and shows their organiser-assigned name when they open it. Accept, Decline, Tentative and Later do not ask for a name again. Send each link only to its intended guest: it binds to the first Telegram account that opens it, rather than verifying a person's real-world identity. Another account cannot claim that link. Names and unused links stay private to the organiser. Saved personal links remain stable during edits; removing an unopened guest revokes their link. Claimed invitations cannot be removed or renamed, and their count settings cannot be changed through the guest-list editor. Guests can update editable counts through **Change number**. Named invitation events are private and do not appear in Explore.
 
 Editing fetches the latest event data, including title, address, description, invitation message, guest list and payment settings, and previews the existing banner. Saving without a new image preserves the banner.
+
+### Invite a co-host
+
+In **My events**, open an event’s three-dot menu and choose **Co-host**. Create a one-use link and share it privately with someone you trust: the first Telegram account to open it becomes that event’s co-host. The panel shows their Telegram name and @username, or **No Telegram username** when they do not have one. Opening the Mini App alone does not claim the role.
+
+Each event supports one active co-host. They can edit the schedule, banner and guest options; review and manage guest responses; share personal invitations; browse and contribute media; and check tickets in. Their events appear as **Co-hosting**. Payment settings remain read-only for the co-host, and only the owner can invite or remove a co-host, cancel or delete the event.
+
+The owner can replace or cancel an unused invite link, or revoke the current co-host’s access and invite someone new. A replacement invalidates the previous unused link; revocation removes management access immediately. Existing guest responses and tickets stay intact. If someone claims a link while a confirmation is open, the panel refreshes and asks the owner to review the new state before trying again.
 
 ### Optional QR codes
 

@@ -9,17 +9,21 @@ const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 let state = { events: [], preference: {} }, activeEvent = null, createdEvent = null, previewSequence = 0;
 let requestId = crypto.randomUUID();
 let formReady=false;
+function isManager(event){return event?.isManager===true || event?.isOwner===true;}
 function priceLabel(e){if(['bank','link'].includes(e.paymentMethod))return 'Paid · '+e.displayPrice;return e.starPrice ? '⭐ '+e.starPrice+' Stars '+(e.starPricing==='person'?'per person':'per group') : 'Free';}
 function priceEstimate(e){const currency=state.preference.currency || state.localCurrency;const rate=state.pricing?.rates?.[currency];return e.starPrice && rate ? '≈ '+new Intl.NumberFormat(undefined,{style:'currency',currency,currencyDisplay:'code'}).format(e.starPrice*rate)+' · estimated organiser reward; guest purchase cost varies' : '';}
 function priceTag(e){return element('span',priceLabel(e),'tag');}
 function updatePricePreview(){
   const value=Number($('stars-price').value);
   const method=$('stars-enabled').checked ? $('payment-method').value : 'free';
-  $('payment-terms').required=method!=='free' && !compactPicker;
-  $('payment-terms').disabled=method==='free' || compactPicker;
-  $('stars-price').disabled=method!=='stars' || compactPicker;
+  const cohostEditing=!!activeEvent && !activeEvent.isOwner && isManager(activeEvent),readOnly=compactPicker || cohostEditing;
+  $('payment-owner-note').hidden=!cohostEditing;
+  for(const id of ['stars-enabled','payment-method','stars-pricing'])$(id).disabled=readOnly;
+  $('payment-terms').required=method!=='free' && !readOnly;
+  $('payment-terms').disabled=method==='free' || readOnly;
+  $('stars-price').disabled=method!=='stars' || readOnly;
   for (const [id, active] of [['display-price',['bank','link'].includes(method)],['payment-url',method==='link'],['payment-instructions',method==='bank']]) {
-    const input=$(id); if(input) { input.required=active && !compactPicker; input.disabled=!(id==='payment-instructions' ? ['bank','link'].includes(method) : active) || compactPicker; }
+    const input=$(id); if(input) { input.required=active && !readOnly; input.disabled=!(id==='payment-instructions' ? ['bank','link'].includes(method) : active) || readOnly; }
   }
   $('payment-terms').setCustomValidity($('payment-terms').required && !$('payment-terms').value.trim() ? 'Enter payment and refund terms for this paid event.' : '');
   $('manual-price-fields').hidden=method==='stars' || method==='free';$('stars-price-fields').hidden=method!=='stars';$('payment-link-fields').hidden=method!=='link';
@@ -92,12 +96,12 @@ function inviteText(e,guest){
   const participants=guest?.participants || 1;
   return [guest ? `Dear ${guest.name},` : '',`You are invited to ${e.title}${when ? ' on '+when : ''}.`,location,guest ? askCount ? 'Please choose how many people will attend.' : `Host has reserved ${participants} ${participants===1?'place':'places'} for you.` : '',e.inviteMessage,'Please respond below.'].filter(Boolean).join('\n\n');
 }
-function share(e) { if(e.invitationMode==='named' && e.isOwner)return openNamedLinks(e);openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(inviteText(e))}`); }
+function share(e) { if(e.invitationMode==='named' && isManager(e))return openNamedLinks(e);openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(inviteText(e))}`); }
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
 function action(text, fn, className = 'secondary') { const b = element('button', text, className); b.type = 'button'; b.onclick = async () => { if(b.disabled)return; b.disabled=true; try { await fn(); } catch(error) { notice(error.message); } finally { b.disabled=false; } }; return b; }
 async function openGuestList(id) {
   const {event:e}=await api(`events/${id}`);
-  if(!e.isOwner)return;
+  if(!isManager(e))return;
   const roster=e.guestRoster || [],accepted=roster.filter(g=>g.status==='yes');
   $('guest-list-title').textContent=e.title+' · Guest list';
   $('guest-list-summary').textContent=`Accepted: ${accepted.length} responses · ${accepted.reduce((sum,g)=>sum+g.participants,0)} people. Confirmed: ${roster.filter(g=>g.confirmed).reduce((sum,g)=>sum+g.participants,0)} people.`;
@@ -124,7 +128,7 @@ async function openTicket(id) {
 }
 let checkinGeneration=0;
 async function openCheckin(id) {
-  const {event}=await api(`events/${id}`);if(!event.isOwner)return;
+  const {event}=await api(`events/${id}`);if(!isManager(event))return;
   const generation=++checkinGeneration;let busy=false,verifiedCode=null;
   const input=$('checkin-code'),result=$('checkin-result'),confirm=$('checkin-confirm');
   input.disabled=false;$('checkin-check').disabled=false;$('checkin-scan').disabled=false;
@@ -156,9 +160,10 @@ const {openGallery,showQr}=setupGallery({$,api,element,action,go,notice,openTele
 function confirmAction(message, operation) {
   const dialog = $('confirm-dialog');
   if (dialog.open) return Promise.resolve(false);
-  $('confirm-title').textContent = operation === 'delete' ? 'Delete event?' : 'Cancel event?';
+  const labels={delete:['Delete event?','Delete event','Keep event'],cancel:['Cancel event?','Cancel event','Keep event'],'cohost-revoke':['Revoke co-host access?','Revoke access','Keep access'],'cohost-cancel-link':['Cancel co-host invite?','Cancel invite link','Keep link'],'cohost-rotate':['Replace co-host invite?','Create new link','Keep current link']}[operation] || ['Confirm action','Confirm','Back'];
+  $('confirm-title').textContent = labels[0];
   $('confirm-message').textContent = message;
-  $('confirm-proceed').textContent = operation === 'delete' ? 'Delete event' : 'Cancel event';
+  $('confirm-proceed').textContent = labels[1];$('confirm-back').textContent=labels[2];
   return new Promise(resolve => {
     const finish = accepted => { dialog.close(); resolve(accepted); };
     $('confirm-back').onclick = () => finish(false);
@@ -167,13 +172,58 @@ function confirmAction(message, operation) {
     dialog.showModal(); $('confirm-back').focus();
   });
 }
+let cohostEventId=null,cohostGeneration=0;
+function renderCoHost(event){
+  const cohost=event.cohost,link=event.cohostInviteUrl;
+  $('cohost-event-title').textContent=event.title;
+  $('cohost-identity').hidden=!cohost;
+  $('cohost-identity').textContent=cohost ? (cohost.name || 'Telegram user')+' · '+(cohost.username ? '@'+cohost.username.replace(/^@/,'') : 'No Telegram username') : '';
+  $('cohost-empty').hidden=!!cohost;$('cohost-empty').textContent=link ? 'Invite link ready. The first Telegram account to open it becomes your co-host. Share it privately with one trusted person.' : 'No co-host yet. Create a one-use link for someone you trust.';
+  $('cohost-link').hidden=!link;$('cohost-link').textContent=link || '';
+  for(const id of ['cohost-copy','cohost-share'])$(id).hidden=!link;
+  $('cohost-generate').hidden=!!cohost;$('cohost-generate').textContent=link ? 'Create new invite link' : 'Create invite link';
+  $('cohost-revoke').hidden=!cohost && !link;$('cohost-revoke').textContent=cohost ? 'Revoke co-host access' : 'Cancel invite link';
+  $('cohost-copy').onclick=async()=>{try{await navigator.clipboard.writeText(link);$('cohost-status').textContent='Co-host invite link copied.';}catch{$('cohost-status').textContent='Select and copy the invite link shown above.';}};
+  $('cohost-share').onclick=()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('Join me as co-host for '+event.title+'. This link is for you only.')}`);
+  $('cohost-generate').onclick=()=>changeCoHost(event,'invite');
+  $('cohost-revoke').onclick=()=>changeCoHost(event,'revoke');
+}
+async function changeCoHost(event,operation){
+  if(!event.isOwner)return;
+  if(operation==='invite' && event.cohostInviteUrl && !await confirmAction('Replace the unused co-host invite for “'+event.title+'”? The previous link will stop working.','cohost-rotate'))return;
+  if(operation==='revoke'){
+    const message=event.cohost ? 'Remove '+(event.cohost.name || 'your co-host')+' from “'+event.title+'”? They will immediately lose management access. You can invite another co-host afterwards.' : 'Cancel the unused co-host invite for “'+event.title+'”? That link will stop working.';
+    if(!await confirmAction(message,event.cohost?'cohost-revoke':'cohost-cancel-link'))return;
+  }
+  for(const id of ['cohost-generate','cohost-revoke','cohost-copy','cohost-share'])$(id).disabled=true;
+  $('cohost-status').textContent='Saving…';
+  try{
+    const {event:updated}=await api(`events/${event.id}/cohost/${operation}`,{version:event.cohostVersion || 'none'});
+    const index=state.events.findIndex(item=>item.id===updated.id);if(index>=0)state.events[index]=updated;
+    renderEvents();renderHome();
+    if(cohostEventId===event.id && $('cohost-dialog').open){renderCoHost(updated);$('cohost-status').textContent=operation==='invite' ? 'One-use co-host invite created.' : event.cohost ? 'Co-host access revoked.' : 'Invite link cancelled.';}
+  }catch(error){
+    if(cohostEventId===event.id && $('cohost-dialog').open){
+      try{const {event:latest}=await api(`events/${event.id}`);if(latest.isOwner && cohostEventId===event.id){renderCoHost(latest);const index=state.events.findIndex(item=>item.id===latest.id);if(index>=0)state.events[index]=latest;}}catch{}
+      $('cohost-status').textContent=error.message+' Review the current co-host before trying again.';
+    }
+  }
+  finally{for(const id of ['cohost-generate','cohost-revoke','cohost-copy','cohost-share'])$(id).disabled=false;}
+}
+async function openCoHost(id){
+  const generation=++cohostGeneration,{event}=await api(`events/${id}`);if(generation!==cohostGeneration)return;
+  if(!event.isOwner)throw Error('Only the event owner can manage the co-host.');
+  cohostEventId=id;renderCoHost(event);$('cohost-status').textContent='';$('cohost-dialog').showModal();
+}
+$('cohost-close').onclick=()=>$('cohost-dialog').close();
+$('cohost-dialog').onclose=()=>{cohostGeneration++;cohostEventId=null;};
 function renderHome(){
-  const now=Date.now(),events=state.events.filter(e=>!e.cancelled && (e.isOwner || ['yes','maybe'].includes(e.status)) && e.startsAt);
+  const now=Date.now(),events=state.events.filter(e=>!e.cancelled && (isManager(e) || ['yes','maybe'].includes(e.status)) && e.startsAt);
   for(const [id,active] of [['home-ongoing',true],['home-upcoming',false]]){
     const list=$(id);list.replaceChildren();
     const entries=events.filter(e=>active ? Date.parse(e.startsAt)<=now && (e.endsAt ? Date.parse(e.endsAt)>now : dateInZone(e.startsAt,selectedZone())===dateInZone(now,selectedZone())) : Date.parse(e.startsAt)>now).sort((a,b)=>Date.parse(a.startsAt)-Date.parse(b.startsAt));
     if(!entries.length)list.append(element('p',active?'No ongoing events.':'No upcoming events yet.','muted'));
-    for(const e of entries){const label=e.isOwner?'You’re hosting':e.status==='maybe'?'Maybe':e.approval==='pending'?'Awaiting approval':(e.starPrice || ['bank','link'].includes(e.paymentMethod)) && e.paymentStatus!=='paid'?'Awaiting payment':'You’re attending';const card=element('article','','event-card');card.append(priceTag(e),element('h3',e.title),element('p',format(e)),element('p',label,'small muted'));
+    for(const e of entries){const label=e.isCoHost?'Co-hosting':e.isOwner?'You’re hosting':e.status==='maybe'?'Maybe':e.approval==='pending'?'Awaiting approval':(e.starPrice || ['bank','link'].includes(e.paymentMethod)) && e.paymentStatus!=='paid'?'Awaiting payment':'You’re attending';const card=element('article','','event-card');card.append(priceTag(e),element('h3',e.title),element('p',format(e)),element('p',label,'small muted'));
       if(active && !e.endsAt)card.append(element('p','Started today · finish time not set.','small muted'));
       card.append(action('Open event in chat',()=>openTelegram(e.inviteUrl),'primary'));list.append(card);}
   }
@@ -194,7 +244,7 @@ function renderEvents() {
   $('zone-note').textContent = `Your local time · ${selectedZone().replaceAll('_', ' ')}`;
   const list = $('event-list'); list.replaceChildren();
   $('events-heading').textContent = listFilter === 'pending' ? 'Pending invitations' : 'Your events';
-  const events = [...state.events].filter(e => !e.cancelled && (e.isOwner || e.status !== 'no') && (listFilter !== 'pending' || (!e.isOwner && e.invitationMode!=='tickets' && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
+  const events = [...state.events].filter(e => !e.cancelled && (isManager(e) || e.status !== 'no') && (listFilter !== 'pending' || (!isManager(e) && e.invitationMode!=='tickets' && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
   if (!events.length) { const empty = element('div', '', 'empty'); empty.append(element('strong', listFilter === 'pending' ? 'You’re all caught up.' : 'A calendar full of possibilities.'), element('span', listFilter === 'pending' ? 'No unanswered invitations.' : 'Create your first event, or open an invitation in the bot to join one.')); list.append(empty); }
   let lastGroup;
   events.sort((a,b) => ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(a.group) - ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(b.group) || (a.group === 'Past events' ? (b.startsAt || '').localeCompare(a.startsAt || '') : (a.startsAt || '').localeCompare(b.startsAt || '')));
@@ -205,7 +255,7 @@ function renderEvents() {
       const img = document.createElement('img'); img.className = 'event-banner'; img.alt = `Banner for ${e.title}`; card.append(img);
       fetch(`/api/events/${e.id}/banner`, { headers: { Authorization: 'tma ' + initData } }).then(r => { if (!r.ok) throw new Error(); return r.blob(); }).then(blob => { if (!img.isConnected) return; const old = bannerUrls.get(e.id); if (old) URL.revokeObjectURL(old); const url = URL.createObjectURL(blob); bannerUrls.set(e.id,url); img.src=url; }).catch(() => img.remove());
     }
-    const meta = element('div', '', 'event-meta'); meta.append(element('span', e.cancelled ? 'CANCELLED' : e.isOwner ? 'YOU’RE HOSTING' : 'INVITED', e.cancelled ? 'tag cancelled' : 'tag'));
+    const meta = element('div', '', 'event-meta'); meta.append(element('span', e.cancelled ? 'CANCELLED' : e.isCoHost ? 'CO-HOSTING' : e.isOwner ? 'YOU’RE HOSTING' : 'INVITED', e.cancelled ? 'tag cancelled' : 'tag'));
     meta.append(priceTag(e),element('span',e.invitationMode==='tickets' ? 'TICKETS' : e.invitationMode==='named' ? 'NAMED INVITATIONS' : 'RSVP','tag'));
     if (e.status) meta.append(element('span', e.invitationMode==='tickets' ? e.status==='yes' ? e.ticket ? 'Ticket confirmed' : 'Ticket requested' : 'Not booked' : { yes: 'Accepted', no: 'Not coming', maybe: 'Tentative', later: 'Respond later' }[e.status], 'tag'));
     card.append(meta, element('h3', e.title), element('p', '🗓 ' + format(e)), element('p', '📍 ' + (e.location || (e.requireApproval ? 'Shared after organiser approval' : 'Shared after acceptance')), 'muted'));
@@ -221,21 +271,22 @@ function renderEvents() {
     if (e.counts) card.append(element('div', e.invitationMode==='tickets' ? `${e.counts.yes} confirmed bookings · ${e.counts.participants} people · ${e.counts.pending} approval requests · ${e.counts.awaitingPayment} awaiting payment` : `${e.counts.participants} people coming (${e.counts.yes} responses) · ${e.counts.pendingParticipants || 0} people awaiting approval · ${e.counts.awaitingPayment || 0} awaiting payment · ${e.counts.maybe} tentative · ${e.counts.no} declined · ${e.counts.later} later`, 'counts'));
     else card.append(element('div', 'Guest list is private to the organiser.', 'counts'));
     const actions = element('div', '', 'event-actions'); actions.append(action('Open event in chat ↗', () => openTelegram(e.inviteUrl), 'primary'));
-    if (e.isOwner && !e.cancelled) actions.append(action('Edit event', () => editEvent(e.id)));
-    if(e.isOwner)actions.append(action('Guest list',()=>openGuestList(e.id)));
-    if(e.isOwner && !e.cancelled)actions.append(action(e.qrEnabled!==false?'Scan tickets':'Check tickets',()=>openCheckin(e.id)));
+    if (isManager(e) && !e.cancelled) actions.append(action('Edit event', () => editEvent(e.id)));
+    if(isManager(e))actions.append(action('Guest list',()=>openGuestList(e.id)));
+    if(isManager(e) && !e.cancelled)actions.append(action(e.qrEnabled!==false?'Scan tickets':'Check tickets',()=>openCheckin(e.id)));
     if(e.ticket && e.qrEnabled!==false)actions.append(action('Ticket QR',()=>openTicket(e.id)));
-    if((e.starPrice || ['bank','link'].includes(e.paymentMethod)) && !e.isOwner && e.status==='yes' && e.approval==='approved' && e.paymentStatus!=='paid')actions.append(action(e.starPrice?'⭐ Pay with Stars':'Payment instructions',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=pay_'+e.id)));
-    if(e.invitationMode==='named' && e.isOwner)actions.append(action('Guest invitations',()=>openNamedLinks(e)));else actions.append(action('Copy link', async () => { try { await navigator.clipboard.writeText(e.inviteUrl); notice('✓ Event link copied.'); } catch { notice('Could not copy the link. Use Share invite under the three-dot menu.'); } }));
+    if((e.starPrice || ['bank','link'].includes(e.paymentMethod)) && !isManager(e) && e.status==='yes' && e.approval==='approved' && e.paymentStatus!=='paid')actions.append(action(e.starPrice?'⭐ Pay with Stars':'Payment instructions',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=pay_'+e.id)));
+    if(e.invitationMode==='named' && isManager(e))actions.append(action('Guest invitations',()=>openNamedLinks(e)));else actions.append(action('Copy link', async () => { try { await navigator.clipboard.writeText(e.inviteUrl); notice('✓ Event link copied.'); } catch { notice('Could not copy the link. Use Share invite under the three-dot menu.'); } }));
     const more = document.createElement('details'); more.className = 'event-more';
     const moreToggle = element('summary','⋯'); moreToggle.setAttribute('aria-label',`More options for ${e.title}`);
     const extraActions = element('div','','event-more-panel'); more.append(moreToggle,extraActions);
     extraActions.append(action('Share invite', () => share(e)));
+    if(e.isOwner && !e.cancelled)extraActions.append(action('Co-host',()=>openCoHost(e.id)));
     if(e.starPrice || ['bank','link'].includes(e.paymentMethod))extraActions.append(action(e.isOwner?'Payments & refunds':'Payment support',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=payments')));
-    if (e.isOwner || (e.status==='yes' && e.permissions.viewMedia)) {
+    if (isManager(e) || (e.status==='yes' && e.permissions.viewMedia)) {
       actions.append(action('🗂 Shared media', () => openGallery(e.id)));
     }
-    if (e.isOwner && e.uploadLink) extraActions.append(e.qrEnabled!==false ? action('Upload link & QR code', () => showQr(e.id)) : action('Share upload link',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.uploadLink)}`)));
+    if (isManager(e) && e.uploadLink) extraActions.append(e.qrEnabled!==false ? action('Upload link & QR code', () => showQr(e.id)) : action('Share upload link',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.uploadLink)}`)));
     if (e.isOwner && !e.cancelled) {
       for (const operation of ['cancel','delete']) extraActions.append(action(operation === 'cancel' ? 'Cancel event' : 'Delete event', async () => {
         const text = operation === 'delete' ? `Permanently delete “${e.title}”, including saved responses and media references? Accepted and tentative guests will be notified. Previously sent Telegram copies remain.` : `Cancel “${e.title}”? Accepted and tentative guests will be notified.`;
@@ -245,7 +296,7 @@ function renderEvents() {
       }));
     }
     if (e.location) extraActions.append(action('Copy address', async () => { try { await navigator.clipboard.writeText(e.location); notice('✓ Address copied.'); } catch { notice('Select and copy the address shown on the event.'); } }));
-    if (e.upcoming && (e.isOwner || e.status==='yes')) {
+    if (e.upcoming && (isManager(e) || e.status==='yes')) {
       const label = element('label', 'Event reminder'); const select = document.createElement('select'); select.setAttribute('aria-label', `Reminder for ${e.title}`);
       for (const [minutes,text] of [[0,'Off'],[15,'15 minutes before'],[60,'1 hour before'],[120,'2 hours before'],[180,'3 hours before'],[240,'4 hours before'],[1440,'1 day before']]) { const option = element('option',text); option.value=minutes; option.disabled=minutes > 0 && Date.parse(e.startsAt)-minutes*60000 <= Date.now(); select.append(option); }
       select.value=e.reminder || 0;
@@ -271,7 +322,7 @@ $('invitation-links-close').onclick=()=>$('invitation-links-dialog').close();
 async function openNamedLinks(event){
   try{
     const {event:e}=await api(`events/${event.id}`);
-    if(!e.isOwner)throw Error('Only the organiser can see invitation links.');
+    if(!isManager(e))throw Error('Only event managers can see invitation links.');
     const list=$('invitation-links-list');list.replaceChildren();
     for(const guest of e.invitees || []){
       const count=guest.participants || 1,countLabel=guest.participantMode==='ask' || (!guest.participants && e.askParticipantCount) ? 'Guest chooses attendee count' : count+' '+(count===1?'attendee':'attendees')+(guest.participants ? guest.participantMode==='confirm' ? ' · Confirm count on acceptance' : ' · Guest can change count' : '');
@@ -360,7 +411,7 @@ async function preview() {
 async function refresh() {
   const data = await api('bootstrap'); state = data;
   $('connection-status').textContent=`Connected as ${data.user.firstName}${data.user.id ? ' · Telegram ID '+data.user.id : ''}${data.user.isSuperAdmin ? ' · Super admin' : ''}`;
-  const hasPending = data.events.some(e => e.invitationMode!=='tickets' && !e.isOwner && !e.cancelled && e.status === 'later');
+  const hasPending = data.events.some(e => e.invitationMode!=='tickets' && !isManager(e) && !e.cancelled && e.status === 'later');
   document.querySelector('[data-tab="pending"]').hidden = !hasPending;
   if (!hasPending && listFilter === 'pending') go('events');
   $('admin-tab').hidden = !data.user.isSuperAdmin;
@@ -561,7 +612,7 @@ if (!initData) {
     else if (query.get('qr')) await showQr(query.get('qr'));
     else if(query.get('ticket'))await openTicket(query.get('ticket'));
     else if(query.get('checkin'))await openCheckin(query.get('checkin'));
-    else if (query.get('event')) { const event = state.events.find(e => e.id === query.get('event')); if (event?.isOwner && !event.cancelled) await editEvent(event.id); }
+    else if (query.get('event')) { const event = state.events.find(e => e.id === query.get('event')); if (isManager(event) && !event.cancelled) await editEvent(event.id); }
     else go('home');
   } catch (e) { window.reportAppError?.(e,'Loading planner');notice(e.message); $('event-list').replaceChildren(element('div', 'Could not load your events. Tap Refresh to try again.', 'empty')); }
 }

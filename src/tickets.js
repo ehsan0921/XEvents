@@ -2,6 +2,7 @@ import qrcode from 'qrcode-generator';
 import {randomBytes} from 'node:crypto';
 import {confirmed,participantCount} from './permissions.js';
 import {InputError} from './time.js';
+import {isManager} from './cohosts.js';
 
 export function issueTicket(e,id) {
   const g=e?.guests[id];
@@ -15,7 +16,7 @@ export function issueTicket(e,id) {
   return {title:e.title,name:g.name,code:g.ticket,participants:participantCount(e,g),image,checkedInAt:e.checkIns?.[g.ticket]?.at || null};
 }
 export function verifyTicket(e,actor,input,checkIn=false,now=Date.now()) {
-  if(!e || e.owner!==actor)throw new InputError('Only the organiser can check tickets.');
+  if(!isManager(e,actor))throw new InputError('Only an organiser can check tickets.');
   if(typeof input!=='string' || input.length>100)return {valid:false,reason:'Invalid ticket code.'};
   const value=input.trim().toUpperCase();
   const scanned=value.match(/^XE1:([A-F0-9]{16}):([A-F0-9]{12})$/);

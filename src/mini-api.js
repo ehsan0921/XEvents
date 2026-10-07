@@ -3,6 +3,7 @@ import {issueTicket,verifyTicket} from './tickets.js';
 import {profileFields,profilePreference,profilePhotoApi} from './profile.js';
 import {readOnlinePricing} from './exchange.js';
 import {invitationMode,invitationSettings,namedLink} from './invitations.js';
+import {isManager,cohostLink,cohostVersion,createCohostInvite,revokeCohost} from './cohosts.js';
 import { authenticate } from './mini-auth.js';
 import { parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
@@ -67,30 +68,37 @@ function eventSettings(input, event = {}) {
   if (event.startsAt && deadline && Date.parse(deadline) > Date.parse(event.startsAt)) throw new InputError('The response deadline must be at or before the event starts.');
   return result;
 }
+function cohostSettings(input,event) {
+  const values={paymentMethod:paymentMethod(event),starPrice:event.starPrice || 0,starPricing:event.starPricing || 'group',displayPrice:event.displayPrice || '',paymentInstructions:event.paymentInstructions || '',paymentUrl:event.paymentUrl || '',paymentTerms:event.paymentTerms || ''};
+  for(const [key,value] of Object.entries(values))if(input[key]!==undefined && input[key]!==value)throw new InputError('Only the event owner can change payment settings.');
+  if(input.invitationMode!==undefined && input.invitationMode!==invitationMode(event))throw new InputError('Only the event owner can change the invitation mode.');
+}
 export function publicEvent(e, id, username) {
+  const manager=isManager(e,id),owner=e.owner===id;
   return {
     invitationMode:invitationMode(e),guestName:e.owner!==id ? e.guests[id]?.name || null : null,
     askPhone:asksPhone(e),askComments:asksComments(e),
-    ...(e.owner===id ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,approval:g.approval || null,confirmed:confirmed(e,g),participants:g.status==='yes'?participantCount(e,g):0,paymentStatus:g.payment?.status || null})),...Object.values(e.invitees || {}).filter(g=>!g.claimedBy).map(g=>({id:null,name:g.name,status:'unopened',participants:0,confirmed:false}))]} : {}),
+    ...(manager ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,approval:g.approval || null,confirmed:confirmed(e,g),participants:g.status==='yes'?participantCount(e,g):0,paymentStatus:g.payment?.status || null})),...Object.values(e.invitees || {}).filter(g=>!g.claimedBy).map(g=>({id:null,name:g.name,status:'unopened',participants:0,confirmed:false}))]} : {}),
     inviteMessage:e.inviteMessage || '',qrEnabled:e.qrEnabled!==false,
-    ...(e.owner===id ? {invitees:Object.entries(e.invitees || {}).map(([token,g])=>({name:g.name,participants:g.participants || null,participantMode:g.participantMode || null,claimed:!!g.claimedBy,status:g.claimedBy ? e.guests[g.claimedBy]?.status : null,url:namedLink(e,token,username)}))} : {}),
+    ...(manager ? {invitees:Object.entries(e.invitees || {}).map(([token,g])=>({name:g.name,participants:g.participants || null,participantMode:g.participantMode || null,claimed:!!g.claimedBy,status:g.claimedBy ? e.guests[g.claimedBy]?.status : null,url:namedLink(e,token,username)})),cohost:e.cohost ? {id:e.cohost.id,name:e.cohost.name,username:e.cohost.username || '',joinedAt:e.cohost.joinedAt}:null} : {}),
+    ...(owner ? {cohostInviteUrl:cohostLink(e,username),cohostVersion:cohostVersion(e)} : {}),
     id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
     endsAt: e.endsAt || null, durationMinutes: e.durationMinutes || null, endMode: e.endMode || 'none', endDate: e.endDate || '', endTime: e.endTime || '',
-    isOwner: e.owner === id, cancelled: e.cancelled, inviteUrl: `https://t.me/${username}?start=e_${e.id}`,
+    isOwner: owner, isManager:manager,isCoHost:!owner && manager,cancelled: e.cancelled, inviteUrl: `https://t.me/${username}?start=e_${e.id}`,
     permissions: permissions(e),
     isPublic: e.isPublic === true,
     paymentMethod:paymentMethod(e),displayPrice:e.displayPrice || '',
-    ...(e.owner === id || (e.guests[id]?.status === 'yes' && (!e.requireApproval || e.guests[id]?.approval === 'approved')) ? {paymentInstructions:e.paymentInstructions || '',paymentUrl:e.paymentUrl || ''} : {}),
+    ...(manager || (e.guests[id]?.status === 'yes' && (!e.requireApproval || e.guests[id]?.approval === 'approved')) ? {paymentInstructions:e.paymentInstructions || '',paymentUrl:e.paymentUrl || ''} : {}),
     starPrice:e.starPrice || 0, starPricing:e.starPricing || 'group', paymentTerms:e.paymentTerms || '', paymentStatus:e.guests[id]?.payment?.status || null,
     defaultReminder: e.defaultReminder || 0,
     mediaCount: can(e, id, 'viewMedia') ? e.media?.length || 0 : null,
     imageCount: can(e, id, 'viewMedia') ? e.media?.filter(f => f.type === 'photo').length || 0 : null,
-    ...(e.owner === id ? { allowLinkUploads: !!e.allowLinkUploads, uploadLink: shareUploadLink(e, username) } : {}),
+    ...(manager ? { allowLinkUploads: !!e.allowLinkUploads, uploadLink: shareUploadLink(e, username) } : {}),
     group: eventGroup(e), upcoming: upcoming(e), reminder: e.reminders?.[id]?.minutes || 0, hasBanner: !!e.banner,
     askParticipantCount: e.askParticipantCount === true, participants: e.guests[id]?.status === 'yes' ? participantCount(e, e.guests[id]) : null, requireApproval: e.requireApproval === true, hideLocation: e.hideLocation === true,
     responseDeadline: e.responseDeadline || null, responsesClosed: responsesClosed(e), deadlineDate: e.deadlineDate || '', deadlineTime: e.deadlineTime || '', deadlineTimezone: e.deadlineTimezone || e.timezone || null,
-    ...(e.owner === id ? { ticketInfo: e.ticketInfo || '' } : {}),
+    ...(manager ? { ticketInfo: e.ticketInfo || '' } : {}),
     ticket: e.owner !== id && confirmed(e, e.guests[id]) && !e.cancelled ? { code: e.guests[id].ticket || '', name: e.guests[id].name, info: e.ticketInfo || '' } : null,
     counts: can(e, id, 'guestList') ? responseCounts(e) : null,
     approval: e.owner !== id && e.guests[id]?.status === 'yes' ? (!e.requireApproval || e.guests[id]?.approval === 'approved') ? 'approved' : 'pending' : null,
@@ -108,7 +116,7 @@ export async function miniApi(request, env) {
   const eventMatch=path.match(/^\/api\/events\/([a-f0-9]{16})$/);
   if(eventMatch && request.method==='GET'){
     const row=await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(eventMatch[1]).first();const e=row && JSON.parse(row.data);
-    if(!e || (e.owner!==user.id && !e.guests[user.id]))return respond({error:'Open a valid invitation first.'},403);
+    if(!e || (!isManager(e,user.id) && !e.guests[user.id]))return respond({error:'Open a valid invitation first.'},403);
     return respond({event:publicEvent(e,user.id,env.BOT_USERNAME)});
   }
   if (path === '/api/explore' && request.method === 'GET') {
@@ -116,7 +124,7 @@ export async function miniApi(request, env) {
     let zone;
     try { zone = timezone(new URL(request.url).searchParams.get('timezone') || (preference && JSON.parse(preference.data).timezone) || 'UTC'); }
     catch(error) { return respond({error:error.message},400); }
-    const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND json_extract(data,'$.isPublic')=1 AND json_extract(data,'$.timezone')=?").bind(zone).all();
+    const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND json_extract(data,'$.isPublic')=1 AND COALESCE(json_extract(data,'$.invitationMode'),'legacy')!='named' AND json_extract(data,'$.timezone')=?").bind(zone).all();
     const events = results.map(r => JSON.parse(r.data)).filter(e => !e.cancelled && Date.parse(e.endsAt || e.startsAt) > Date.now()).sort((a,b) => Date.parse(a.startsAt)-Date.parse(b.startsAt)).map(e => ({ id: e.id, title: e.title, description: e.description, paymentMethod:paymentMethod(e),displayPrice:e.displayPrice || '', starPrice:e.starPrice || 0, starPricing:e.starPricing || 'group', startsAt: e.startsAt, endsAt: e.endsAt || null, timezone: e.timezone, hasBanner: !!e.banner, inviteUrl: `https://t.me/${env.BOT_USERNAME}?start=e_${e.id}`, responsesClosed: responsesClosed(e) }));
     return respond({ timezone: zone, events });
   }
@@ -142,7 +150,7 @@ export async function miniApi(request, env) {
   if (bannerMatch && ['GET', 'POST'].includes(request.method)) {
     const row = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(bannerMatch[1]).first();
     const event = row && JSON.parse(row.data);
-    if (!event || (event.owner !== user.id && !event.guests[user.id] && !(request.method === 'GET' && event.isPublic === true && !event.cancelled))) return respond({ error: 'Open a valid invitation first.' }, 403);
+    if (!event || (!isManager(event,user.id) && !event.guests[user.id] && !(request.method === 'GET' && event.isPublic === true && invitationMode(event)!=='named' && !event.cancelled))) return respond({ error: 'Open a valid invitation first.' }, 403);
     try {
       if (request.method === 'GET') {
         if (!event.banner) return respond({ error: 'No banner.' }, 404);
@@ -153,7 +161,7 @@ export async function miniApi(request, env) {
         if (!photo.ok) throw new Error();
         return new Response(photo.body, { headers: { ...headers, 'Content-Type': 'image/jpeg' } });
       }
-      if (event.owner !== user.id || event.cancelled) return respond({ error: 'Only the organiser can change an active event banner.' }, 403);
+      if (!isManager(event,user.id) || event.cancelled) return respond({ error: 'Only an organiser can change an active event banner.' }, 403);
       if (Number(request.headers.get('Content-Length')) > 6 * 1024 * 1024) return respond({ error: 'Use a photo smaller than 5 MB.' }, 413);
       const bytes = await request.arrayBuffer();
       if (bytes.byteLength > 6 * 1024 * 1024) return respond({ error: 'Use a photo smaller than 5 MB.' }, 413);
@@ -166,7 +174,7 @@ export async function miniApi(request, env) {
       if (!result.ok || !fileId) return respond({ error: 'Telegram could not save that photo. Try a different image.' }, 400);
       const value = await mutateState(env, (data) => {
         const current = data.events[event.id];
-        if (!current || current.owner !== user.id || current.cancelled) throw new InputError('This event is no longer available for changes.');
+        if (!isManager(current,user.id) || current.cancelled) throw new InputError('This event is no longer available for changes.');
         current.banner = fileId;
         return { event: publicEvent(current, user.id, env.BOT_USERNAME) };
       });
@@ -175,7 +183,7 @@ export async function miniApi(request, env) {
   }
   if (path === '/api/bootstrap' && request.method === 'GET') {
     await rememberUser(env, user);
-    const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND (json_extract(data,'$.owner')=? OR json_type(data,?) IS NOT NULL)").bind(user.id, `$.guests."${user.id}"`).all();
+    const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND (json_extract(data,'$.owner')=? OR json_extract(data,'$.cohost.id')=? OR json_type(data,?) IS NOT NULL)").bind(user.id,user.id, `$.guests."${user.id}"`).all();
     const preference = await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(user.id)).first();
     const session = await env.DB.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(user.id)).first();
     const s = session ? JSON.parse(session.data) : null;
@@ -238,7 +246,7 @@ export async function miniApi(request, env) {
           await bot.prompt(id, '📅 Time saved. Where is the event? Enter an address, meeting point, or online link.');
         } else {
           const e = data.events[s.event];
-          if (!e || e.owner !== id || e.cancelled) throw new InputError('Only the organiser can change an active event.');
+          if (!isManager(e,id) || e.cancelled) throw new InputError('Only an organiser can change an active event.');
           Object.assign(e, schedule({ endMode: e.endMode || 'none', durationMinutes: e.durationMinutes, endDate: e.endDate, endTime: e.endTime, ...input })); bot.session(id);
           await bot.notify(e, `📣 ${e.title}: the organiser updated the date and time. Tap My events for the latest details.`);
           await bot.home(id, '✅ Event time updated.'); await bot.card(id, e);
@@ -254,6 +262,23 @@ export async function miniApi(request, env) {
         return { saved: true };
       }
       const match = path.match(/^\/api\/events\/([a-f0-9]{16})\/schedule$/);
+      const cohostMatch=path.match(/^\/api\/events\/([a-f0-9]{16})\/cohost\/(invite|revoke)$/);
+      if(cohostMatch){
+        const e=data.events[cohostMatch[1]];
+        if(!e || e.owner!==id)throw new InputError('Only the event owner can manage the co-host.');
+        if(input.version!==cohostVersion(e))throw new InputError('Co-host access has changed. Refresh the event and try again.');
+        if(cohostMatch[2]==='invite'){
+          createCohostInvite(e,id);
+          await bot.send(id,`Co-host invitation for ${e.title}\n${cohostLink(e,env.BOT_USERNAME)}\nShare this private link with your co-host. It can be used once.`);
+        }else{
+          const previous=e.cohost;
+          revokeCohost(e,id);
+          if(previous && data.sessions[previous.id]?.event===e.id)bot.session(previous.id);
+          if(previous)await bot.send(previous.id,`Your co-host access to ${e.title} has been removed.`);
+          await bot.send(id,`Co-host access removed for ${e.title}. Any unused co-host link is now invalid.`);
+        }
+        return {event:publicEvent(e,id,env.BOT_USERNAME)};
+      }
       const endMatch = path.match(/^\/api\/events\/([a-f0-9]{16})\/(cancel|delete)$/);
       if (endMatch) {
         const e = data.events[endMatch[1]];
@@ -271,7 +296,8 @@ export async function miniApi(request, env) {
       }
       if (match) {
         const e = data.events[match[1]];
-        if (!e || e.owner !== id || e.cancelled) throw new InputError('Only the organiser can change an active event.');
+        if (!isManager(e,id) || e.cancelled) throw new InputError('Only an organiser can change an active event.');
+        if(e.owner!==id)cohostSettings(input,e);
         const inviteSettings=invitationSettings(input,e);
         if(input.title!==undefined)e.title=field(input.title,'Event name',100,true);
         if(input.location!==undefined)e.location=field(input.location,'Location',300,true);

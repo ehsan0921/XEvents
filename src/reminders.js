@@ -1,5 +1,6 @@
 import { InputError } from './time.js';
 import {confirmed} from './permissions.js';
+import {isManager} from './cohosts.js';
 export const reminderOptions = [0, 15, 60, 120, 180, 240, 1440];
 export const reminderLabel = minutes => !minutes ? 'Off' : minutes === 15 ? '15 minutes before' : minutes === 1440 ? '1 day before' : `${minutes / 60} hour${minutes === 60 ? '' : 's'} before`;
 export function upcoming(e, now = Date.now()) { return !e.cancelled && Number.isFinite(Date.parse(e.startsAt)) && Date.parse(e.startsAt) > now; }
@@ -24,7 +25,7 @@ export async function sendDueReminders(data, bot, now = Date.now()) {
     if (!upcoming(e, now)) continue;
     for (const [uid, reminder] of Object.entries(e.reminders || {})) {
       const id = Number(uid);
-      if (!bot.allowed(e, id) || e.guests[id]?.status === 'no' || (reminder.source === 'default' && !confirmed(e,e.guests[id])) || reminder.sentFor === e.startsAt || now < Date.parse(e.startsAt) - reminder.minutes * 60000) continue;
+      if (!bot.allowed(e, id) || (!isManager(e,id) && e.guests[id]?.status === 'no') || (reminder.source === 'default' && !confirmed(e,e.guests[id])) || reminder.sentFor === e.startsAt || now < Date.parse(e.startsAt) - reminder.minutes * 60000) continue;
       reminder.sentFor = e.startsAt;
       await bot.send(id, `🔔 Reminder: ${e.title}\n${bot.time(e, id)}\nOpen My events for the latest invitation details.`, { inline_keyboard: [[{ text: 'Open event', callback_data: `v:${e.id}` }]] });
     }

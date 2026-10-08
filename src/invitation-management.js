@@ -15,7 +15,7 @@ const validCount=count=>Number.isSafeInteger(count) && count>=1 && count<=10;
 const protectedPayment=g=>['reported','paid','processing','refund_pending','refund_failed'].includes(g.payment?.status);
 const linkedGuests=(e,token)=>Object.entries(e.guests || {}).filter(([uid,g])=>Number(uid)!==e.owner && g.invitationToken===token);
 const guestLine=g=>`${g.name}${g.participantMode==='ask' ? ' = ?' : g.participants ? ` = ${g.participants}${g.participantMode==='confirm'?'!':g.participantMode==='fixed'?'*':''}`:''}`;
-const hasRecordedResponse=(guest,history,id)=>typeof guest.responseRecorded==='boolean' ? guest.responseRecorded : !!guest.responseVersion || ['yes','no','maybe'].includes(guest.status) || history.some(entry=>['responded','changed'].includes(entry.type) && entry.userId===id);
+export const hasRecordedResponse=(guest,history,id)=>typeof guest.responseRecorded==='boolean' ? guest.responseRecorded : !!guest.responseVersion || ['yes','no','maybe'].includes(guest.status) || history.some(entry=>['responded','changed'].includes(entry.type) && entry.userId===id);
 
 // Includes responses and payment/check-in changes so a stale removal cannot silently
 // remove a different response from the one the organiser reviewed.

@@ -371,3 +371,25 @@ test('count-only response versions do not replace an explicit unanswered marker'
   assert.equal(f.e.guests[2].responseRecorded,true);assert.equal(f.e.guests[2].responseVersion,4);
   assert.equal(response.responded,true);assert.equal(response.respondedAt,'2090-01-01T01:00:00.000Z');assert.equal(invitationHistory(f.e,f.token).at(-1).type,'responded');
 });
+
+test('manager guest roster distinguishes awaiting replies from explicit Later and legacy responses',()=>{
+  const f=fixture();f.e.oneTimeInvite=false;
+  for(const uid of [2,3,4,5,6,7,8])claimInvitation(f.e,f.token,uid);
+  Object.assign(f.e.guests[3],{responseRecorded:false,responseVersion:4,participants:3,phone:'private phone',comment:'private comment'});
+  Object.assign(f.e.guests[4],{responseRecorded:true,responseVersion:1});
+  for(const uid of [5,6,7])delete f.e.guests[uid].responseRecorded;
+  f.e.guests[5].status='yes';f.e.guests[6].responseVersion=1;
+  appendInvitationHistory(f.e,f.token,'responded',{userId:7,status:'later'},Date.parse('2090-01-01T01:00:00Z'));
+  Object.assign(f.e.guests[8],{responseRecorded:false,responseVersion:10,status:'yes'});
+  f.e.guests[1]={name:'Owner',status:'yes'};
+  const roster=publicEvent(f.e,1,'ExampleBot').guestRoster;
+  const byId=Object.fromEntries(roster.filter(g=>g.id!==null).map(g=>[g.id,g]));
+  assert.equal(byId[1],undefined);assert.equal(byId[2].responded,false);assert.equal(byId[3].responded,false);
+  for(const uid of [4,5,6,7])assert.equal(byId[uid].responded,true);
+  assert.equal(byId[8].responded,false);
+  for(const guest of roster.filter(g=>g.id===null)){assert.equal(guest.status,'unopened');assert.equal(guest.responded,false);}
+  assert.doesNotMatch(JSON.stringify(roster),/private phone|private comment|invitationToken|responseRecorded|responseVersion/);
+  assert.equal(publicEvent(f.e,2,'ExampleBot').guestRoster,undefined);
+  f.e.invitationMode='legacy';f.e.guests[9]={name:'Legacy guest',status:'maybe'};
+  assert.equal(publicEvent(f.e,1,'ExampleBot').guestRoster.find(g=>g.id===9).responded,true);
+});

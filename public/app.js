@@ -9,7 +9,7 @@ const compactPicker = picker || deadlinePicker;
 const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 let state = { events: [], preference: {} }, activeEvent = null, createdEvent = null, previewSequence = 0;
 let requestId = crypto.randomUUID();
-let formReady=false;
+let formReady=false,formSaving=false,currentView='home',pageNavigationGeneration=0;
 function isManager(event){return event?.isManager===true || event?.isOwner===true;}
 function oneTimeInviteEnabled(event){return event?.oneTimeInvite ?? (event?.invitationMode==='named');}
 function priceLabel(e){if(['bank','link'].includes(e.paymentMethod))return 'Paid · '+e.displayPrice;return e.starPrice ? '⭐ '+e.starPrice+' Stars '+(e.starPricing==='person'?'per person':'per group') : 'Free';}
@@ -72,9 +72,12 @@ async function api(path, body) {
   return data;
 }
 function go(tab) {
+  if(formSaving){notice('Your event is saving. Please wait.');return;}
   const target = tab === 'pending' ? 'events' : tab;
   if (tab === 'events' || tab === 'pending') { listFilter = tab === 'pending' ? 'pending' : 'all'; renderEvents(); }
   if (tab === 'admin' && !state.user?.isSuperAdmin) return;
+  if(target!=='gallery')dismissPendingMedia?.();
+  pageNavigationGeneration++;currentView=target;updateAppClose();
   for (const name of ['home','events', 'create', 'settings', 'admin', 'gallery', 'explore']) $(name + '-view').hidden = name !== target;
   if(tab==='home'){renderHome();loadHomeSuggestions();}
   if (tab === 'explore') loadExplore();
@@ -84,6 +87,7 @@ function go(tab) {
   }
   window.scrollTo(0, 0);
 }
+function updateAppClose(){const exits=compactPicker || currentView==='home',label=exits && initData && typeof tg?.close==='function'?'Close App':compactPicker?'Return to Telegram':'Close this page and return Home';$('app-close').setAttribute('aria-label',label);$('app-close').title=label;$('app-close').disabled=formSaving;$('cancel-edit').disabled=formSaving;$('edit-delete-event').disabled=formSaving;$('edit-cancel-event').disabled=formSaving || !!activeEvent?.cancelled;}
 function dateInZone(instant, zone) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(instant)).map(p => [p.type, p.value]));
   return `${parts.year}-${parts.month}-${parts.day}`;
@@ -142,11 +146,13 @@ function share(e) { if(e.invitationMode==='named' && isManager(e))return openNam
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
 function action(text, fn, className = 'secondary') { const b = element('button', text, className); b.type = 'button'; b.onclick = async () => { if(b.disabled)return; b.disabled=true; try { await fn(); } catch(error) { notice(error.message); } finally { b.disabled=false; } }; return b; }
 async function openGuestList(id) {
+  const navigation=pageNavigationGeneration;
   const {event:e}=await api(`events/${id}`);
+  if(navigation!==pageNavigationGeneration)return;
   if(!isManager(e))return;
   const roster=e.guestRoster || [],accepted=roster.filter(g=>g.status==='yes');
-  $('guest-list-title').textContent=e.title+' · Guest list';
-  $('guest-list-summary').textContent=`Accepted: ${accepted.length} responses · ${accepted.reduce((sum,g)=>sum+g.participants,0)} people. Confirmed: ${roster.filter(g=>g.confirmed).reduce((sum,g)=>sum+g.participants,0)} people.`;
+  $('guest-list-title').textContent='Guest list';$('guest-list-event').textContent=e.title;
+  $('guest-list-summary').textContent=`${accepted.reduce((sum,g)=>sum+g.participants,0)} people accepted · ${accepted.length} responses · ${roster.filter(g=>g.confirmed).reduce((sum,g)=>sum+g.participants,0)} confirmed`;
   const filters=$('guest-list-filters');filters.replaceChildren();
   const named=e.invitationMode==='named',readOnly=e.cancelled || e.group==='Past events';
   const invitationFor=guest=>guest.id!=null ? e.invitees?.find(invite=>invite.responses?.some(response=>response.id===guest.id)) : e.invitees?.find(invite=>invite.name===guest.name);
@@ -155,21 +161,24 @@ async function openGuestList(id) {
   $('guest-list-invitations').hidden=!named;$('guest-list-invitations').onclick=()=>showInvitations();
   const render=filter=>{
     const rows=$('guest-list-rows');rows.replaceChildren();
-    const visible=roster.filter(g=>filter==='all' || (filter==='unanswered' ? ['later','unopened'].includes(g.status) : filter==='pending' ? g.status==='yes' && !g.confirmed : g.status===filter));
+    const visible=roster.filter(g=>filter==='all' || (filter==='unanswered' ? ['later','unopened'].includes(g.status) : filter==='pending' ? g.status==='yes' && !g.confirmed : g.status===filter && (filter!=='later' || g.responded!==false)));
     for(const g of visible){
-      const row=element('article','','admin-guest');row.append(element('p',`${g.name} · ${g.status==='yes' ? g.confirmed?'Confirmed':g.approval==='pending'?'Awaiting approval':'Awaiting payment' : {no:'Rejected',maybe:'Maybe',later:'Respond later',unopened:'Not opened'}[g.status] || g.status}${g.participants?' · '+g.participants+' people':''}`));
+      const status=g.status==='yes' ? g.confirmed?'yes':g.approval==='pending'?'pending':'payment' : g.status==='later' && g.responded===false?'unanswered':g.status,label={yes:'Accepted',pending:'Awaiting approval',payment:'Awaiting payment',no:'Declined',maybe:'Maybe',later:'Respond later',unanswered:'Awaiting response',unopened:'Not opened'}[status] || 'Awaiting response';
+      const row=element('article','','admin-guest guest-roster-row');row.dataset.status=status;const heading=element('div','','guest-roster-heading');heading.append(element('strong',g.name));if(g.participants)heading.append(element('span',g.participants+' '+(g.participants===1?'person':'people'),'small'));const badge=element('span',label,'invitation-status');badge.dataset.status=status;row.append(heading,badge);
       const invite=named && invitationFor(g);
-      if(invite){const controls=element('div','','event-actions guest-inline-actions');controls.append(action('✉️ Invitation',()=>showInvitations(invite)));const revoke=action('🚫 Revoke invitation',()=>showInvitations(invite,{revoke:true}),'text-button');revoke.disabled=readOnly;controls.append(revoke);row.append(controls);}rows.append(row);
+      if(invite){const more=element('details','','event-more guest-roster-more'),toggle=element('summary','⋯');toggle.setAttribute('aria-label','Guest options for '+g.name);const controls=element('div','','event-more-panel');controls.append(action('✉️ Invitation',()=>showInvitations(invite)));const revoke=action('🚫 Revoke invitation',()=>showInvitations(invite,{revoke:true}),'secondary invitation-danger');revoke.disabled=readOnly;controls.append(revoke);more.append(toggle,controls);row.append(more);}rows.append(row);
     }
     if(!visible.length)rows.append(element('p','No guests in this list.','muted'));
     for(const b of filters.children)b.setAttribute('aria-pressed',String(b.dataset.filter===filter));
   };
-  for(const [filter,label] of [['all','All'],['yes','Accepted'],['pending','Pending'],['maybe','Maybe'],['no','Rejected'],['unanswered','Unanswered']]){const b=action(label,()=>render(filter));b.dataset.filter=filter;filters.append(b);}
+  for(const [filter,label] of [['all','All'],['yes','Accepted'],['pending','Pending'],['maybe','Maybe'],['no','Declined'],['later','Later'],['unanswered','Unanswered']]){const b=action(label,()=>render(filter));b.dataset.filter=filter;filters.append(b);}
   $('guest-list-manage').onclick=()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=manage_'+e.id);
   $('guest-list-close').onclick=()=>$('guest-list-dialog').close();render('all');$('guest-list-dialog').showModal();
 }
 async function openTicket(id) {
+  const navigation=pageNavigationGeneration;
   const {ticket}=await api(`events/${id}/ticket`,{});
+  if(navigation!==pageNavigationGeneration)return;
   $('ticket-title').textContent=ticket.title;
   $('ticket-name').textContent=`${ticket.name} · ${ticket.participants} ${ticket.participants===1?'person':'people'}`;
   $('ticket-image').hidden=!ticket.image;if(ticket.image)$('ticket-image').src=ticket.image;else $('ticket-image').removeAttribute('src');$('ticket-code').textContent=ticket.code;
@@ -179,7 +188,8 @@ async function openTicket(id) {
 }
 let checkinGeneration=0;
 async function openCheckin(id) {
-  const {event}=await api(`events/${id}`);if(!isManager(event))return;
+  const navigation=pageNavigationGeneration;
+  const {event}=await api(`events/${id}`);if(navigation!==pageNavigationGeneration || !isManager(event))return;
   const generation=++checkinGeneration;let busy=false,verifiedCode=null;
   const input=$('checkin-code'),result=$('checkin-result'),confirm=$('checkin-confirm');
   input.disabled=false;$('checkin-check').disabled=false;$('checkin-scan').disabled=false;
@@ -201,31 +211,35 @@ async function openCheckin(id) {
   $('checkin-check').onclick=()=>check();confirm.onclick=()=>{if(verifiedCode && input.value.trim()===verifiedCode)return check(true);};
   $('checkin-scan').onclick=()=>{
     if(!tg?.showScanQrPopup || (tg.isVersionAtLeast && !tg.isVersionAtLeast('6.4'))){result.textContent='QR scanning is unavailable here. Enter the ticket code instead.';return;}
-    try{tg.showScanQrPopup({text:'Scan the guest’s ticket QR.'},text=>{input.value=text;void check();return true;});}catch{result.textContent='Could not open the scanner. Enter the ticket code instead.';}
+    try{tg.showScanQrPopup({text:'Scan the guest’s ticket QR.'},text=>{if(generation!==checkinGeneration || !$('checkin-dialog').open)return true;input.value=text;void check();return true;});}catch{result.textContent='Could not open the scanner. Enter the ticket code instead.';}
   };
   $('checkin-close').onclick=()=>$('checkin-dialog').close();
   $('checkin-dialog').onclose=()=>{checkinGeneration++;try{tg?.closeScanQrPopup?.();}catch{}};
   $('checkin-dialog').showModal();
 }
-const {openGallery,showQr}=setupGallery({$,api,element,action,go,notice,openTelegram,initData});
+const {openGallery,showQr,dismissPendingMedia}=setupGallery({$,api,element,action,go,notice,openTelegram,initData});
 const {cancelEvent,deleteEvent}=setupEventActions({$,api,refresh,notice,onEnded:event=>{
   state.events=state.events.filter(item=>item.id!==event.id);
   if(activeEvent?.id===event.id){activeEvent=null;formReady=false;$('event-form').hidden=true;$('success').hidden=true;}
   if(createdEvent?.id===event.id)createdEvent=null;
   go('events');
 }});
+let confirmationSession=null;
 function confirmAction(message, operation) {
   const dialog = $('confirm-dialog');
-  if (dialog.open) return Promise.resolve(false);
+  if (dialog.open || confirmationSession) return Promise.resolve(false);
   const labels={delete:['Delete event?','Delete event','Keep event'],cancel:['Cancel event?','Cancel event','Keep event'],'cohost-revoke':['Revoke co-host access?','Revoke access','Keep access'],'cohost-cancel-link':['Cancel co-host invite?','Cancel invite link','Keep link'],'cohost-rotate':['Replace co-host invite?','Create new link','Keep current link'],'whitelist-enable':['Restrict dev access?','Turn on whitelist','Keep current access'],'whitelist-first':['Restrict dev access?','Add user and restrict','Back'],'whitelist-disable':['Open dev access?','Turn off whitelist','Keep restricted'],'whitelist-last':['Remove the last user?','Remove user','Keep user'],'whitelist-repair':['Repair access setting?','Repair and turn on','Back']}[operation] || ['Confirm action','Confirm','Back'];
   $('confirm-title').textContent = labels[0];
   $('confirm-message').textContent = message;
   $('confirm-proceed').textContent = labels[1];$('confirm-back').textContent=labels[2];
   return new Promise(resolve => {
-    const finish = accepted => { dialog.close(); resolve(accepted); };
+    const session={settled:false,closed:false};confirmationSession=session;
+    const finish = accepted => {if(session.settled)return;session.settled=true;if(dialog.open)dialog.close();else if(session.closed && confirmationSession===session)confirmationSession=null;resolve(accepted);};
     $('confirm-back').onclick = () => finish(false);
+    $('confirm-close').onclick = () => finish(false);
     $('confirm-proceed').onclick = () => finish(true);
     dialog.oncancel = event => { event.preventDefault(); finish(false); };
+    dialog.onclose=()=>{if(confirmationSession!==session)return;session.closed=true;confirmationSession=null;if(!session.settled)finish(false);};
     dialog.showModal(); $('confirm-back').focus();
   });
 }
@@ -287,7 +301,7 @@ async function changeCoHost(event,operation,entry){
   finally{setCoHostBusy(false);}
 }
 async function openCoHost(id){
-  const generation=++cohostGeneration,{event}=await api(`events/${id}`);if(generation!==cohostGeneration)return;
+  const navigation=pageNavigationGeneration,generation=++cohostGeneration,{event}=await api(`events/${id}`);if(generation!==cohostGeneration || navigation!==pageNavigationGeneration)return;
   if(!event.isOwner)throw Error('Only the event owner can manage co-hosts.');
   cohostEventId=id;renderCoHost(event);$('cohost-settings').open=false;$('cohost-label').value='';$('cohost-status').textContent='';$('cohost-dialog').showModal();
 }
@@ -392,7 +406,8 @@ function renderEvents() {
 document.addEventListener('click', event => { for (const menu of document.querySelectorAll('.event-more[open]')) if (!menu.contains(event.target) || event.target.closest('button')) menu.open=false; });
 document.addEventListener('keydown', event => { if (event.key==='Escape') for (const menu of document.querySelectorAll('.event-more[open]')) { menu.open=false; menu.querySelector('summary').focus(); } });
 async function editEvent(id){
-  try{const result=await api(`events/${id}`);setupForm(result.event);}catch(error){notice(error.message);}
+  const navigation=pageNavigationGeneration;
+  try{const result=await api(`events/${id}`);if(navigation===pageNavigationGeneration)setupForm(result.event);}catch(error){if(navigation===pageNavigationGeneration)notice(error.message);}
 }
 function selectedInvitationMode(){
   const type=$('invitation-mode').value;
@@ -419,17 +434,17 @@ let invitationLinksGeneration=0;
 $('invitation-links-close').onclick=()=>$('invitation-links-dialog').close();
 $('invitation-links-dialog').onclose=()=>{invitationLinksGeneration++;};
 async function openNamedLinks(event,selectedGuest,options={}){
-  const generation=++invitationLinksGeneration;
+  const navigation=pageNavigationGeneration,generation=++invitationLinksGeneration;
   try{
     let {event:e}=await api(`events/${event.id}`);
-    if(generation!==invitationLinksGeneration)return;
+    if(generation!==invitationLinksGeneration || navigation!==pageNavigationGeneration)return;
     if(!isManager(e)){$('invitation-links-list').replaceChildren();if($('invitation-links-dialog').open)$('invitation-links-dialog').close();throw Error('Only event managers can see invitation links.');}
     const search=$('invitation-links-search'),filter=$('invitation-links-filter'),status=$('invitation-links-status');
     search.value='';search.hidden=false;filter.value='all';status.textContent='';
     $('invitation-add').open=options.add===true;$('invitation-add-names').value='';$('invitation-single').open=options.add===true;$('invitation-bulk').open=false;
     let busy=false,mutationButtons=[],mutationInputs=[],addRequest,singleRequest,focusSelected=true,singleEditor,panelState=null;
     const mutationRequests=new Map();
-    const current=()=>generation===invitationLinksGeneration;
+    const current=()=>generation===invitationLinksGeneration && navigation===pageNavigationGeneration;
     const readOnly=()=>e.cancelled || e.group==='Past events';
     const responses=guest=>Array.isArray(guest.responses) ? guest.responses : ['yes','no','maybe','later'].includes(guest.status) ? [{name:guest.name,status:guest.status,participants:guest.participants || 1}] : [];
     const matches=(guest,value)=>value==='all' || (value==='revoked' ? guest.revoked===true : !guest.revoked && (value==='unanswered' ? !responses(guest).length || responses(guest).some(g=>g.status==='later') : responses(guest).some(g=>g.status===value && (value!=='later' || g.responded!==false))));
@@ -570,6 +585,7 @@ async function loadBannerPreview(id,generation){
   }catch(error){if(generation===bannerLoadGeneration)window.reportAppError?.(error,'Banner preview');}
 }
 function setupForm(event = null) {
+  if(formSaving){notice('Your event is saving. Please wait.');return;}
   formReady=true;
   activeEvent = event; createdEvent = null; requestId = crypto.randomUUID();
   $('event-form').reset(); $('event-form').hidden = false; $('success').hidden = true; $('form-error').hidden = true;
@@ -658,7 +674,7 @@ async function refresh() {
   $('connection-status').textContent=`Connected as ${data.user.firstName}${data.user.id ? ' · Telegram ID '+data.user.id : ''}${data.user.isSuperAdmin ? ' · Super admin' : ''}`;
   const hasPending = data.events.some(e => e.invitationMode!=='tickets' && !isManager(e) && !e.cancelled && e.status === 'later');
   document.querySelector('[data-tab="pending"]').hidden = !hasPending;
-  if (!hasPending && listFilter === 'pending') go('events');
+  if (!hasPending && listFilter === 'pending') {listFilter='all';if(currentView==='events' && !formSaving)go('events');}
   $('admin-tab').hidden = !data.user.isSuperAdmin;
   const profileName=state.preference.profileName || data.user.firstName;
   $('header-name').textContent=profileName;
@@ -819,11 +835,12 @@ $('owner-pricing-form').onsubmit=async event=>{
 };
 for (const b of document.querySelectorAll('[data-tab]')) b.onclick = () => { notice(''); b.dataset.tab === 'create' && (!formReady || $('event-form').hidden) ? setupForm() : go(b.dataset.tab); };
 $('home-brand').onclick=event=>{event.preventDefault();go('home');};
+$('app-close').onclick=()=>{if(formSaving)return;pageNavigationGeneration++;dismissPendingMedia?.();if((compactPicker || currentView==='home') && initData && typeof tg?.close==='function'){try{tg.close();}catch(error){notice(error.message);}}else if(compactPicker)notice('Close this window to return to Telegram.');else go('home');};updateAppClose();
 $('hero-create').onclick = () => setupForm();
 $('banner').onchange = () => { ++bannerLoadGeneration; if (bannerPreviewUrl) URL.revokeObjectURL(bannerPreviewUrl); const file=$('banner').files[0]; $('banner-preview').hidden=!file; if (file) { bannerPreviewUrl=URL.createObjectURL(file); $('banner-preview').src=bannerPreviewUrl; } };
-$('cancel-edit').onclick = () => {formReady=false;go('events');};
-$('edit-cancel-event').onclick=()=>activeEvent && cancelEvent(activeEvent);
-$('edit-delete-event').onclick=()=>activeEvent && deleteEvent(activeEvent);
+$('cancel-edit').onclick = () => {if(formSaving)return;formReady=false;go('events');};
+$('edit-cancel-event').onclick=()=>!formSaving && activeEvent && cancelEvent(activeEvent);
+$('edit-delete-event').onclick=()=>!formSaving && activeEvent && deleteEvent(activeEvent);
 $('refresh').onclick = async () => { $('refresh').disabled = true; try { await refresh(); notice(''); } catch (e) { notice(e.message); } finally { $('refresh').disabled = false; } };
 for (const id of ['date', 'time', 'event-zone']) $(id).addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(preview, 180); });
 for (const [search, select] of [['event-zone-search', 'event-zone'], ['local-zone-search', 'local-zone']]) $(search).oninput = () => options(select, $(select).value, $(search).value);
@@ -858,7 +875,7 @@ function revealFormError(message){
   for(const [pattern,id] of groups)if(pattern.test(message))$(id).open=true;
 }
 $('event-form').onsubmit = async event => {
-  event.preventDefault(); $('save-event').disabled = true; $('form-error').hidden = true;
+  event.preventDefault();if(formSaving)return;formSaving=true;updateAppClose(); $('save-event').disabled = true; $('form-error').hidden = true;
   const mode=selectedInvitationMode(),named=mode==='named';
   const payload = { oneTimeInvite:$('one-time-invite').checked,inviteMessage:$('invite-message').value,qrEnabled:$('qr-enabled').checked,askPhone:document.getElementById('ask-phone').checked,askComments:document.getElementById('ask-comments').checked,invitationMode:mode,guestNames:named ? $('guest-names').value : undefined,paymentMethod:$('stars-enabled').checked ? $('payment-method').value : 'free',displayPrice:$('display-price').value,paymentInstructions:$('payment-instructions').value,paymentUrl:$('payment-url').value,starPrice:$('stars-enabled').checked && $('payment-method').value==='stars' ? Number($('stars-price').value) : 0,starPricing:$('stars-pricing').value,paymentTerms:$('payment-terms').value, askParticipantCount: !named && $('ask-participant-count').checked, isPublic: $('invitation-mode').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: !named && $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
   try {
@@ -886,7 +903,7 @@ $('event-form').onsubmit = async event => {
     }
     tg?.HapticFeedback?.notificationOccurred('success');
   } catch (e) { revealFormError(e.message);$('form-error').textContent = e.message; $('form-error').hidden = false; tg?.HapticFeedback?.notificationOccurred('error'); }
-  finally { $('save-event').disabled = false; }
+  finally { formSaving=false;updateAppClose();$('save-event').disabled = false; }
 };
 $('share-event').onclick = () => createdEvent && share(createdEvent);
 async function loadProfilePhoto(){

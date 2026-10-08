@@ -9,7 +9,7 @@ const eventFixture=fields=>({id:'0123456789abcdef',title:'Club evening',location
 const pendingLink=(id,label)=>({id,label,status:'pending',createdAt:'2026-10-07T00:00:00Z',cohost:null,url:'https://t.me/test?start=cohost_'+id});
 const activeLink=(id,label,person)=>({...pendingLink(id,label),status:'active',url:null,cohost:{id:2,name:'Alex',username:'alex',joinedAt:'2026-10-07T00:00:00Z',...person}});
 
-async function harness(initial,{scheduleError,clipboardMode='ok',search='',invitationError,telegramErrors={}}={}){
+async function harness(initial,{scheduleError,clipboardMode='ok',search='',invitationError,telegramErrors={},telegramClose=true}={}){
   class El{
     constructor(tag=''){this.tag=tag;this.children=[];this.dataset={};this.value='';this.files=[];this.attributes={};this.listeners={};this.open=false;this.classList={toggle(){},add(){},remove(){}};}
     append(...children){this.children.push(...children);this.firstChild=this.children[0];}
@@ -24,10 +24,11 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
   const ids=new Map([...html.matchAll(/id="([^"]+)"/g)].map(match=>[match[1],new El()]));
   const tabs=[...html.matchAll(/data-tab="([^"]+)"/g)].map(match=>{const el=match[1]==='admin'?ids.get('admin-tab'):new El();el.dataset.tab=match[1];return el;});
   const document={body:new El(),getElementById:id=>ids.get(id),createElement:tag=>new El(tag),addEventListener(){},querySelector:selector=>selector==='.bottom-nav'?new El():tabs.find(el=>selector.includes('"'+el.dataset.tab+'"')),querySelectorAll:selector=>selector==='[data-tab]'?tabs:[]};
-  const telegramLinks=[],telegramStartupCalls=[],copied=[],calls=[],errors=[],errorContexts=[];
+  const telegramLinks=[],telegramStartupCalls=[],scanCallbacks=[],copied=[],calls=[],errors=[],errorContexts=[];
   const telegramCall=method=>{telegramStartupCalls.push(method);if(telegramErrors[method])throw new Error(telegramErrors[method]);};
-  const window={Telegram:{WebApp:{initData:'test-session',ready(){telegramCall('ready');},expand(){telegramCall('expand');},onEvent(){telegramCall('onEvent');},openTelegramLink:url=>telegramLinks.push(url)}},scrollTo(){},reportAppError:(error,context)=>{errors.push(error.message);errorContexts.push(context);}};
-  let event=initial,token=0,revision=0,invitationHold;
+  const window={Telegram:{WebApp:{initData:'test-session',ready(){telegramCall('ready');},expand(){telegramCall('expand');},onEvent(){telegramCall('onEvent');},close(){telegramCall('close');},showScanQrPopup:(options,callback)=>scanCallbacks.push(callback),closeScanQrPopup(){},openTelegramLink:url=>telegramLinks.push(url)}},scrollTo(){},reportAppError:(error,context)=>{errors.push(error.message);errorContexts.push(context);}};
+  if(!telegramClose)delete window.Telegram.WebApp.close;
+  let event=initial,token=0,revision=0,invitationHold,eventReadHold,eventSaveHold,ticketHold;
   const project=value=>({...value,cohosts:(value.cohostLinks || []).filter(link=>link.status==='active').map(link=>link.cohost),cohost:(value.cohostLinks || []).find(link=>link.status==='active')?.cohost || null,cohostInviteUrl:[...(value.cohostLinks || [])].reverse().find(link=>link.status==='pending')?.url || null});
   const response=(data,status=200)=>({ok:status<400,status,json:async()=>data,blob:async()=>new Blob(['image'],{type:'image/jpeg'})});
   const fetcher=async(path,options={})=>{
@@ -36,7 +37,9 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
     if(path==='/api/bootstrap')return response({user:{id:initial.isOwner?1:2,firstName:'User',isSuperAdmin:false},preference:{timezone:'Australia/Sydney'},pricing:{rates:{}},currencyCodes:['AUD'],events:[event]});
     if(path.startsWith('/api/explore?'))return response({events:[]});
     if(path==='/api/branding/icon')return response({error:'Not found'},404);
-    if(path==='/api/events/'+event.id)return response({event});
+    if(path==='/api/events/'+event.id){if(eventReadHold){const hold=eventReadHold;eventReadHold=null;await hold;}return response({event});}
+    if(path==='/api/events/'+event.id+'/ticket'){if(ticketHold){const hold=ticketHold;ticketHold=null;await hold;}return response({ticket:{title:event.title,name:'Alex',participants:2,code:'FICTIONAL1234',image:null}});}
+    if(path.endsWith('/ticket-check'))return response({ticket:{valid:false,reason:'Fictional ticket not found.'}});
     if(/\/invitations\/(add|edit|response|revoke|delete|remove)$/.test(path)){
       if(invitationHold){const hold=invitationHold;invitationHold=null;await hold;}
       if(body.version!==event.invitationsVersion)return response({error:'Invitations changed. Review the current list.'},409);
@@ -69,8 +72,8 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
       event=project({...event,cohostLinks:links,cohostVersion:(++revision).toString(16).padStart(16,'0')});
       return response({event});
     }
-    if(path==='/api/events'){event={...event,...body};return response({event});}
-    if(path.endsWith('/schedule')){if(scheduleError)return response({error:scheduleError},400);event={...event,...body};return response({event});}
+    if(path==='/api/events'){if(eventSaveHold){const hold=eventSaveHold;eventSaveHold=null;await hold;}event={...event,...body};return response({event});}
+    if(path.endsWith('/schedule')){if(eventSaveHold){const hold=eventSaveHold;eventSaveHold=null;await hold;}if(scheduleError)return response({error:scheduleError},400);event={...event,...body};return response({event});}
     if(path==='/api/preview')return response({startsAt:event.startsAt,timezone:event.timezone});
     return response({});
   };
@@ -83,7 +86,7 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
   const descendants=node=>node.children.flatMap(child=>[child,...descendants(child)]);
   const findButton=(id,label)=>descendants(ids.get(id)).find(node=>node.tag==='button' && node.textContent===label);
   const findEntry=id=>ids.get('cohost-list').children.find(node=>node.dataset.linkId===id);
-  return {ids,calls,errors,errorContexts,copied,telegramLinks,telegramStartupCalls,findButton,findEntry,descendants,setClipboardMode:value=>{clipboardMode=value;},setEvent:value=>{event=value;},getEvent:()=>event,setInvitationError:value=>{invitationError=value;},holdNextInvitationMutation:()=>{let release;invitationHold=new Promise(resolve=>{release=resolve;});return release;}};
+  return {ids,tabs,calls,errors,errorContexts,copied,telegramLinks,telegramStartupCalls,scanCallbacks,findButton,findEntry,descendants,setClipboardMode:value=>{clipboardMode=value;},setEvent:value=>{event=value;},getEvent:()=>event,setInvitationError:value=>{invitationError=value;},holdNextInvitationMutation:()=>{let release;invitationHold=new Promise(resolve=>{release=resolve;});return release;},holdNextEventRead:()=>{let release;eventReadHold=new Promise(resolve=>{release=resolve;});return release;},holdNextEventSave:()=>{let release;eventSaveHold=new Promise(resolve=>{release=resolve;});return release;},holdNextTicket:()=>{let release;ticketHold=new Promise(resolve=>{release=resolve;});return release;}};
 }
 
 for(const method of ['ready','expand','onEvent'])test('a Telegram '+method+' bridge failure keeps Home, My events and Create usable',async()=>{
@@ -103,6 +106,62 @@ for(const method of ['ready','expand','onEvent'])test('a Telegram '+method+' bri
   assert.ok(f.calls.every(call=>call.body===undefined || call.path==='/api/preview'),'startup and opening Create must not mutate event data');
   assert.deepEqual(f.telegramLinks,[]);
   assert.strictEqual(f.getEvent(),initial);
+});
+
+test('the page close button returns every secondary view Home and preserves an unfinished event draft',async()=>{
+  const f=await harness(eventFixture());
+  f.ids.get('hero-create').onclick();f.ids.get('title').value='Unfinished picnic';f.ids.get('guest-names').value='Alex = 2*';
+  assert.equal(f.ids.get('app-close').attributes['aria-label'],'Close this page and return Home');f.ids.get('app-close').onclick();assert.equal(f.ids.get('home-view').hidden,false);assert.equal(f.ids.get('title').value,'Unfinished picnic');assert.equal(f.ids.get('guest-names').value,'Alex = 2*');
+  f.tabs.find(tab=>tab.dataset.tab==='create').onclick();assert.equal(f.ids.get('create-view').hidden,false);assert.equal(f.ids.get('title').value,'Unfinished picnic');
+  for(const tab of ['events','settings','explore']){f.tabs.find(button=>button.dataset.tab===tab).onclick();assert.equal(f.ids.get(tab+'-view').hidden,false);f.ids.get('app-close').onclick();assert.equal(f.ids.get('home-view').hidden,false);}
+  assert.equal(f.calls.filter(call=>call.body && !call.path.startsWith('/api/preview')).length,0);assert.equal(f.telegramStartupCalls.filter(method=>method==='close').length,0);
+  assert.equal(f.ids.get('app-close').attributes['aria-label'],'Close App');f.ids.get('app-close').onclick();assert.equal(f.telegramStartupCalls.filter(method=>method==='close').length,1);
+});
+
+test('standalone Home close remains usable and both compact pickers close back to Telegram',async()=>{
+  const standalone=await harness(eventFixture(),{telegramClose:false});standalone.ids.get('app-close').onclick();assert.equal(standalone.ids.get('home-view').hidden,false);assert.deepEqual(standalone.errors,[]);assert.equal(standalone.telegramStartupCalls.includes('close'),false);
+  for(const mode of ['picker','deadline']){const f=await harness(eventFixture(),{search:'?mode='+mode+'&session=fictional'});assert.equal(f.ids.get('create-view').hidden,false);assert.equal(f.ids.get('app-close').attributes['aria-label'],'Close App');f.ids.get('app-close').onclick();assert.equal(f.telegramStartupCalls.filter(method=>method==='close').length,1);assert.equal(f.calls.some(call=>call.path==='/api/picker' || call.path==='/api/draft-deadline'),false);}
+});
+
+test('saving an event disables close and competing form navigation until the save settles',async()=>{
+  for(const editing of [false,true]){
+    const f=await harness(eventFixture({paymentMethod:'free',starPrice:0}));if(editing)await f.findButton('event-list','✏️ Edit event').onclick();else f.ids.get('hero-create').onclick();f.ids.get('title').value='Picnic draft';const release=f.holdNextEventSave(),saving=f.ids.get('event-form').onsubmit({preventDefault(){}});
+    assert.equal(f.ids.get('app-close').disabled,true);for(const id of ['cancel-edit','edit-cancel-event','edit-delete-event']){assert.equal(f.ids.get(id).disabled,true);f.ids.get(id).onclick();}assert.equal(f.ids.get('event-end-dialog').open,false);
+    f.ids.get('app-close').onclick();f.ids.get('hero-create').onclick();f.tabs.find(tab=>tab.dataset.tab==='events').onclick();assert.equal(f.ids.get('create-view').hidden,false);assert.equal(f.ids.get('title').value,'Picnic draft');assert.match(f.ids.get('notice').textContent,/saving/);assert.equal(f.calls.filter(call=>call.path==='/api/events' || call.path.endsWith('/schedule')).length,1);
+    release();await saving;assert.equal(f.ids.get('app-close').disabled,false);assert.equal(f.ids.get('edit-delete-event').disabled,false);assert.equal(f.getEvent().title,'Picnic draft');f.ids.get('app-close').onclick();assert.equal(f.ids.get('home-view').hidden,false);
+  }
+});
+
+test('closing a page while manager details load prevents a late dialog or editor from reopening',async()=>{
+  for(const [label,dialog] of [['👥 Guest list','guest-list-dialog'],['📷 Scan tickets','checkin-dialog'],['🤝 Co-hosts','cohost-dialog'],['✉️ Guest invitations','invitation-links-dialog'],['✏️ Edit event',null]]){
+    const f=await harness(eventFixture());f.tabs.find(tab=>tab.dataset.tab==='events').onclick();const release=f.holdNextEventRead(),opening=f.findButton('event-list',label).onclick();f.ids.get('app-close').onclick();release();await opening;assert.equal(f.ids.get('home-view').hidden,false,label);assert.equal(f.ids.get('create-view').hidden,true,label);if(dialog)assert.equal(f.ids.get(dialog).open,false,label);
+  }
+  const f=await harness(eventFixture({ticket:{name:'Alex',code:'FICTIONAL1234'}}));f.tabs.find(tab=>tab.dataset.tab==='events').onclick();const release=f.holdNextTicket(),opening=f.findButton('event-list','🔳 Ticket QR').onclick();f.ids.get('app-close').onclick();release();await opening;assert.equal(f.ids.get('ticket-dialog').open,false);assert.equal(f.ids.get('home-view').hidden,false);
+});
+
+test('the ticket-check close button shuts the dialog and a delayed native scan cannot overwrite a newer session',async()=>{
+  const f=await harness(eventFixture());await f.findButton('event-list','📷 Scan tickets').onclick();f.ids.get('checkin-scan').onclick();assert.equal(f.scanCallbacks.length,1);f.ids.get('checkin-close').onclick();assert.equal(f.ids.get('checkin-dialog').open,false);await f.findButton('event-list','📷 Scan tickets').onclick();f.ids.get('checkin-code').value='CURRENT';assert.equal(f.scanCallbacks[0]('STALE'),true);assert.equal(f.ids.get('checkin-code').value,'CURRENT');assert.equal(f.calls.filter(call=>call.path.endsWith('/ticket-check')).length,0);
+});
+
+test('closing or dismissing a confirmation cancels the operation and permits the next confirmation',async()=>{
+  for(const close of [f=>f.ids.get('confirm-close').onclick(),f=>f.ids.get('confirm-dialog').close()]){
+    const f=await harness(eventFixture({cohostLinks:[pendingLink('aaaaaaaaaaaaaaaa','Door')]}));await f.findButton('event-list','🤝 Co-hosts').onclick();const cancelling=f.findButton('cohost-list','Cancel invite').onclick();assert.equal(f.ids.get('confirm-dialog').open,true);close(f);await cancelling;assert.equal(f.ids.get('confirm-dialog').open,false);assert.equal(f.calls.filter(call=>call.path.endsWith('/cohost/revoke')).length,0);
+    const next=f.findButton('cohost-list','Cancel invite').onclick();assert.equal(f.ids.get('confirm-dialog').open,true);f.ids.get('confirm-close').onclick();await next;assert.equal(f.calls.filter(call=>call.path.endsWith('/cohost/revoke')).length,0);
+  }
+});
+
+test('a queued native confirmation close cannot dismiss or mutate a different confirmation',async()=>{
+  const f=await harness(eventFixture({cohostLinks:[pendingLink('aaaaaaaaaaaaaaaa','Door'),pendingLink('bbbbbbbbbbbbbbbb','Registration')]}));await f.findButton('event-list','🤝 Co-hosts').onclick();const dialog=f.ids.get('confirm-dialog');let queuedClose;dialog.close=()=>{dialog.open=false;queuedClose=dialog.onclose;};
+  const first=f.findButton('cohost-list','Cancel invite').onclick();f.ids.get('confirm-proceed').onclick();await first;assert.equal(f.calls.filter(call=>call.path.endsWith('/cohost/revoke')).length,1);
+  await f.findButton('cohost-list','Cancel invite').onclick();assert.equal(dialog.open,false,'a new prompt must wait until the old native close is delivered');assert.equal(f.calls.filter(call=>call.path.endsWith('/cohost/revoke')).length,1);queuedClose();
+  const next=f.findButton('cohost-list','Cancel invite').onclick();assert.equal(dialog.open,true);f.ids.get('confirm-close').onclick();queuedClose();await next;assert.equal(f.calls.filter(call=>call.path.endsWith('/cohost/revoke')).length,1);
+});
+
+test('compact guest list status badges distinguish approval, payment, actual Later and opened invitations',async()=>{
+  const guests=[{id:11,name:'Alex',status:'yes',participants:2,confirmed:true,responded:true},{id:12,name:'Morgan',status:'yes',participants:1,confirmed:false,approval:'pending',responded:true},{id:13,name:'Sam',status:'yes',participants:3,confirmed:false,approval:'approved',responded:true},{id:14,name:'Taylor',status:'no',participants:0,responded:true},{id:15,name:'Casey',status:'maybe',participants:0,responded:true},{id:16,name:'Jordan',status:'later',participants:0,responded:true},{id:17,name:'Drew',status:'later',participants:0,responded:false},{id:null,name:'Jess',status:'unopened',participants:0,responded:false}];
+  const f=await harness(eventFixture({guestRoster:guests,invitees:guests.map((guest,index)=>managedInvite(guest.name,index+50,guest.id?[guest]:[]))}));await f.findButton('event-list','👥 Guest list').onclick();assert.equal(f.ids.get('guest-list-title').textContent,'Guest list');assert.equal(f.ids.get('guest-list-event').textContent,'Club evening');assert.match(f.ids.get('guest-list-summary').textContent,/6 people accepted/);
+  const rows=f.ids.get('guest-list-rows').children;assert.deepEqual(rows.map(row=>row.dataset.status),['yes','pending','payment','no','maybe','later','unanswered','unopened']);assert.deepEqual(rows.map(row=>f.descendants(row).find(node=>node.className==='invitation-status').textContent),['Accepted','Awaiting approval','Awaiting payment','Declined','Maybe','Respond later','Awaiting response','Not opened']);assert.match(textOf(f,rows[0]),/Alex/);assert.match(textOf(f,rows[0]),/2 people/);assert.equal(rows[0].children.some(node=>node.tag==='details' && node.className==='event-more guest-roster-more'),true);
+  await f.findButton('guest-list-filters','Later').onclick();assert.equal(f.ids.get('guest-list-rows').children.length,1);assert.match(textOf(f,f.ids.get('guest-list-rows').children[0]),/Jordan/);f.ids.get('guest-list-close').onclick();assert.equal(f.ids.get('guest-list-dialog').open,false);
 });
 
 test('co-host events expose management actions and keep payment fields read-only',async()=>{

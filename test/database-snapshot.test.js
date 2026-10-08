@@ -84,6 +84,13 @@ test('snapshot clears sessions and delivery state while retaining the dev whitel
   } finally { db.close(); }
 });
 
+test('snapshot removes bot-specific broadcast receipts while preserving profile and payment records',()=>{
+  const pref={timezone:'UTC',starOrders:{example:{status:'paid'}},broadcasts:{example:{receipts:[{chatId:900000004,messageId:77}],undoUntil:1234}}};
+  const sourceSql=source("INSERT INTO records VALUES('preferences','fixture','"+JSON.stringify(pref)+"');");
+  const db=restore(prepareSnapshot(options({sourceSql})).sql);
+  try{delete pref.broadcasts;assert.deepEqual(JSON.parse(db.prepare("SELECT data FROM records WHERE kind='preferences'").get().data),pref);}finally{db.close();}
+});
+
 test('empty development settings do not inherit a production whitelist or endpoint', () => {
   const { sql } = prepareSnapshot(options({ sourceSql: source("INSERT INTO app_settings VALUES('test-whitelist','[\"900000002\"]'); INSERT INTO app_settings VALUES('stars-webhook','https://production.test/telegram');") }));
   const db = restore(sql);

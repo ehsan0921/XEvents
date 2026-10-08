@@ -1,4 +1,5 @@
 import {parseEventPayment,paymentMethod,paidEvent} from './event-payment.js';
+import {guestMessageApi} from './guest-message-api.js';
 import {issueTicket,verifyTicket} from './tickets.js';
 import {profileFields,profilePreference,profilePhotoApi} from './profile.js';
 import {readOnlinePricing} from './exchange.js';
@@ -257,6 +258,8 @@ async function miniApiForUser(request, env, user) {
     return respond({branding:{hasIcon:!!(branding && JSON.parse(branding.data).botIcon)},pricing:await readOnlinePricing(env,pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { id: user.id, firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: profilePreference(pref), session: pickerSession, events: results.map(r=>JSON.parse(r.data)).filter(e=>isManager(e,user.id) || (e.guests[user.id] && invitationAvailable(e,user.id))).map(e=>publicEvent(e,user.id,env.BOT_USERNAME)) });
   }
   if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
+  const messageMatch=path.match(/^\/api\/events\/([a-f0-9]{16})\/messages\/(start|send|upload|undo|history|delete)$/);
+  if(messageMatch)return guestMessageApi(request,env,user,messageMatch[1],messageMatch[2],respond);
   const raw = await request.text();
   if (raw.length > 24000) return respond({ error: 'Too much text.' }, 413);
   let input;

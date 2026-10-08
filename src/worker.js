@@ -1,4 +1,7 @@
 import { mutateState, BusyError } from './worker-store.js';
+import {telegramPayload} from './telegram-upload.js';
+import {broadcastRecord,broadcastReceipt,broadcastDeliveryResult} from './guest-messages.js';
+import {invitationAvailable} from './invitations.js';
 import { miniApi } from './mini-api.js';
 import { isSuperAdmin, rememberUser } from './admin.js';
 import { sendDueReminders } from './reminders.js';
@@ -21,7 +24,7 @@ async function telegram(env, method, params) {
   let response;
   try {
     response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params), signal: AbortSignal.timeout(method === 'answerPreCheckoutQuery' ? 5000 : 10000)
+      method: 'POST', ...telegramPayload(params), signal: AbortSignal.timeout(method === 'answerPreCheckoutQuery' ? 5000 : 10000)
     });
   } catch { return { ok: false, error_code: 503 }; }
   try { return await response.json(); } catch { return { ok: false, error_code: 503 }; }
@@ -64,31 +67,86 @@ export async function processUpdate(env, update) {
   }
 }
 
-export async function drainOutbox(env) {
+export function unavailablePhotoFallback(params, result) {
+  if (result.ok || result.error_code !== 400 || typeof params.caption !== 'string' || !params.caption.trim() || !/file[_ ]?id|file identifier|wrong remote file|photo|image|media|failed to get http url/i.test(result.description || '')) return null;
+  const { chat_id, caption, caption_entities, reply_markup, message_thread_id, reply_parameters, disable_notification, protect_content } = params;
+  return { chat_id, text: caption + '\n\nImage unavailable. The organiser can upload it again.',
+    ...(caption_entities ? { entities: caption_entities } : {}), ...(reply_markup ? { reply_markup } : {}),
+    ...(message_thread_id !== undefined ? { message_thread_id } : {}), ...(reply_parameters ? { reply_parameters } : {}),
+    ...(disable_notification !== undefined ? { disable_notification } : {}), ...(protect_content !== undefined ? { protect_content } : {}) };
+}
+
+export async function drainOutbox(env, immediate=false, attempt=0) {
   const owner = crypto.randomUUID();
   const lock = await env.DB.prepare('INSERT INTO delivery_lease(id,owner,expires) VALUES (1,?,unixepoch()+60) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,expires=excluded.expires WHERE delivery_lease.expires<unixepoch() RETURNING owner').bind(owner).first();
-  if (!lock) return;
+  if (!lock) {
+    if(attempt<(immediate?25:5)){await new Promise(resolve=>setTimeout(resolve,200));return drainOutbox(env,immediate,attempt+1);}
+    return;
+  }
   const deadline = Date.now() + 20000;
   try {
-  const { results } = await env.DB.prepare('SELECT id,due FROM outbox ORDER BY rowid LIMIT 20').all();
+  deliveryLoop: do {
+  const query=immediate ? "SELECT id,due FROM outbox ORDER BY CASE WHEN json_type(params,'$.__broadcastDelete') IS NOT NULL THEN 0 WHEN json_type(params,'$.__broadcastNotice') IS NOT NULL THEN 1 WHEN json_type(params,'$.__broadcast') IS NOT NULL THEN 2 ELSE 3 END,rowid LIMIT 20" : 'SELECT id,due FROM outbox ORDER BY rowid LIMIT 20';
+  const { results } = await env.DB.prepare(query).all();
+  if(!results.length)break;
   for (const { id, due } of results) {
-    if (Date.now() > deadline || due > Math.floor(Date.now() / 1000)) break;
+    if (Date.now() > deadline || due > Math.floor(Date.now() / 1000)) break deliveryLoop;
     const row = await env.DB.prepare('UPDATE outbox SET due=unixepoch()+60, attempts=attempts+1 WHERE id=? AND due<=unixepoch() RETURNING *').bind(id).first();
     if (!row) continue;
-    const result = await telegram(env, row.method, JSON.parse(row.params));
+    const {__broadcast:tracking,__broadcastDelete:deletion,__broadcastNotice,__broadcastDelivered:delivered,...deliveryParams}=JSON.parse(row.params);
+    try{
+    if(tracking && !delivered){
+      const allowed=await mutateState(env,data=>{
+        const record=broadcastRecord(data,tracking.owner,tracking.token);
+        const event=record && data.events[record.event];
+        return !!(record && !record.undone && !record.failures?.[deliveryParams.chat_id] && event && !event.cancelled && event.owner===tracking.owner && event.guests[deliveryParams.chat_id] && invitationAvailable(event,deliveryParams.chat_id));
+      });
+      if(!allowed){await env.DB.prepare('DELETE FROM outbox WHERE id=?').bind(id).run();continue;}
+    }
+    let result = delivered ? {ok:true,result:{message_id:delivered}} : await telegram(env, row.method, deliveryParams);
+    if(tracking && result.ok && Number.isSafeInteger(result.result?.message_id) && result.result.message_id>0) {
+      if(!delivered){
+        row.params=JSON.stringify({...deliveryParams,__broadcast:tracking,__broadcastDelivered:result.result.message_id});
+        await env.DB.prepare('UPDATE outbox SET method=?,params=? WHERE id=?').bind(row.method,row.params,id).run();
+      }
+      await mutateState(env,(_data,bot)=>broadcastReceipt(bot,tracking.owner,tracking.token,deliveryParams.chat_id,result.result.message_id));
+    }
+    const fallback = row.method === 'sendPhoto' && unavailablePhotoFallback(JSON.parse(row.params), result);
+    if (fallback) {
+      // Keep the same durable delivery identity. A retry sends the text card, not
+      // the permanently invalid photo. Snapshot recipient checks still apply.
+      row.method = 'sendMessage';row.params = JSON.stringify(fallback);
+      await env.DB.prepare('UPDATE outbox SET method=?,params=? WHERE id=?').bind(row.method, row.params, id).run();
+      result = await telegram(env, row.method, fallback);
+    }
     if (row.method === 'refundStarPayment' && !result.snapshotBlocked && (result.ok || [400,403].includes(result.error_code))) {
       const params=JSON.parse(row.params);
       await mutateState(env, (data,bot) => refundResult(bot,params.user_id,params.telegram_payment_charge_id,result.ok));
     }
     if (result.ok || [400, 403].includes(result.error_code)) {
+      if(deletion || tracking && !result.ok){
+        const target=deletion || tracking;
+        await mutateState(env,data=>broadcastDeliveryResult(data,target.owner,target.token,deliveryParams.chat_id,result,deletion?deliveryParams.message_id:undefined));
+      }
       await env.DB.prepare('DELETE FROM outbox WHERE id=?').bind(id).run();
       if (!result.ok) console.log(JSON.stringify({ event: 'delivery_rejected', method: row.method, code: result.error_code }));
     } else {
       const seconds = Math.max(5, Math.min(result.parameters?.retry_after || 2 ** Math.min(row.attempts, 10), 3600));
       await env.DB.prepare('UPDATE outbox SET due=unixepoch()+? WHERE id=?').bind(seconds, id).run();
-      break;
+      break deliveryLoop;
+    }
+    }catch(error){
+      // A state lease collision must not strand this claimed message for a minute.
+      // Successful broadcast sends already persist their Telegram message ID,
+      // so retrying receipt persistence cannot send the content twice.
+      if(error instanceof BusyError){
+        await env.DB.prepare('UPDATE outbox SET due=unixepoch() WHERE id=?').bind(id).run();
+        if(Date.now()<deadline){await new Promise(resolve=>setTimeout(resolve,100));continue deliveryLoop;}
+      }
+      throw error;
     }
   }
+  } while(Date.now()<deadline);
   } finally { await env.DB.prepare('DELETE FROM delivery_lease WHERE owner=?').bind(owner).run(); }
 }
 
@@ -99,11 +157,11 @@ export default {
       try {
       const response = await miniApi(request, env);
       if (!response.ok) console.log(JSON.stringify({event:'mini_api_rejected',path:url.pathname,status:response.status}));
-      if (response.ok && request.method === 'POST') ctx.waitUntil(drainOutbox(env));
+      if (response.ok && request.method === 'POST' && !url.pathname.endsWith('/messages/history')) ctx.waitUntil(drainOutbox(env,/\/messages\/(send|undo|delete)$/.test(url.pathname)));
       return response;
       } catch (error) { const reference=crypto.randomUUID();console.error(JSON.stringify({event:'mini_api_failed',reference,path:url.pathname,type:error.name})); return Response.json({ error: 'Could not load the planner. Please try again.',reference }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
     }
-    if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/errors.js', '/gallery.js', '/event-actions.js', '/style.css'].includes(url.pathname))) {
+    if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/errors.js', '/gallery.js', '/event-actions.js', '/guest-messages.js', '/style.css'].includes(url.pathname))) {
       const target = new URL(request.url);
       const appPage = url.pathname === '/app' || url.pathname === '/app/';
       if (appPage) target.pathname = '/';
@@ -153,7 +211,7 @@ export default {
     if (!Number.isSafeInteger(update.update_id)) return new Response('Invalid update', { status: 400 });
     try {
       const response = await processUpdate(env, update);
-      if (response.ok) ctx.waitUntil(drainOutbox(env));
+      if (response.ok) ctx.waitUntil(drainOutbox(env,/^bm-(send|undo|group):/.test(update.callback_query?.data || '') || ['📨 Send message','Done'].includes(update.message?.text?.trim())));
       return response;
     } catch {
       console.error(JSON.stringify({ event: 'update_failed', update_id: update.update_id }));

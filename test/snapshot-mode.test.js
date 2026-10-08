@@ -91,7 +91,7 @@ test('suppressed refund deliveries do not contact Telegram or rewrite imported a
   const refund = { id: 'fictional-refund', due: 0, method: 'refundStarPayment', params: JSON.stringify({ user_id: 111002, telegram_payment_charge_id: 'fictional-charge' }) };
   env.DB.prepare = sql => {
     if (sql.startsWith('INSERT INTO delivery_lease')) return { bind() { return this; }, async first() { return { owner: 'fictional-lease' }; } };
-    if (sql === 'SELECT id,due FROM outbox ORDER BY rowid LIMIT 20') return { async all() { return { results: [refund] }; } };
+    if (sql === 'SELECT id,due FROM outbox ORDER BY rowid LIMIT 20') return { async all() { return { results: removed.length?[]:[refund] }; } };
     if (sql.startsWith('UPDATE outbox SET due=unixepoch()+60')) return { bind() { return this; }, async first() { return refund; } };
     if (sql === 'DELETE FROM outbox WHERE id=?') return { bind(id) { removed.push(id); return this; }, async run() {} };
     if (sql === 'DELETE FROM delivery_lease WHERE owner=?') return { bind() { return this; }, async run() {} };

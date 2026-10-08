@@ -8,7 +8,7 @@ import {invitationAvailable} from './invitations.js';
 
 export async function mediaApi(request, env, user) {
   const url = new URL(request.url);
-  const match = url.pathname.match(/^\/api\/events\/([a-f0-9]{16})\/(gallery|upload-qr|media\/([a-f0-9]{12})(?:\/(send|thumbnail))?)$/);
+  const match = url.pathname.match(/^\/api\/events\/([a-f0-9]{16})\/(gallery|gallery-qr|upload-qr|media\/([a-f0-9]{12})(?:\/(send|thumbnail))?)$/);
   if (!match) return null;
   const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
   const json = (value, status = 200) => Response.json(value, { status, headers });
@@ -26,7 +26,13 @@ export async function mediaApi(request, env, user) {
     return json({ link, anyone: !!e.allowLinkUploads, image: qr.createDataURL(6, 24) });
   }
   if (!can(e, user.id, 'viewMedia')) return json({ error: 'The organiser has not enabled the gallery for guests.' }, 403);
-  if (match[2] === 'gallery' && request.method === 'GET') return json({ id: e.id, title: e.title, cancelled: !!e.cancelled, canUpload: !e.cancelled && can(e, user.id, 'uploadMedia'), uploadUrl: `https://t.me/${env.BOT_USERNAME}?start=a_${e.id}`, media: (e.media || []).map(f => ({ id: f.id, type: f.type, previewKind:mediaPreview(f),hasThumbnail:!!f.thumbnail,filename: f.filename, caption: f.caption, name: f.name, at: f.at, size: f.size || null })) });
+  const galleryUrl=`https://t.me/${env.BOT_USERNAME}?startapp=gallery_${e.id}`;
+  if(match[2]==='gallery-qr' && request.method==='GET'){
+    if(e.qrEnabled===false)return json({error:'QR codes are disabled for this event.'},400);
+    const qr=qrcode(0,'M');qr.addData(galleryUrl);qr.make();
+    return json({link:galleryUrl,image:qr.createDataURL(6,24)});
+  }
+  if (match[2] === 'gallery' && request.method === 'GET') return json({ id: e.id, title: e.title, galleryUrl, qrEnabled:e.qrEnabled!==false, cancelled: !!e.cancelled, canUpload: !e.cancelled && can(e, user.id, 'uploadMedia'), uploadUrl: `https://t.me/${env.BOT_USERNAME}?start=a_${e.id}`, media: (e.media || []).map(f => ({ id: f.id, type: f.type, previewKind:mediaPreview(f),hasThumbnail:!!f.thumbnail,filename: f.filename, caption: f.caption, name: f.name, at: f.at, size: f.size || null })) });
   const f = e.media?.find(item => item.id === match[3]);
   if (!f) return json({ error: 'This file is no longer in the event.' }, 404);
   if (match[4] === 'send' && request.method === 'POST') {

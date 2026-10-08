@@ -26,6 +26,115 @@ function fixture() {
   return { store, bot, calls, msg, cb, create };
 }
 
+test('event settings identify the event and response refresh loads current counts for managers only',async()=>{
+  const f=fixture(),e=await f.create();
+  await f.cb(1,`h:${e.id}`);
+  let card=f.calls.at(-1);
+  assert.match(card.text,/^Birthday\nEvent settings\n/);
+  assert.ok(card.reply_markup.inline_keyboard.flat().some(b=>b.text==='↻ Refresh' && b.callback_data===`h:${e.id}`));
+  await f.cb(1,`a:${e.id}`);
+  card=f.calls.at(-1);
+  const refresh=card.reply_markup.inline_keyboard.flat().find(b=>b.text==='↻ Refresh');
+  assert.equal(refresh.callback_data,`a:${e.id}`);
+  assert.match(card.text,/Accepted: 0 responses/);
+  e.guests[2]={name:'Example guest',status:'yes',participants:2};
+  await f.cb(1,refresh.callback_data);
+  assert.match(f.calls.at(-1).text,/Accepted: 1 responses/);
+  assert.match(f.calls.at(-1).text,/Example guest/);
+  for(const action of ['a','h']){
+    await f.cb(3,`${action}:${e.id}`);
+    assert.doesNotMatch(f.calls.at(-1).text,/Example guest|Event settings/);
+  }
+});
+
+test('opening an event sends the event card directly without a placeholder message',async()=>{
+  const f=fixture(),e=await f.create();e.banner='fictional-banner';f.calls.length=0;
+  await f.cb(1,`v:${e.id}`);
+  assert.equal(f.calls.filter(call=>['sendMessage','sendPhoto'].includes(call.method)).length,1);
+  assert.equal(f.calls.at(-1).method,'sendPhoto');
+  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`h:${e.id}`));
+  assert.equal(f.calls.some(call=>call.text==='Use the event buttons below.'),false);
+});
+
+test('guest list keeps refresh while event card hides it and guest list refresh rechecks visibility',async()=>{
+  const f=fixture(),e=await f.create();e.guests[2]={name:'Example attendee',status:'yes',participants:1};
+  await f.cb(1,`v:${e.id}`);
+  assert.ok(!f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='↻ Refresh'));
+  await f.cb(1,`g:${e.id}`);
+  const refresh=f.calls.at(-1).reply_markup.inline_keyboard.flat().find(b=>b.text==='↻ Refresh');
+  assert.equal(refresh.callback_data,`g:${e.id}`);
+  e.guests[2].name='Updated attendee';await f.cb(1,refresh.callback_data);
+  assert.match(f.calls.at(-1).text,/Updated attendee/);
+  e.permissions.guestList=false;await f.cb(2,refresh.callback_data);
+  assert.doesNotMatch(f.calls.at(-1).text,/Updated attendee/);
+  assert.match(f.calls.at(-1).text,/not enabled/);
+});
+
+test('guest list counts invitations, attendees and unanswered named links without merging later responses',async()=>{
+  const f=fixture(),e=await f.create();
+  e.invitationMode='named';e.oneTimeInvite=false;e.requireApproval=true;
+  e.invitees={a:{name:'Accepted',participants:2},b:{name:'Rejected'},c:{name:'Tentative'},d:{name:'Later'},f:{name:'Opened'},g:{name:'Unopened'},h:{name:'Pending',participants:3}};
+  e.guests={
+    1:{name:'Host',status:'yes'},2:{name:'Accepted',status:'yes',approval:'approved',participants:2,invitationToken:'a'},
+    3:{name:'Rejected',status:'no',invitationToken:'b'},4:{name:'Tentative',status:'maybe',invitationToken:'c'},
+    5:{name:'Later',status:'later',responseRecorded:true,invitationToken:'d'},6:{name:'Opened',status:'later',invitationToken:'f'},
+    7:{name:'Pending',status:'yes',approval:'pending',participants:3,invitationToken:'h'},
+    8:{name:'Revoked',status:'yes',invitationToken:'removed'}
+  };
+  await f.cb(1,`g:${e.id}`);let text=f.calls.at(-1).text;
+  assert.match(text,/Total invitations: 7\nPeople accepted: 5/);
+  assert.match(text,/Accepted \(2\)/);assert.match(text,/Awaiting approval \(0\)/);
+  for(const label of ['Rejected','Tentative','Respond later'])assert.ok(text.includes(label+' (1)'));
+  assert.match(text,/Not responded \(2\)\n• Opened\n• Unopened/);assert.doesNotMatch(text,/Revoked|• Host/);
+  e.guests[6]={...e.guests[6],status:'no',responseRecorded:true};await f.cb(1,`g:${e.id}`);
+  text=f.calls.at(-1).text;assert.match(text,/Rejected \(2\)/);assert.match(text,/Not responded \(1\)/);
+});
+
+test('guest list keeps pending approvals and payments out of confirmed acceptance counts',async()=>{
+  const f=fixture(),e=await f.create();e.requireApproval=true;e.starPrice=10;e.askParticipantCount=true;
+  e.guests={2:{name:'Confirmed',status:'yes',approval:'approved',participants:2,payment:{status:'paid'}},3:{name:'Pending',status:'yes'},4:{name:'Unpaid',status:'yes',approval:'approved'}};
+  await f.cb(1,`g:${e.id}`);const text=f.calls.at(-1).text;
+  assert.match(text,/Total invitations: 3\nPeople accepted: 2/);
+  for(const label of ['Accepted','Awaiting approval','Awaiting payment'])assert.ok(text.includes(label+' (1)'));
+});
+
+test('event card offers cancellation before optional deletion and keeps records by default',async()=>{
+  const f=fixture(),e=await f.create();
+  await f.cb(1,`v:${e.id}`);
+  let buttons=f.calls.at(-1).reply_markup.inline_keyboard.flat();
+  assert.ok(buttons.some(b=>b.text==='Cancel event' && b.callback_data===`x:${e.id}`));
+  assert.equal(buttons.some(b=>b.text==='Delete event'),false);
+  await f.cb(1,`x:${e.id}`);
+  assert.equal(e.cancelled,false);
+  await f.cb(1,`z:${e.id}`);
+  assert.equal(e.cancelled,true);
+  assert.equal(f.store.data.events[e.id],e);
+  buttons=f.calls.at(-1).reply_markup.inline_keyboard.flat();
+  assert.ok(buttons.some(b=>b.text==='Delete event' && b.callback_data===`delete:${e.id}`));
+  assert.ok(buttons.some(b=>b.text==='Keep records' && b.callback_data===`v:${e.id}`));
+  await f.cb(1,`delete:${e.id}`);
+  assert.equal(f.store.data.events[e.id],e);
+  await f.cb(1,`delete-confirm:${e.id}`);
+  assert.equal(f.store.data.events[e.id],undefined);
+});
+
+test('refresh timestamps use the viewer timezone and remain visible on long banner cards',async(t)=>{
+  const f=fixture(),e=await f.create();
+  f.store.data.preferences[1]={timezone:'Australia/Sydney'};
+  t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-08T00:00:00Z')});
+  await f.cb(1,`g:${e.id}`);
+  assert.match(f.calls.at(-1).text,/Last updated: 8 Oct 2026, 11:00:00 am AEDT/);
+  t.mock.timers.tick(60000);
+  await f.cb(1,`g:${e.id}`);
+  assert.match(f.calls.at(-1).text,/Last updated: 8 Oct 2026, 11:01:00 am AEDT/);
+  e.banner='fictional-banner';e.description='Long description '.repeat(150);
+  await f.cb(1,`v:${e.id}`);
+  assert.match(f.calls.at(-1).caption,/Last updated: 8 Oct 2026, 11:01:00 am AEDT/);
+  assert.ok(f.calls.at(-1).caption.length<=1024);
+  f.store.data.preferences[1].timezone='UTC';
+  assert.match(f.bot.updatedAt(e,1),/8 Oct 2026, 12:01:00 am UTC/);
+});
+
 test('native App menu stays available without duplicate App buttons or stale keyboard launchers',async()=>{
   const f=fixture();f.bot.appUrl='https://example.test/app';
   await f.msg(1,'/start');
@@ -334,11 +443,11 @@ test('banners persist from creation, are owner-controlled, and addresses are cop
   await f.msg(2,`/start e_${e.id}`); await f.cb(2,`banner:${e.id}`); assert.equal(f.store.data.sessions[2],undefined);
   e.guests[2].status='yes';e.guests[2].approval='approved';
   await f.bot.card(2,e); const card=f.calls.at(-1);
-  assert.equal(card.reply_markup.inline_keyboard.flat().find(b=>b.copy_text).copy_text.text,'My house');
+  assert.ok(!card.reply_markup.inline_keyboard.flat().some(b=>b.text.includes('Copy address')));
   assert.equal(card.method,'sendPhoto');
   const entity=card.caption_entities[0]; assert.equal(card.caption.slice(entity.offset,entity.offset+entity.length),'My house');
   e.location='A'.repeat(300); await f.bot.card(2,e);
-  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`address:${e.id}`));
+  assert.ok(!f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`address:${e.id}`));
   await f.cb(2,`address:${e.id}`); assert.equal(f.calls.at(-1).entities[0].length,300);
 });
 
@@ -419,4 +528,18 @@ test('media links show only banner/title and media actions without RSVP and revo
   assert.equal(f.bot.mediaAllowed(e,99),true);await f.cb(99,`media-add:${e.id}`);await f.msg(99,undefined,{photo:[{file_id:'one'}]});await f.msg(99,'/done');
   assert.equal(f.calls.at(-1).caption,e.title);assert.doesNotMatch(f.calls.at(-1).caption,/PRIVATE/);
   await f.cb(1,`toggle:${e.id}:allowLinkUploads`);assert.equal(f.bot.mediaAllowed(e,99),false);
+});
+
+test('organiser media sharing has its own copy and QR row with protected chat QR delivery',async()=>{
+  const f=fixture(),e=await f.create();e.qrEnabled=true;f.bot.appUrl='https://example.invalid/app';
+  await f.bot.card(1,e);let rows=f.calls.at(-1).reply_markup.inline_keyboard;
+  const index=rows.findIndex(row=>row.some(b=>b.text==='📋 Copy upload link'));
+  assert.ok(rows[index-1].some(b=>b.text==='🗂 Shared media'));
+  assert.deepEqual(rows[index].map(b=>b.text),['📋 Copy upload link','▦ Show QR code']);
+  assert.equal(rows[index][0].url,undefined);assert.match(rows[index][0].copy_text.text,/^https:\/\/t\.me\//);
+  assert.ok(!rows.flat().some(b=>/Copy address|Refresh|Reminder/.test(b.text)));
+  await f.cb(1,'upload-qr:'+e.id);assert.equal(f.calls.at(-1).method,'sendPhoto');assert.ok(f.calls.at(-1).__photoUpload);
+  await f.cb(2,'upload-qr:'+e.id);assert.equal(f.calls.at(-1).method,'sendMessage');
+  e.qrEnabled=false;await f.bot.card(1,e);assert.ok(!f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='▦ Show QR code'));
+  await f.cb(1,'upload-qr:'+e.id);assert.equal(f.calls.at(-1).method,'sendMessage');
 });

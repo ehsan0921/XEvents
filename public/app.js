@@ -1,4 +1,5 @@
 import { setupGallery } from './gallery.js';
+import { setupGuestMessages } from './guest-messages.js';
 import { setupEventActions } from './event-actions.js';
 const tg = window.Telegram?.WebApp;
 const $ = id => document.getElementById(id);
@@ -147,6 +148,7 @@ function inviteText(e,guest){
 function share(e) { if(e.invitationMode==='named' && isManager(e))return openNamedLinks(e);openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(inviteText(e))}`); }
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
 function action(text, fn, className = 'secondary') { const b = element('button', text, className); b.type = 'button'; b.onclick = async () => { if(b.disabled)return; b.disabled=true; try { await fn(); } catch(error) { notice(error.message); } finally { b.disabled=false; } }; return b; }
+const openGuestMessages=setupGuestMessages({$,document,api,notice,initData,zone:selectedZone});
 async function openGuestList(id) {
   const navigation=pageNavigationGeneration;
   const {event:e}=await api(`events/${id}`);
@@ -404,6 +406,7 @@ function renderEvents() {
     const actions = element('div', '', 'event-actions'); actions.append(action('💬 Open in chat', () => openTelegram(e.inviteUrl), 'primary'));
     if (isManager(e) && !e.cancelled) actions.append(action('✏️ Edit event', () => editEvent(e.id)));
     if(isManager(e))actions.append(action('👥 Guest list',()=>openGuestList(e.id)));
+    if(e.isOwner && !e.cancelled)actions.append(action('📨 Message guests',()=>openGuestMessages(e)));
     if(isManager(e) && !e.cancelled)actions.append(action('🎟 Check in guests',()=>openCheckin(e.id)));
     if(e.ticket)actions.append(action('🎟 Check-in code',()=>openTicket(e.id)));
     if((e.starPrice || ['bank','link'].includes(e.paymentMethod)) && !isManager(e) && e.status==='yes' && e.approval==='approved' && e.paymentStatus!=='paid')actions.append(action(e.starPrice?'⭐ Pay with Stars':'💳 Payment instructions',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=pay_'+e.id)));
@@ -1038,6 +1041,7 @@ if (!initData) {
     if (compactPicker) { setupForm(state.events.find(e => e.id === data.session?.event) || null); document.querySelector('.bottom-nav').hidden = true; if (data.session?.token !== query.get('session')) { notice('This picker has expired. Open a new picker from the current chat step.'); $('save-event').disabled = true; } }
     else if(query.get('invitations'))await openNamedLinks({id:query.get('invitations')},query.get('guest'));
     else if (query.get('gallery')) await openGallery(query.get('gallery'));
+    else if (/^gallery_[a-f0-9]{16}$/.test(tg?.initDataUnsafe?.start_param || '')) await openGallery(tg.initDataUnsafe.start_param.slice(8));
     else if (query.get('qr')) await showQr(query.get('qr'));
     else if(query.get('ticket'))await openTicket(query.get('ticket'));
     else if(query.get('checkin'))await openCheckin(query.get('checkin'));

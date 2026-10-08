@@ -177,6 +177,8 @@ export function prepareSnapshot({ sourceSql, developmentSchema, developmentSetti
     for (const trigger of objects.filter(row => row.type === 'trigger')) db.exec(`DROP TRIGGER ${identifier(trigger.name)}`);
     const removedSessions = Number(rows(db, "SELECT count(*) AS n FROM records WHERE kind='sessions'")[0].n);
     db.exec("DELETE FROM records WHERE kind='sessions'");
+    // Telegram message IDs and undo state belong to the sending bot only.
+    db.exec("UPDATE records SET data=json_remove(data,'$.broadcasts') WHERE kind='preferences' AND json_type(data,'$.broadcasts') IS NOT NULL");
     for (const table of runtimeTables) db.exec(`DELETE FROM ${identifier(table)}`);
     db.exec('DELETE FROM app_settings');
     const set = db.prepare('INSERT INTO app_settings(key,value) VALUES (?,?)');

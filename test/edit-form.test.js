@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {setupGallery} from '../public/gallery.js';
 import {setupEventActions} from '../public/event-actions.js';
+import {setupGuestMessages} from '../public/guest-messages.js';
 
 test('editing fetches fresh details, preserves all attendee count modes and invitation message and previews the existing banner',async()=>{
   class El {
@@ -13,7 +14,7 @@ test('editing fetches fresh details, preserves all attendee count modes and invi
     setAttribute(){} removeAttribute(){} addEventListener(){} reset(){} focus(){} setCustomValidity(text){this.validation=text;} querySelector(){return new El();}
   }
   const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
-  const source=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8').replace("import { setupGallery } from './gallery.js';",'').replace("import { setupEventActions } from './event-actions.js';",'');
+  const source=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8').replace(/^import .*$/gm,'');
   const ids=new Map([...html.matchAll(/id="([^"]+)"/g)].map(m=>[m[1],new El()]));
   const tabs=[...html.matchAll(/data-tab="([^"]+)"/g)].map(m=>{const el=m[1]==='admin'?ids.get('admin-tab'):new El();el.dataset.tab=m[1];return el;});
   const nav=new El(),errors=[];
@@ -24,7 +25,7 @@ test('editing fetches fresh details, preserves all attendee count modes and invi
   const paths=[];
   const fetcher=async path=>{paths.push(path);return {ok:true,status:200,json:async()=>path==='/api/bootstrap'?bootstrap:path==='/api/events/'+event.id?{event}: {localDate:event.localDate,localTime:event.localTime,startsAt:event.startsAt,timezone:event.timezone},blob:async()=>new Blob(['banner'],{type:'image/jpeg'})};};
   const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
-  await new AsyncFunction('window','document','location','fetch','crypto','navigator','setupGallery','setupEventActions',source)(window,document,{search:'?event='+event.id},fetcher,webcrypto,{},setupGallery,setupEventActions);
+  await new AsyncFunction('window','document','location','fetch','crypto','navigator','setupGallery','setupEventActions','setupGuestMessages',source)(window,document,{search:'?event='+event.id},fetcher,webcrypto,{},setupGallery,setupEventActions,setupGuestMessages);
   await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(errors,[]);
   assert.ok(paths.includes('/api/events/'+event.id));

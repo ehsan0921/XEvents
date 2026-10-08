@@ -7,7 +7,12 @@ export class BusyError extends Error {}
 
 export async function mutateState(env, action, updateId) {
   const owner = crypto.randomUUID();
-  const lock = await env.DB.prepare('INSERT INTO lease (id, owner, expires) VALUES (1, ?, unixepoch()+60) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner, expires=excluded.expires WHERE lease.expires < unixepoch() RETURNING owner').bind(owner).first();
+  let lock;
+  for(let attempt=0;attempt<21;attempt++){
+    lock=await env.DB.prepare('INSERT INTO lease (id, owner, expires) VALUES (1, ?, unixepoch()+60) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner, expires=excluded.expires WHERE lease.expires < unixepoch() RETURNING owner').bind(owner).first();
+    if(lock)break;
+    if(attempt<20)await new Promise(resolve=>setTimeout(resolve,100));
+  }
   if (!lock) throw new BusyError('Please try again in a moment.');
   try {
     if (env.snapshotUser && !await mayUseTestApp(env, env.snapshotUser)) throw new TestAccessError();

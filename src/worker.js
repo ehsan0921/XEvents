@@ -1,10 +1,11 @@
 import { mutateState, BusyError } from './worker-store.js';
 import { miniApi } from './mini-api.js';
-import { rememberUser } from './admin.js';
+import { isSuperAdmin, rememberUser } from './admin.js';
 import { sendDueReminders } from './reminders.js';
 import { checkout, refundResult } from './payments.js';
 import {refreshOnlineRates} from './exchange.js';
 import { botCommands, botCommandsVersion } from './telegram-menu.js';
+import { handleWhitelistCommand, mayUseTestApp, testAccessMessage, whitelistEnabled } from './test-access.js';
 
 export async function authorized(request, secret) {
   if (!secret) return false;
@@ -26,12 +27,25 @@ async function telegram(env, method, params) {
 
 export async function processUpdate(env, update) {
   try {
+    const user = update.pre_checkout_query?.from || update.callback_query?.from || (update.message?.chat?.type === 'private' ? update.message.from : null);
+    // Payments already charged must still be recorded or refunded after access changes.
+    if (user && !update.message?.successful_payment && !update.message?.refunded_payment && !await mayUseTestApp(env, user)) {
+      if (update.pre_checkout_query) {
+        const result = await telegram(env, 'answerPreCheckoutQuery', { pre_checkout_query_id: update.pre_checkout_query.id, ok: false, error_message: testAccessMessage });
+        return new Response(result.ok ? 'OK' : 'Retry', { status: result.ok ? 200 : 503 });
+      }
+      await mutateState(env, (_data, bot) => update.callback_query
+        ? bot.api('answerCallbackQuery', { callback_query_id: update.callback_query.id, text: testAccessMessage, show_alert: true })
+        : bot.send(update.message.chat.id, testAccessMessage), update.update_id);
+      return new Response('OK');
+    }
+    const whitelistResponse = await handleWhitelistCommand(env, update);
+    if (whitelistResponse) return whitelistResponse;
     if (update.pre_checkout_query) {
       const decision = await mutateState(env, (data, bot) => checkout(bot, update.pre_checkout_query));
       const result = await telegram(env, 'answerPreCheckoutQuery', decision);
       return new Response(result.ok ? 'OK' : 'Retry', {status: result.ok ? 200 : 503});
     }
-    const user = update.callback_query?.from || (update.message?.chat?.type === 'private' ? update.message.from : null);
     if (user) await rememberUser(env, user);
     await mutateState(env, (data, bot) => bot.handle(update), update.update_id);
     return new Response('OK');
@@ -156,6 +170,19 @@ export async function configureMiniApp(env) {
   if (commands?.value !== botCommandsVersion) {
     const result = await telegram(env, 'setMyCommands', { commands: botCommands });
     if (result.ok) await env.DB.prepare("INSERT INTO app_settings(key,value) VALUES ('bot-commands',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(botCommandsVersion).run();
+  }
+  const adminId = Number(env.SUPER_ADMIN_ID);
+  if (isSuperAdmin({ id: adminId }, env)) {
+    const adminCommands = await env.DB.prepare("SELECT value FROM app_settings WHERE key='test-admin-commands'").first();
+    const enabled = whitelistEnabled(env);
+    const version = `${botCommandsVersion}:${adminId}:${enabled}`;
+    if ((enabled || adminCommands) && adminCommands?.value !== version) {
+      const result = await telegram(env, 'setMyCommands', {
+        scope: { type: 'chat', chat_id: adminId },
+        commands: enabled ? [...botCommands, { command: 'whitelist', description: 'Manage test access' }] : botCommands
+      });
+      if (result.ok) await env.DB.prepare("INSERT INTO app_settings(key,value) VALUES ('test-admin-commands',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(version).run();
+    }
   }
   const setting = await env.DB.prepare("SELECT value FROM app_settings WHERE key='mini-menu'").first();
   const menuVersion=`App:${env.APP_URL}`;

@@ -57,7 +57,8 @@ Keep the real development configuration in an ignored local file, such as `wrang
   "preview_urls": false,
   "vars": {
     "BOT_USERNAME": "YOUR_DEVELOPMENT_BOT_USERNAME",
-    "APP_URL": "https://YOUR_DEVELOPMENT_WORKER.YOUR_SUBDOMAIN.workers.dev/app"
+    "APP_URL": "https://YOUR_DEVELOPMENT_WORKER.YOUR_SUBDOMAIN.workers.dev/app",
+    "TEST_WHITELIST_ENABLED": "false"
   },
   "assets": {
     "directory": "./public",
@@ -88,12 +89,34 @@ Store these secrets on the **development Cloudflare Worker**, using private inte
 - `TELEGRAM_BOT_TOKEN`: the development bot's token.
 - `TELEGRAM_WEBHOOK_SECRET`: a new random secret for the development webhook.
 - `SUPER_ADMIN_ID`: your administrator Telegram identity, if needed.
+- `WHITELIST_USER_IDS`: optional initial allowed Telegram IDs for development, separated by commas or whitespace. Leave it blank to permit everyone.
 
 These bot secrets do not belong in GitHub source or `WRANGLER_CONFIG_JSON`, and the deployment workflow does not need copies of them in GitHub. Set `vars.BOT_USERNAME` to the development bot and `vars.APP_URL` to the development Mini App URL. The [self-hosting guide](self-hosting.md#3-set-worker-secrets) explains interactive secret setup and webhook registration.
 
 Do not connect production's bot to the development Worker. Telegram uses a single webhook per bot, so doing that would redirect production updates. A separate bot is also necessary for authentication and media isolation: Telegram [`file_id` values are specific to each bot](https://core.telegram.org/bots/api#sending-files).
 
 Stars payments use Telegram's real Bot API endpoints in the current application. A separate regular bot does not create a payment sandbox. Keep payment/refund verification mocked unless deliberately performing a controlled real transaction; never reuse production charge IDs or payment records in development.
+
+## Restrict development access
+
+Set `vars.TEST_WHITELIST_ENABLED` to `"true"` in the private development configuration to enable the test whitelist. The deployment helper sets `APP_ENV` to `development` and defaults this flag to `"false"` when omitted. Production always ignores the whitelist, and the deployment helper writes `"false"` for production even if its input enables the flag. For local testing, set `APP_ENV=development` and `TEST_WHITELIST_ENABLED=true` in the ignored `.dev.vars` file.
+
+An empty whitelist permits everyone. Once it contains IDs, the development bot and authenticated Mini App APIs allow only those users and the superadmin configured by the `SUPER_ADMIN_ID` Worker secret. The superadmin always retains access so they can manage the list.
+
+Send these commands to the development bot as the configured superadmin:
+
+| Command | Effect |
+| --- | --- |
+| `/whitelist` | Show the current access setting and allowed IDs. |
+| `/whitelist add ID...` | Add one or more numeric Telegram user IDs. |
+| `/whitelist remove ID...` | Remove one or more IDs. |
+| `/whitelist clear` | Empty the list and permit everyone. |
+
+Keep real IDs in private Worker secrets or bot commands. `WHITELIST_USER_IDS` supplies the initial list and is never serialized into generated deployment configuration. The first command that changes the list saves an override in that environment's D1 database; subsequent requests and commands use that override instead of the secret seed. `/whitelist clear` saves an empty override, so it keeps access open even if the seed secret still contains IDs. Development and production use separate D1 databases, so these settings do not cross environments.
+
+Removing the final tester also opens access to everyone; every change confirms whether access is restricted or open. Invalid configuration restricts access until the superadmin resets it. Payment and refund confirmations already issued by Telegram are still recorded after a tester is removed. Existing queued notifications are preserved.
+
+This restriction applies to the Cloudflare Worker, including its webhook and Mini App APIs. Use `wrangler dev` for local access-control testing; the standalone `npm start` polling process does not enforce this hosted feature. The whitelist command is advertised only in the configured superadmin's private chat.
 
 ## Sync production to dev
 

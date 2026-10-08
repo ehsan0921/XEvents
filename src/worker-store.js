@@ -16,8 +16,13 @@ export async function mutateState(env, action, updateId) {
     const messages = [];
     const bot = new Bot({ data }, async (method, params) => { messages.push({ method, params }); return {}; }, env.BOT_USERNAME, env.APP_URL);
     bot.pricing=await readOnlinePricing(env,data.preferences._pricing);
-    const value = await action(data, bot);
-    const batch = [env.DB.prepare('INSERT INTO commits(owner) VALUES (?)').bind(owner)];
+    const settings = [];
+    const value = await action(data, bot, {
+      setAppSetting(key, value) {
+        settings.push(env.DB.prepare('INSERT INTO app_settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(key, value));
+      }
+    });
+    const batch = [env.DB.prepare('INSERT INTO commits(owner) VALUES (?)').bind(owner), ...settings];
     for (const kind of ['events', 'sessions', 'preferences']) {
       for (const [id, record] of Object.entries(data[kind])) {
         const serialized = JSON.stringify(record);

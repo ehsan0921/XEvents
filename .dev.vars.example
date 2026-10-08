@@ -5,3 +5,9 @@ TELEGRAM_WEBHOOK_SECRET=replace_with_a_random_development_secret
 
 # Your numeric Telegram user ID; blank disables the admin panel.
 SUPER_ADMIN_ID=
+
+# Development access restriction. An empty whitelist permits everyone.
+# Production always ignores this feature. IDs remain private Worker secrets.
+APP_ENV=development
+TEST_WHITELIST_ENABLED=false
+WHITELIST_USER_IDS=

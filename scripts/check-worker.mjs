@@ -15,6 +15,153 @@ const serveAssets = async request => {
   }
   return new Response(await readFile('public/'+file),{headers});
 };
+
+async function checkTestAccess() {
+  // Each fixture has its own D1 and mock transport; no live bot or user data is used.
+  const admin=710001,seedUser=710101,blockedUser=710102,otherUser=710103;
+  const authData=uid=>{
+    const params=new URLSearchParams({auth_date:String(Math.floor(Date.now()/1000)),user:JSON.stringify({id:uid,first_name:'Access tester'}),query_id:'access-query'});
+    const data=[...params.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([key,value])=>`${key}=${value}`).join('\n');
+    const key=createHmac('sha256','WebAppData').update('access-test-token').digest();
+    params.set('hash',createHmac('sha256',key).update(data).digest('hex'));return params.toString();
+  };
+  async function fixture(bindings={}) {
+    const calls=[];
+    const worker=new Miniflare(convertV4MiniflareOptions({workers:[{
+      name:'test-access',modules:true,scriptPath:'.wrangler/build/worker.js',compatibilityDate:'2026-10-05',compatibilityFlags:['nodejs_compat'],d1Databases:['DB'],
+      bindings:{APP_ENV:'development',TEST_WHITELIST_ENABLED:'true',SUPER_ADMIN_ID:String(admin),BOT_USERNAME:'fictionalAccessBot',APP_URL:'https://access.test/app',TELEGRAM_BOT_TOKEN:'access-test-token',TELEGRAM_WEBHOOK_SECRET:'access-test-secret',...bindings},
+      serviceBindings:{ASSETS:serveAssets},
+      outboundService:async request=>{
+        const method=new URL(request.url).pathname.split('/').at(-1);
+        const params=request.headers.get('Content-Type')?.includes('application/json')?await request.clone().json():null;
+        calls.push({method,params});
+        if(request.url.includes('/file/bot'))return new Response(new Uint8Array([255,216,255]),{headers:{'Content-Type':'image/jpeg'}});
+        return Response.json({ok:true,result:method==='getFile'?{file_path:'photos/access.jpg'}:{}});
+      }
+    }]}));
+    try {
+      const db=await worker.getD1Database('DB');
+      await db.exec((await readFile('migrations/0001_initial.sql','utf8')).replace(/\n/g,' '));
+      for(const path of ['migrations/0002_delivery_lease.sql','migrations/0003_mini_app.sql'])await db.exec(await readFile(path,'utf8'));
+      const api=(path,uid=blockedUser,method='GET',input)=>worker.dispatchFetch('https://access.test/api/'+path,{method,headers:{Authorization:'tma '+authData(uid),'Content-Type':'application/json'},...(input===undefined?{}:{body:JSON.stringify(input)})});
+      const update=async body=>{
+        for(let attempt=0;attempt<12;attempt++){
+          const response=await worker.dispatchFetch('https://access.test/telegram',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':'access-test-secret'},body:JSON.stringify(body)});
+          const text=await response.text();
+          if(response.status===503 && attempt<11){await new Promise(resolve=>setTimeout(resolve,Math.min(25*(attempt+1),200)));continue;}
+          assert.equal(response.status,200,text);return;
+        }
+      };
+      const message=(update_id,text,uid=admin,extra={})=>update({update_id,message:{from:{id:uid,first_name:'Access tester'},chat:{id:uid,type:'private'},text,...extra}});
+      const setting=async()=>{const row=await db.prepare("SELECT value FROM app_settings WHERE key='test-whitelist'").first();return row?JSON.parse(row.value):null;};
+      const saveSetting=value=>db.prepare("INSERT INTO app_settings(key,value) VALUES ('test-whitelist',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(value).run();
+      const records=async()=>(await db.prepare('SELECT kind,id,data FROM records ORDER BY kind,id').all()).results;
+      return {worker,db,calls,api,update,message,setting,saveSetting,records};
+    }catch(error){await worker.dispose();throw error;}
+  }
+  const access=await fixture({WHITELIST_USER_IDS:String(seedUser)});
+  try {
+    const {worker,db,calls,api,update,message,setting,saveSetting,records}=access;
+    assert.equal((await worker.dispatchFetch('https://access.test/api/bootstrap')).status,401);
+    assert.equal((await api('bootstrap',seedUser)).status,200);
+    assert.equal((await api('bootstrap',admin)).status,200,'The configured admin must remain able to manage testers.');
+    // Hold delivery so command retries can be checked against the exact durable outbox.
+    await db.prepare("INSERT INTO delivery_lease(id,owner,expires) VALUES (1,'access-fixture',unixepoch()+3600)").run();
+    const eventId='7100000000000001',inviteToken='71000000000000000000000000000001',cohostToken='71000000000000000000000000000002',mediaId='710000000001';
+    const event={id:eventId,owner:admin,title:'Private access fixture',when:'Future test event',startsAt:'2099-12-05T18:00:00Z',timezone:'UTC',location:'Fictional venue',description:'',invitationMode:'named',oneTimeInvite:true,guests:{[blockedUser]:{name:'Existing tester',status:'yes',invitationToken:inviteToken}},invitees:{[inviteToken]:{name:'Named tester',participants:1,participantMode:'preset'}},permissions:{guestList:true,uploadMedia:true,viewMedia:true},banner:'access-banner',media:[{id:mediaId,fileId:'access-image',type:'photo',name:'fictional.jpg',user:blockedUser}],cohostLinks:[{id:'7100000000000002',token:cohostToken,label:'Test co-host',status:'pending',cohost:null,createdAt:'2026-01-01T00:00:00Z'}]};
+    await db.prepare("INSERT INTO records(kind,id,data) VALUES ('events',?,?)").bind(eventId,JSON.stringify(event)).run();
+    await db.prepare("INSERT INTO records(kind,id,data) VALUES ('preferences',?,?)").bind(String(blockedUser),JSON.stringify({profilePhoto:'access-profile',timezone:'UTC'})).run();
+    const beforeDenied=await records(),beforeCalls=calls.length;
+    for(const [path,method,input] of [
+      ['bootstrap','GET'],['explore?timezone=UTC','GET'],['profile/photo','GET'],['profile/photo','DELETE'],['profile/photo','POST',{}],['branding/icon','GET'],
+      [`events/${eventId}`,'GET'],[`events/${eventId}/banner`,'GET'],[`events/${eventId}/banner`,'POST',{}],
+      [`events/${eventId}/gallery`,'GET'],[`events/${eventId}/upload-qr`,'GET'],[`events/${eventId}/media/${mediaId}`,'GET'],[`events/${eventId}/media/${mediaId}/thumbnail`,'GET'],[`events/${eventId}/media/${mediaId}/send`,'POST',{}],
+      ['preferences','POST',{timezone:'Europe/London'}],['events','POST',{}],['admin/overview','GET']
+    ]){
+      const response=await api(path,blockedUser,method,input);
+      assert.equal(response.status,403,path+' must enforce test access before its route handler.');
+      assert.equal(response.headers.get('Cache-Control'),'no-store');
+      const body=await response.json();assert.match(body.error,/test|access/i);
+      assert.doesNotMatch(JSON.stringify(body),/710001|710101|Private access fixture|Fictional venue|access-profile/);
+    }
+    assert.equal(calls.length,beforeCalls,'Denied profile, banner and media requests must not call Telegram.');
+    assert.deepEqual(await records(),beforeDenied,'Denied API requests must not change profiles, events or sessions.');
+    for(const [offset,text] of ['/new',`/start e_${eventId}`,`/start i_${eventId}_${inviteToken}`,`/start c_${eventId}_${cohostToken}`].entries())await message(710010+offset,text,blockedUser);
+    await update({update_id:710020,callback_query:{id:'blocked-callback',from:{id:blockedUser,first_name:'Access tester'},data:`r:${eventId}:no:0`}});
+    assert.deepEqual(await records(),beforeDenied,'Old callbacks and deep links must not bypass test access or claim invitations.');
+    const callbackDenial=await db.prepare("SELECT params FROM outbox WHERE method='answerCallbackQuery' AND json_extract(params,'$.callback_query_id')='blocked-callback'").first();
+    assert.ok(callbackDenial);assert.match(JSON.parse(callbackDenial.params).text,/test|access/i);
+    await update({update_id:710021,pre_checkout_query:{id:'blocked-checkout',from:{id:blockedUser},invoice_payload:'fictional-order',currency:'XTR',total_amount:10}});
+    const deniedCheckout=calls.find(call=>call.method==='answerPreCheckoutQuery' && call.params?.pre_checkout_query_id==='blocked-checkout');
+    assert.equal(deniedCheckout?.params.ok,false);assert.deepEqual(await records(),beforeDenied);
+    await message(710030,'/whitelist add '+blockedUser,seedUser);
+    assert.equal(await setting(),null,'A permitted tester must not gain administrator commands.');
+    await message(710031,'/whitelist add '+blockedUser,admin,{chat:{id:-710001,type:'group'}});
+    assert.equal(await setting(),null,'Whitelist identities must never be managed or listed in group chats.');
+    await message(710032,'/whitelist list');
+    assert.equal(await setting(),null,'Listing seeded access must not create an override.');
+    await message(710033,`/whitelist add ${blockedUser} ${otherUser}`);
+    assert.deepEqual((await setting()).sort(),[seedUser,blockedUser,otherUser].map(String).sort());
+    assert.equal((await api('bootstrap',blockedUser)).status,200);
+    const commandRows=async()=>(await db.prepare("SELECT id,method,params FROM outbox WHERE id LIKE '710033:%' ORDER BY id").all()).results;
+    const beforeReplay=await commandRows();assert.ok(beforeReplay.length);
+    await message(710033,`/whitelist add ${blockedUser} ${otherUser}`);
+    assert.deepEqual(await commandRows(),beforeReplay,'Telegram redelivery must not duplicate the command response.');
+    assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM processed WHERE id=710033').first()).n,1);
+    await message(710034,`/whitelist remove ${seedUser} ${blockedUser}`);
+    assert.deepEqual(await setting(),[String(otherUser)]);
+    assert.equal((await api('bootstrap',seedUser)).status,403);assert.equal((await api('bootstrap',blockedUser)).status,403);
+    await message(710035,'/whitelist clear');assert.deepEqual(await setting(),[]);
+    assert.equal((await api('bootstrap',blockedUser)).status,200,'An explicit empty override must open access even with a nonempty seed.');
+    await message(710036,'/whitelist add '+blockedUser);assert.deepEqual(await setting(),[String(blockedUser)]);
+    await message(710037,'/whitelist add invalid 0 9007199254740992');assert.deepEqual(await setting(),[String(blockedUser)],'Invalid input must never silently open or partially alter access.');
+    await Promise.all([message(710038,'/whitelist add '+seedUser),message(710039,'/whitelist add '+otherUser)]);
+    assert.deepEqual((await setting()).sort(),[seedUser,blockedUser,otherUser].map(String).sort(),'Concurrent commands must preserve both changes.');
+    await message(710040,`/whitelist remove ${seedUser} ${blockedUser} ${otherUser}`);assert.deepEqual(await setting(),[]);
+    assert.equal((await api('bootstrap',otherUser)).status,200,'Removing the last tester must restore the documented open mode.');
+    for(const invalid of ['not-json','{}','["710101","invalid"]','["0"]','["9007199254740992"]']){
+      await saveSetting(invalid);assert.equal((await api('bootstrap',seedUser)).status,403,'Malformed stored access settings must fail closed.');
+      assert.equal((await api('bootstrap',admin)).status,200);
+    }
+    await message(710041,'/whitelist clear');assert.deepEqual(await setting(),[],'The admin must be able to recover invalid stored access.');
+    // Incoming successful/refunded payment service messages remain auditable after access is revoked.
+    const orderId='71000000000000000000000000000003',charge='fictional-access-charge';
+    const paidEvent={...event,id:'7100000000000003',invitationMode:'tickets',starPrice:10,starPricing:'group',paymentTerms:'Fictional fixture refund terms.',guests:{[blockedUser]:{name:'Paying tester',status:'yes',participants:1,payment:{order:orderId,status:'processing'}}}};
+    const order={id:orderId,event:paidEvent.id,owner:admin,title:paidEvent.title,amount:10,unitPrice:10,pricing:'group',terms:paidEvent.paymentTerms,participants:1,status:'pending',createdAt:'2026-01-01T00:00:00Z',checkoutId:'earlier-checkout'};
+    await db.prepare("INSERT INTO records(kind,id,data) VALUES ('events',?,?)").bind(paidEvent.id,JSON.stringify(paidEvent)).run();
+    await db.prepare("UPDATE records SET data=? WHERE kind='preferences' AND id=?").bind(JSON.stringify({starOrders:{[orderId]:order}}),String(blockedUser)).run();
+    await saveSetting(JSON.stringify([String(seedUser)]));
+    const payment={currency:'XTR',total_amount:10,invoice_payload:orderId,telegram_payment_charge_id:charge};
+    await message(710050,undefined,blockedUser,{successful_payment:payment});
+    const storedOrder=async()=>JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(blockedUser)).first()).data).starOrders[orderId];
+    assert.equal((await storedOrder()).status,'paid');assert.equal((await storedOrder()).charge,charge);
+    await message(710050,undefined,blockedUser,{successful_payment:payment});assert.equal((await storedOrder()).status,'paid');
+    await message(710051,undefined,blockedUser,{refunded_payment:payment});assert.equal((await storedOrder()).status,'refunded');
+    assert.equal((await api('bootstrap',blockedUser)).status,403,'Payment bookkeeping must not grant normal app access.');
+  }finally{await access.worker.dispose();}
+  for(const scenario of [
+    {name:'empty seed',bindings:{WHITELIST_USER_IDS:''},status:200},
+    {name:'malformed seed',bindings:{WHITELIST_USER_IDS:'710101,invalid'},status:403},
+    {name:'production ignores dev flag',bindings:{APP_ENV:'production',WHITELIST_USER_IDS:String(seedUser)},status:200},
+    {name:'disabled dev gate',bindings:{TEST_WHITELIST_ENABLED:'false',WHITELIST_USER_IDS:String(seedUser)},status:200}
+  ]){
+    const test=await fixture(scenario.bindings);
+    try {
+      assert.equal((await test.api('bootstrap',blockedUser)).status,scenario.status,scenario.name);
+      assert.equal((await test.api('bootstrap',admin)).status,200,scenario.name+' admin access');
+      if(scenario.status===200){
+        await test.message(710060,'/new',blockedUser);
+        assert.ok(await test.db.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(blockedUser)).first(),scenario.name+' bot access');
+      }
+      if(scenario.bindings.APP_ENV==='production' || scenario.bindings.TEST_WHITELIST_ENABLED==='false'){
+        await test.message(710061,'/whitelist add '+seedUser);
+        assert.equal(await test.setting(),null,scenario.name+' must not enable whitelist administration');
+      }
+    }finally{await test.worker.dispose();}
+  }
+  console.log('Development access integration passed: environment isolation, empty and seeded lists, private admin commands, concurrent edits, Telegram retries, route privacy, callback and link claims, checkout denial and payment/refund audit preservation. Telegram mocked.');
+}
+
 const mf = new Miniflare(convertV4MiniflareOptions({
   workers: [{ name: 'test',
   modules: true, scriptPath: '.wrangler/build/worker.js', compatibilityDate: '2026-10-05', compatibilityFlags: ['nodejs_compat'],
@@ -884,3 +1031,4 @@ try {
   await db.prepare('DELETE FROM delivery_lease WHERE owner=?').bind(invitationDeliveryOwner).run();
   console.log('Worker integration passed: fixed personal attendee counts and live count button captions, invitation response summaries, add/revoke with notify or silent removal, exact durable notifications, native button event creation, profiles, private photos, ticket bookings, personal RSVP links, multiple tagged co-host links and isolated revocation, legacy co-host migration, approvals, payments, durable refunds and media. Telegram mocked.');
 } finally { await mf.dispose(); }
+await checkTestAccess();

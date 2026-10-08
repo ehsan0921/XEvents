@@ -6,6 +6,7 @@ import {invitationMode,invitationSettings,oneTimeInvites,invitationAvailable,rec
 import {managedInvitations,invitationsVersion,addInvitations,removeInvitation} from './invitation-management.js';
 import {isManager,cohostEntries,cohostLink,cohostVersion,createCohostInvite,revokeCohost} from './cohosts.js';
 import { authenticate } from './mini-auth.js';
+import { mayUseTestApp, testAccessMessage } from './test-access.js';
 import { parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
 import { shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
@@ -118,6 +119,7 @@ export async function miniApi(request, env) {
   const respond = (data, status = 200) => Response.json(data, { status, headers });
   const user = authenticate(request.headers.get('Authorization')?.replace(/^tma /, ''), env.TELEGRAM_BOT_TOKEN);
   if (!user) return respond({ error: 'Open the planner inside Telegram. If it was open for a while, close and reopen it.' }, 401);
+  if (!await mayUseTestApp(env, user)) return respond({ error: testAccessMessage }, 403);
   const path = new URL(request.url).pathname;
   const profileResponse=await profilePhotoApi(request,env,user);if(profileResponse)return profileResponse;
   const eventMatch=path.match(/^\/api\/events\/([a-f0-9]{16})$/);

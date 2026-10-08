@@ -70,6 +70,26 @@ test('guest list and event card have refresh buttons and guest list refresh rech
   assert.match(f.calls.at(-1).text,/not enabled/);
 });
 
+test('event card offers cancellation before optional deletion and keeps records by default',async()=>{
+  const f=fixture(),e=await f.create();
+  await f.cb(1,`v:${e.id}`);
+  let buttons=f.calls.at(-1).reply_markup.inline_keyboard.flat();
+  assert.ok(buttons.some(b=>b.text==='Cancel event' && b.callback_data===`x:${e.id}`));
+  assert.equal(buttons.some(b=>b.text==='Delete event'),false);
+  await f.cb(1,`x:${e.id}`);
+  assert.equal(e.cancelled,false);
+  await f.cb(1,`z:${e.id}`);
+  assert.equal(e.cancelled,true);
+  assert.equal(f.store.data.events[e.id],e);
+  buttons=f.calls.at(-1).reply_markup.inline_keyboard.flat();
+  assert.ok(buttons.some(b=>b.text==='Delete event' && b.callback_data===`delete:${e.id}`));
+  assert.ok(buttons.some(b=>b.text==='Keep records' && b.callback_data===`v:${e.id}`));
+  await f.cb(1,`delete:${e.id}`);
+  assert.equal(f.store.data.events[e.id],e);
+  await f.cb(1,`delete-confirm:${e.id}`);
+  assert.equal(f.store.data.events[e.id],undefined);
+});
+
 test('refresh timestamps use the viewer timezone and remain visible on long banner cards',async(t)=>{
   const f=fixture(),e=await f.create();
   f.store.data.preferences[1]={timezone:'Australia/Sydney'};

@@ -267,7 +267,7 @@ export class Bot {
       if (canSeeLocation(e, id) && e.location) extras.push(e.location.length <= 256 ? { text: '📋 Copy address', copy_text: { text: e.location } } : button('📋 Copy address', `address:${e.id}`));
       if (host && shareUploadLink(e,this.username)) extras.push(this.appUrl && e.qrEnabled!==false ? this.miniButton('Upload QR code',`?qr=${e.id}`) : {text:'Share upload link',url:`https://t.me/share/url?url=${encodeURIComponent(shareUploadLink(e,this.username))}`});
     }
-    if (owner) extras.push(button('Delete event', `delete:${e.id}`));
+    if (owner) extras.push(e.cancelled ? button('Delete event', `delete:${e.id}`) : button('Cancel event', `x:${e.id}`));
     rows.push(...paired(extras));
     if(!rsvpOnly)rows.push([button('↻ Refresh',`v:${e.id}`)],[button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
     const visibility = can(e, id, 'guestList') ? 'Guest names and RSVP comments can be seen in the guest list.' : 'The organiser has kept the guest list private. Your response and comment are shared with the organiser.';
@@ -751,6 +751,9 @@ export class Bot {
     if (action === 'delete') return this.send(id, 'Permanently delete this event and its saved responses and media references? Accepted and tentative guests will be notified. Previously sent Telegram messages and files remain in their chats.', keyboard([button('Yes, delete event', `delete-confirm:${eid}`), button('Keep event', `v:${eid}`)]));
     if (action === 'delete-confirm') return this.endEvent(id, e, true);
     if (action === 'x') return this.send(id, 'Cancel this event? Accepted and tentative guests will be notified and new responses/uploads will close.', keyboard([button('Yes, cancel event', `z:${eid}`), button('Keep event', `v:${eid}`)]));
-    if (action === 'z') { await this.endEvent(id, e); return this.card(id, e); }
+    if (action === 'z') {
+      await this.endEvent(id, e);
+      return this.send(id, 'Delete the cancelled event too, or keep its records?', keyboard([button('Delete event', `delete:${eid}`), button('Keep records', `v:${eid}`)]));
+    }
   }
 }

@@ -36,9 +36,16 @@ test('editing fetches fresh details, preserves all attendee count modes and invi
   // Switching footer tabs must preserve a partly edited event.
   ids.get('title').value='Unfinished event edit';
   tabs.find(b=>b.dataset.tab==='settings').onclick();
-  tabs.find(b=>b.dataset.tab==='create').onclick();
+  event.initialGuestNames='Alex = 3\nSam = ?\nTaylor = 2!\nJordan = 4*\nMorgan = 2';
+  await tabs.find(b=>b.dataset.tab==='create').onclick();
   assert.equal(ids.get('title').value,'Unfinished event edit');
   assert.equal(ids.get('invite-message').value,'Come celebrate with us.');
+  assert.equal(ids.get('guest-names').value,event.initialGuestNames);
+  ids.get('guest-names').value+='\nUnsaved guest = 2';
+  tabs.find(b=>b.dataset.tab==='settings').onclick();
+  event.initialGuestNames+='\nAnother server guest';
+  await tabs.find(b=>b.dataset.tab==='create').onclick();
+  assert.ok(ids.get('guest-names').value.endsWith('Unsaved guest = 2'));
   // Updating the photo must not overwrite text that has not been saved yet.
   ids.get('profile-name').value='Unsaved profile name';ids.get('profile-phone').value='+61 400 000 000';
   const bootstrapCalls=paths.filter(path=>path==='/api/bootstrap').length;

@@ -10,6 +10,20 @@ import {issueTicket,verifyTicket} from '../src/tickets.js';
 import {checkout,requestRefund,refundResult} from '../src/payments.js';
 
 const requestId='11111111-1111-4111-8111-111111111111';
+test('bulk editor projects live invitation defaults while preserving guest-selected attendance',()=>{
+  const f=fixture('Alex = 2\nSam = ?\nTaylor = 3!\nJordan = 4*');
+  Object.assign(claimInvitation(f.e,f.token,2),{status:'yes',participants:5,responseRecorded:true,responseVersion:1});
+  const response=structuredClone(f.e.guests[2]);
+  assert.equal(publicEvent(f.e,1,'ExampleBot').initialGuestNames,'Alex = 2\nSam = ?\nTaylor = 3!\nJordan = 4*');
+  assert.equal(publicEvent(f.e,2,'ExampleBot').initialGuestNames,undefined);
+  f.add('Morgan = 2');
+  const sam=Object.entries(f.e.invitees).find(([,g])=>g.name==='Sam')[0];
+  revokeInvitation(f.e,1,{token:sam,version:invitationsVersion(f.e),requestId:'22222222-2222-4222-8222-222222222222',confirm:true,notify:false},f.data.sessions);
+  const projection=publicEvent(f.e,1,'ExampleBot');
+  assert.equal(projection.initialGuestNames,'Alex = 2\nTaylor = 3!\nJordan = 4*\nMorgan = 2');
+  Object.assign(f.e,invitationSettings({guestNames:projection.initialGuestNames},f.e));
+  assert.deepEqual(f.e.guests[2],response);assert.equal(responseCounts(f.e).participants,5);
+});
 function fixture(names='Alex = 2\nSam = ?\nTaylor = 3!'){
   const e={id:'0123456789abcdef',owner:1,title:'Club dinner',location:'Private venue',invitationMode:'named',guests:{},media:[],permissions:{},startsAt:'2099-11-25T07:00:00Z',endsAt:'2099-11-25T10:00:00Z'};
   Object.assign(e,invitationSettings({guestNames:names},e));

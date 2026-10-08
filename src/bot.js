@@ -322,8 +322,9 @@ export class Bot {
     const current = this.db.sessions[id];
     if(current?.step==='broadcast' && !text.startsWith('/') && !Object.values(menu).includes(text)) {
       const event=this.db.events[current.event];
-      if(!event || event.owner!==id || event.cancelled){this.session(id);return this.send(id,'This event is unavailable for messages.');}
-      if(text==='Done')return sendBroadcast(this,id,event);
+      if(!event || event.owner!==id || event.cancelled){this.session(id);return this.home(id,'This event is unavailable for messages.');}
+      if(text==='✖ Cancel'){this.session(id);await this.home(id,'Message cancelled.');return this.card(id,event);}
+      if(text==='Done' || text==='📨 Send message')return sendBroadcast(this,id,event);
       return collectBroadcast(this,id,event,m);
     }
     if(text===menu.new)return startChatCreation(this,id);
@@ -544,7 +545,7 @@ export class Bot {
       const s=this.db.sessions[id];
       if(s?.step!=='broadcast' || s.event!==eid || (action==='bm-group' ? version!==s.token : arg!==s.token))return this.send(id,'These message controls have expired. Open Message guests again.');
       if(action==='bm-group')return toggleBroadcast(this,id,e,arg);
-      if(action==='bm-cancel'){this.session(id);return this.card(id,e);}
+      if(action==='bm-cancel'){this.session(id);await this.home(id,'Message cancelled.');return this.card(id,e);}
       return sendBroadcast(this,id,e);
     }
     if (action === 'sr' || action === 'src') {

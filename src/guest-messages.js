@@ -6,6 +6,7 @@ import { invitationHistory } from './invitation-history.js';
 const groups = { yes: 'Accepted', no: 'Rejected', maybe: 'Maybe', later: 'Respond later', unanswered: 'Unanswered' };
 const markup = rows => ({ inline_keyboard: rows });
 const button = (text, callback_data) => ({ text, callback_data });
+export const broadcastKeyboard = () => ({keyboard:[[{text:'📨 Send message'},{text:'✖ Cancel'}]],resize_keyboard:true,is_persistent:true});
 export function broadcastRecord(data, owner, token) { return data.preferences[owner]?.broadcasts?.[token]; }
 export function broadcastHistory(data,owner,eventId) {
   return Object.entries(data.preferences[owner]?.broadcasts || {}).filter(([,r])=>r.event===eventId).map(([token,r])=>{
@@ -52,17 +53,16 @@ export async function undoBroadcast(bot,id,token,deleteOld=false) {
   for(const r of record.receipts)await queueBroadcastDelete(bot,id,token,r);
   return bot.api('sendMessage',{chat_id:id,text:'Undo requested. Queued messages are stopped; delivered messages are being deleted.',__broadcastNotice:true});
 }
-export function startBroadcast(bot,id,e,quiet=false) {
-  bot.session(id,{step:'broadcast',event:e.id,token:randomBytes(6).toString('hex'),groups:['yes'],items:[]});
-  if(!quiet)return broadcastMenu(bot,id,e);
+export async function startBroadcast(bot,id,e,quiet=false) {
+  bot.session(id,{step:'broadcast',event:e.id,token:randomBytes(6).toString('hex'),groups:['yes'],items:[],chatComposer:!quiet});
+  if(!quiet){await bot.send(id,'Add text or attachments, then tap Send message below.',broadcastKeyboard());return broadcastMenu(bot,id,e);}
 }
 export function broadcastMenu(bot,id,e) {
   const s=bot.db.sessions[id],counts=Object.fromEntries(Object.keys(groups).map(key=>[key,broadcastRecipients(e,[key]).length]));
   const options=Object.entries(groups).map(([key,label])=>button(`${s.groups.includes(key)?'☑':'☐'} ${label} (${counts[key]})`,`bm-group:${e.id}:${key}:${s.token}`));
-  return bot.send(id,`${e.title}\nMessage guests · ${broadcastRecipients(e,s.groups).length} recipients\nChoose groups, then send text, photos, videos or files here.\n${s.items.length} items added. Tap Done to send.`,markup([
+  return bot.send(id,`${e.title}\nMessage guests · ${broadcastRecipients(e,s.groups).length} recipients\nChoose groups, then send text, photos, videos or files here.\n${s.items.length} items added. Tap Send message below.`,markup([
     [button(`${s.groups.length===Object.keys(groups).length?'☑':'☐'} All` ,`bm-group:${e.id}:all:${s.token}`)],
     ...Array.from({length:Math.ceil(options.length/2)},(_,i)=>options.slice(i*2,i*2+2)),
-    [button('✅ Done · Send',`bm-send:${e.id}:${s.token}`),button('✖ Cancel',`bm-cancel:${e.id}:${s.token}`)]
   ]));
 }
 export function toggleBroadcast(bot,id,e,key) {
@@ -75,7 +75,7 @@ export function collectBroadcast(bot,id,e,m) {
   const s=bot.db.sessions[id];
   if(!(m.text || m.photo || m.video || m.document || m.audio || m.voice || m.animation) || !Number.isSafeInteger(m.message_id))return bot.send(id,'Send text, a photo, video or file.');
   if(s.items.includes(m.message_id))return;
-  if(s.items.length>=20)return bot.send(id,'Maximum 20 items. Tap Done to send.');
+  if(s.items.length>=20)return bot.send(id,'Maximum 20 items. Tap Send message below.');
   s.items.push(m.message_id);
   (s.previews ||= []).push((m.text || m.caption || '').slice(0,500));
   if(!m.text)(s.attachments ||= []).push(m.document?.file_name || m.audio?.file_name || (m.photo?'Photo':m.video?'Video':m.voice?'Voice message':'Attachment'));
@@ -84,7 +84,7 @@ export function collectBroadcast(bot,id,e,m) {
 export async function sendBroadcast(bot,id,e) {
   const s=bot.db.sessions[id],recipients=broadcastRecipients(e,s.groups);
   if(!recipients.length)return bot.send(id,'No reachable guests selected. Choose another group.');
-  if(!s.items.length && !s.text)return bot.send(id,'Add a message or attachment first.',markup([[button('📨 Send message',`bm-send:${e.id}:${s.token}`),button('✖ Cancel',`bm-cancel:${e.id}:${s.token}`)]]));
+  if(!s.items.length && !s.text)return bot.send(id,'Add a message or attachment first.',broadcastKeyboard());
   const pref=bot.db.preferences[id] ||= {},records=pref.broadcasts ||= {};
   const token=s.token;
   records[token]={event:e.id,count:recipients.length,createdAt:Date.now(),preview:(s.text || s.previews?.filter(Boolean).join('\n') || 'Message with attachments').slice(0,4000),attachments:s.attachments || [],expectedMessages:1+(s.text?1:0)+s.items.length,undoUntil:Date.now()+300000,receipts:[],undone:false};
@@ -101,5 +101,6 @@ export async function sendBroadcast(bot,id,e) {
       await broadcastReceipt(bot,id,token,chatId,result?.message_id);
     }
   }
+  if(s.chatComposer)await bot.home(id,'Message composer closed.');
   return bot.api('sendMessage',{chat_id:id,text:`Sending to ${recipients.length} guests now. Undo is available for 5 minutes.`,reply_markup:markup([[button('↩ Undo message',`bm-undo:${token}`)],[button('Back to event',`v:${e.id}`)]]),__broadcastNotice:true});
 }

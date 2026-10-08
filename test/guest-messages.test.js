@@ -15,9 +15,20 @@ test('empty message prompt keeps send and cancel controls available',async()=>{
   const f=fixture();await f.cb(1,`bm:${f.e.id}`);const token=f.data.sessions[1].token;
   await f.cb(1,`bm-send:${f.e.id}:${token}`);
   const prompt=f.calls.at(-1);assert.equal(prompt.text,'Add a message or attachment first.');
-  assert.deepEqual(prompt.reply_markup.inline_keyboard[0].map(b=>b.callback_data),[`bm-send:${f.e.id}:${token}`,`bm-cancel:${f.e.id}:${token}`]);
-  await f.msg(1,'Example message');await f.cb(1,prompt.reply_markup.inline_keyboard[0][0].callback_data);
+  assert.deepEqual(prompt.reply_markup.keyboard[0].map(b=>b.text),['📨 Send message','✖ Cancel']);
+  assert.equal(prompt.reply_markup.inline_keyboard,undefined);
+  await f.msg(1,'Example message');await f.msg(1,'📨 Send message');
   assert.equal(f.calls.filter(c=>c.method==='copyMessage').length,1);
+  assert.equal(f.calls.some(c=>c.reply_markup?.keyboard?.[0]?.some(b=>b.text==='🎉 Create event')),true);
+});
+
+test('composer reply keyboard cancels without sending its button text',async()=>{
+  const f=fixture();await f.cb(1,`bm:${f.e.id}`);
+  assert.equal(f.calls.some(c=>c.reply_markup?.keyboard?.[0]?.[0]?.text==='📨 Send message'),true);
+  await f.msg(1,'Draft');await f.msg(1,'✖ Cancel');
+  assert.equal(f.data.sessions[1],undefined);
+  assert.equal(f.calls.some(c=>c.method==='copyMessage'),false);
+  assert.equal(f.calls.some(c=>c.reply_markup?.keyboard?.[0]?.some(b=>b.text==='🎉 Create event')),true);
 });
 
 test('messaging defaults to accepted and isolates each response group including unanswered',async()=>{

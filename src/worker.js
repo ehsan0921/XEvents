@@ -200,7 +200,7 @@ export default {
     if (!Number.isSafeInteger(update.update_id)) return new Response('Invalid update', { status: 400 });
     try {
       const response = await processUpdate(env, update);
-      if (response.ok) ctx.waitUntil(drainOutbox(env,/^bm-(send|undo):/.test(update.callback_query?.data || '') || ['📨 Send message','Done'].includes(update.message?.text?.trim())));
+      if (response.ok) ctx.waitUntil(drainOutbox(env,/^bm-(send|undo|group):/.test(update.callback_query?.data || '') || ['📨 Send message','Done'].includes(update.message?.text?.trim())));
       return response;
     } catch {
       console.error(JSON.stringify({ event: 'update_failed', update_id: update.update_id }));

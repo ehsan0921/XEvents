@@ -88,6 +88,14 @@ export async function checkGuestMessages(){
     assert.equal(qrResponse.status,200);await settle();
     const photo=calls.find(c=>c.method==='sendPhoto');assert.ok(photo);assert.equal(photo.params.photo.type,'image/png');
     assert.equal(photo.params.__photoUpload,undefined);assert.equal(photo.params.chat_id,'710001');
+    const callback=async(data,update_id,message)=>worker.dispatchFetch('https://messages.test/telegram',{method:'POST',headers:{'Content-Type':'application/json','X-Telegram-Bot-Api-Secret-Token':'fictional-secret'},body:JSON.stringify({update_id,callback_query:{id:'fictional-category-query',from:{id:710001,first_name:'Fictional host'},data,message}})});
+    assert.equal((await callback('bm:'+eventId,9002)).status,200);await settle();
+    const session=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind('710001').first()).data);
+    const start=calls.length;
+    assert.equal((await callback(`bm-group:${eventId}:no:${session.token}`,9003,{chat:{id:710001},message_id:444})).status,200);await settle();
+    const edited=calls.slice(start).find(c=>c.method==='editMessageText');assert.ok(edited);assert.equal(edited.params.message_id,444);
+    assert.ok(edited.params.reply_markup.inline_keyboard.flat().some(b=>b.text.startsWith('❌')));
+    assert.equal(edited.params.__broadcastNotice,undefined);assert.equal(calls.slice(start).some(c=>c.method==='sendMessage'),false);
     console.log('Guest messaging Worker integration passed: creator authorization, filters, attachments, durable receipts, idempotent send and undo. Telegram mocked.');
   }finally{await worker.dispose();}
 }

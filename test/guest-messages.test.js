@@ -13,13 +13,18 @@ function fixture(){
 }
 test('empty message prompt keeps send and cancel controls available',async()=>{
   const f=fixture();await f.cb(1,`bm:${f.e.id}`);const token=f.data.sessions[1].token;
+  assert.match(f.calls.at(-2).text,/Choose recipient categories below\./);
+  assert.equal(f.calls.at(-1).text,'Write your message or attach files. When finished, press Send message.');
+  assert.ok(f.calls.at(-1).reply_markup.keyboard);
   await f.cb(1,`bm-send:${f.e.id}:${token}`);
-  const prompt=f.calls.at(-1);assert.equal(prompt.text,'Add a message or attachment first.');
+  const prompt=f.calls.at(-1);assert.equal(prompt.text,'Write your message or attach files first. Then press Send message.');
   assert.deepEqual(prompt.reply_markup.keyboard[0].map(b=>b.text),['📨 Send message','✖ Cancel']);
   assert.equal(prompt.reply_markup.inline_keyboard,undefined);
   await f.msg(1,'Example message');await f.msg(1,'📨 Send message');
   assert.equal(f.calls.filter(c=>c.method==='copyMessage').length,1);
   assert.equal(f.calls.some(c=>c.reply_markup?.keyboard?.[0]?.some(b=>b.text==='🎉 Create event')),true);
+  assert.equal(f.data.sessions[1],undefined);
+  assert.ok(f.calls.some(c=>c.__broadcastNotice && c.reply_markup?.keyboard?.[0]?.some(b=>b.text==='🎉 Create event')));
 });
 
 test('composer reply keyboard cancels without sending its button text',async()=>{
@@ -29,6 +34,20 @@ test('composer reply keyboard cancels without sending its button text',async()=>
   assert.equal(f.data.sessions[1],undefined);
   assert.equal(f.calls.some(c=>c.method==='copyMessage'),false);
   assert.equal(f.calls.some(c=>c.reply_markup?.keyboard?.[0]?.some(b=>b.text==='🎉 Create event')),true);
+});
+
+test('recipient selection edits the original message and shows red crosses for unselected groups',async()=>{
+  const f=fixture();await f.cb(1,`bm:${f.e.id}`);const token=f.data.sessions[1].token;
+  const count=f.calls.filter(c=>c.method==='sendMessage').length;
+  const toggle=key=>f.bot.handle({callback_query:{from:{id:1},message:{message_id:123,chat:{id:1}},data:`bm-group:${f.e.id}:${key}:${token}`}});
+  await toggle('no');let edited=f.calls.at(-1);
+  assert.equal(edited.method,'editMessageText');assert.equal(edited.message_id,123);
+  assert.equal(f.calls.filter(c=>c.method==='sendMessage').length,count);
+  let labels=edited.reply_markup.inline_keyboard.flat().map(b=>b.text);
+  assert.ok(labels.includes('✅ Rejected (1)'));assert.ok(labels.includes('❌ Maybe (1)'));assert.ok(labels.includes('❌ All'));
+  await toggle('all');labels=f.calls.at(-1).reply_markup.inline_keyboard.flat().map(b=>b.text);assert.ok(labels.every(label=>label.startsWith('✅')));
+  await toggle('all');labels=f.calls.at(-1).reply_markup.inline_keyboard.flat().map(b=>b.text);assert.ok(labels.every(label=>label.startsWith('❌')));
+  assert.equal(f.calls.filter(c=>c.method==='sendMessage').length,count);
 });
 
 test('messaging defaults to accepted and isolates each response group including unanswered',async()=>{

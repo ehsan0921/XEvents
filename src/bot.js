@@ -85,7 +85,7 @@ export class Bot {
     return this.afterIdentity(id,e,s);
   }
   hasPending(id) { return Object.values(this.db.events).some(e => this.allowed(e,id) && !isManager(e,id) && invitationMode(e)!=='tickets' && !e.cancelled && e.guests[id]?.status === 'later'); }
-  home(id, text = 'Welcome to XEvents 🎉\nTap Create event or My events below.') { return this.send(id, text, homeKeyboard()); }
+  home(id, text = 'Welcome to XEvents 🎉\nTap Create event or My events below.',immediate=false) { return this.api('sendMessage',{chat_id:id,text,reply_markup:homeKeyboard(),...(immediate?{__broadcastNotice:true}:{})}); }
   session(id, value) { if (value) this.db.sessions[id] = value; else delete this.db.sessions[id]; }
   link(e) { return `https://t.me/${this.username}?start=e_${e.id}`; }
   miniButton(text, params = '') { return { text, web_app: { url: this.appUrl + params } }; }
@@ -553,7 +553,7 @@ export class Bot {
       if(action==='bm')return startBroadcast(this,id,e);
       const s=this.db.sessions[id];
       if(s?.step!=='broadcast' || s.event!==eid || (action==='bm-group' ? version!==s.token : arg!==s.token))return this.send(id,'These message controls have expired. Open Message guests again.');
-      if(action==='bm-group')return toggleBroadcast(this,id,e,arg);
+      if(action==='bm-group')return toggleBroadcast(this,id,e,arg,q.message);
       if(action==='bm-cancel'){this.session(id);await this.home(id,'Message cancelled.');return this.card(id,e);}
       return sendBroadcast(this,id,e);
     }

@@ -55,21 +55,24 @@ export async function undoBroadcast(bot,id,token,deleteOld=false) {
 }
 export async function startBroadcast(bot,id,e,quiet=false) {
   bot.session(id,{step:'broadcast',event:e.id,token:randomBytes(6).toString('hex'),groups:['yes'],items:[],chatComposer:!quiet});
-  if(!quiet){await bot.send(id,'Add text or attachments, then tap Send message below.',broadcastKeyboard());return broadcastMenu(bot,id,e);}
+  if(!quiet){await broadcastMenu(bot,id,e);return bot.send(id,'Write your message or attach files. When finished, press Send message.',broadcastKeyboard());}
 }
-export function broadcastMenu(bot,id,e) {
+export function broadcastMenu(bot,id,e,message) {
   const s=bot.db.sessions[id],counts=Object.fromEntries(Object.keys(groups).map(key=>[key,broadcastRecipients(e,[key]).length]));
-  const options=Object.entries(groups).map(([key,label])=>button(`${s.groups.includes(key)?'☑':'☐'} ${label} (${counts[key]})`,`bm-group:${e.id}:${key}:${s.token}`));
-  return bot.send(id,`${e.title}\nMessage guests · ${broadcastRecipients(e,s.groups).length} recipients\nChoose groups, then send text, photos, videos or files here.\n${s.items.length} items added. Tap Send message below.`,markup([
-    [button(`${s.groups.length===Object.keys(groups).length?'☑':'☐'} All` ,`bm-group:${e.id}:all:${s.token}`)],
+  const options=Object.entries(groups).map(([key,label])=>button(`${s.groups.includes(key)?'✅':'❌'} ${label} (${counts[key]})`,`bm-group:${e.id}:${key}:${s.token}`));
+  const text=`${e.title}\nMessage guests · ${broadcastRecipients(e,s.groups).length} recipients\nChoose recipient categories below.`;
+  const reply_markup=markup([
+    [button(`${s.groups.length===Object.keys(groups).length?'✅':'❌'} All` ,`bm-group:${e.id}:all:${s.token}`)],
     ...Array.from({length:Math.ceil(options.length/2)},(_,i)=>options.slice(i*2,i*2+2)),
-  ]));
+  ]);
+  if(message?.chat?.id===id && Number.isSafeInteger(message.message_id) && message.message_id>0)return bot.api('editMessageText',{chat_id:id,message_id:message.message_id,text,reply_markup,__broadcastNotice:true});
+  return bot.send(id,text,reply_markup);
 }
-export function toggleBroadcast(bot,id,e,key) {
+export function toggleBroadcast(bot,id,e,key,message) {
   const s=bot.db.sessions[id];
   if(key==='all')s.groups=s.groups.length===Object.keys(groups).length?[]:Object.keys(groups);
   else if(Object.hasOwn(groups,key))s.groups=s.groups.includes(key)?s.groups.filter(k=>k!==key):[...s.groups,key];
-  return broadcastMenu(bot,id,e);
+  return broadcastMenu(bot,id,e,message);
 }
 export function collectBroadcast(bot,id,e,m) {
   const s=bot.db.sessions[id];
@@ -84,7 +87,7 @@ export function collectBroadcast(bot,id,e,m) {
 export async function sendBroadcast(bot,id,e) {
   const s=bot.db.sessions[id],recipients=broadcastRecipients(e,s.groups);
   if(!recipients.length)return bot.send(id,'No reachable guests selected. Choose another group.');
-  if(!s.items.length && !s.text)return bot.send(id,'Add a message or attachment first.',broadcastKeyboard());
+  if(!s.items.length && !s.text)return bot.send(id,'Write your message or attach files first. Then press Send message.',broadcastKeyboard());
   const pref=bot.db.preferences[id] ||= {},records=pref.broadcasts ||= {};
   const token=s.token;
   records[token]={event:e.id,count:recipients.length,createdAt:Date.now(),preview:(s.text || s.previews?.filter(Boolean).join('\n') || 'Message with attachments').slice(0,4000),attachments:s.attachments || [],expectedMessages:1+(s.text?1:0)+s.items.length,undoUntil:Date.now()+300000,receipts:[],undone:false};
@@ -101,6 +104,6 @@ export async function sendBroadcast(bot,id,e) {
       await broadcastReceipt(bot,id,token,chatId,result?.message_id);
     }
   }
-  if(s.chatComposer)await bot.home(id,'Message composer closed.');
+  if(s.chatComposer)await bot.home(id,'Message queued. Back to the main menu.',true);
   return bot.api('sendMessage',{chat_id:id,text:`Sending to ${recipients.length} guests now. Undo is available for 5 minutes.`,reply_markup:markup([[button('↩ Undo message',`bm-undo:${token}`)],[button('Back to event',`v:${e.id}`)]]),__broadcastNotice:true});
 }

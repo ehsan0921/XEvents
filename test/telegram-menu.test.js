@@ -71,7 +71,8 @@ test('the test whitelist command appears only in the configured admin private ch
   assert.equal(f.calls.length, 1);
   f.env.TEST_WHITELIST_ENABLED = 'false';
   await configureMiniApp(f.env);
-  assert.deepEqual(f.calls.at(-1).commands, botCommands);
+  assert.equal(f.calls.length, 1, 'The admin can manage saved dev IDs while the access switch is off.');
+  assert.ok(f.calls.at(-1).commands.some(item => item.command === 'whitelist'));
   assert.deepEqual(f.calls.at(-1).scope, { type: 'chat', chat_id: 900000001 });
 });
 

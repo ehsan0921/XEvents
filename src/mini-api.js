@@ -6,7 +6,7 @@ import {invitationMode,invitationSettings,oneTimeInvites,invitationAvailable,rec
 import {managedInvitations,invitationsVersion,addInvitations,removeInvitation} from './invitation-management.js';
 import {isManager,cohostEntries,cohostLink,cohostVersion,createCohostInvite,revokeCohost} from './cohosts.js';
 import { authenticate } from './mini-auth.js';
-import { mayUseTestApp, testAccessMessage, TestAccessError } from './test-access.js';
+import { mayUseTestApp, testAccessMessage, TestAccessError, whitelistStatus, applyWhitelistChange } from './test-access.js';
 import { parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
 import { shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
@@ -160,6 +160,23 @@ async function miniApiForUser(request, env, user) {
   if (mediaResponse) return mediaResponse;
   if (path.startsWith('/api/admin')) {
     if (!isSuperAdmin(user, env)) return respond({ error: 'Super admin access required.' }, 403);
+    if (path === '/api/admin/whitelist') {
+      if (request.method === 'GET') return respond(await whitelistStatus(env));
+      if (request.method === 'POST') {
+        if (env.APP_ENV !== 'development') return respond({ error: 'The test whitelist is available only in development.' }, 403);
+        const raw = await request.text();
+        if (raw.length > 14000) return respond({ error: 'Too much text.' }, 413);
+        try {
+          const input = JSON.parse(raw);
+          const status = await mutateState(env, (_data, _bot, settings) => applyWhitelistChange(env, input, settings));
+          return respond(status);
+        } catch (error) {
+          if (error instanceof TestAccessError) throw error;
+          return respond({ error: error instanceof InputError || error instanceof BusyError ? error.message : 'Could not save test access settings.' }, error instanceof BusyError ? 503 : 400);
+        }
+      }
+      return respond({ error: 'Not found.' }, 404);
+    }
     if(path==='/api/admin/pricing' && request.method==='POST') {
       const raw=await request.text();if(raw.length>12000)return respond({error:'Too much text.'},413);
       try {

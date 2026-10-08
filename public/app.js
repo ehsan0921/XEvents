@@ -37,6 +37,7 @@ function updatePricePreview(){
 }
 let listFilter = 'all';
 let adminData = null, adminMode = 'events';
+let adminWhitelist = null, whitelistBusy = false;
 let bannerPreviewUrl,bannerLoadGeneration=0;
 let profilePhotoUrl,profilePhotoGeneration=0;
 let botIconUrl,botIconGeneration=0;
@@ -216,7 +217,7 @@ const {cancelEvent,deleteEvent}=setupEventActions({$,api,refresh,notice,onEnded:
 function confirmAction(message, operation) {
   const dialog = $('confirm-dialog');
   if (dialog.open) return Promise.resolve(false);
-  const labels={delete:['Delete event?','Delete event','Keep event'],cancel:['Cancel event?','Cancel event','Keep event'],'cohost-revoke':['Revoke co-host access?','Revoke access','Keep access'],'cohost-cancel-link':['Cancel co-host invite?','Cancel invite link','Keep link'],'cohost-rotate':['Replace co-host invite?','Create new link','Keep current link']}[operation] || ['Confirm action','Confirm','Back'];
+  const labels={delete:['Delete event?','Delete event','Keep event'],cancel:['Cancel event?','Cancel event','Keep event'],'cohost-revoke':['Revoke co-host access?','Revoke access','Keep access'],'cohost-cancel-link':['Cancel co-host invite?','Cancel invite link','Keep link'],'cohost-rotate':['Replace co-host invite?','Create new link','Keep current link'],'whitelist-enable':['Restrict dev access?','Turn on whitelist','Keep current access'],'whitelist-first':['Restrict dev access?','Add user and restrict','Back'],'whitelist-disable':['Open dev access?','Turn off whitelist','Keep restricted'],'whitelist-last':['Remove the last user?','Remove user','Keep user'],'whitelist-repair':['Repair access setting?','Repair and turn on','Back']}[operation] || ['Confirm action','Confirm','Back'];
   $('confirm-title').textContent = labels[0];
   $('confirm-message').textContent = message;
   $('confirm-proceed').textContent = labels[1];$('confirm-back').textContent=labels[2];
@@ -645,12 +646,85 @@ function filterExplore(){const text=$('explore-search').value.trim().toLowerCase
 $('explore-search').oninput=filterExplore;
 async function loadAdmin() {
   $('admin-refresh').disabled = true; $('admin-error').hidden = true;
-  try { adminData = await api('admin/overview');
-  $('owner-default-price').value=adminData.pricing?.defaultStarPrice || 0; $('owner-default-unit').value=adminData.pricing?.defaultStarPricing || 'person';
-renderAdmin(); }
-  catch (error) { $('admin-error').textContent=error.message; $('admin-error').hidden=false; $('admin-list').replaceChildren(); }
+  const results=await Promise.allSettled([api('admin/overview'),loadAdminWhitelist()]);
+  try {
+    if(results[0].status==='rejected')throw results[0].reason;
+    adminData=results[0].value;
+    $('owner-default-price').value=adminData.pricing?.defaultStarPrice || 0; $('owner-default-unit').value=adminData.pricing?.defaultStarPricing || 'person';
+    renderAdmin();
+    if(results[1].status==='rejected')throw new Error('Dev access: '+results[1].reason.message);
+  }
+  catch (error) { $('admin-error').textContent=error.message; $('admin-error').hidden=false;if(results[0].status==='rejected')$('admin-list').replaceChildren(); }
   finally { $('admin-refresh').disabled=false; }
 }
+function setWhitelistBusy(busy) {
+  whitelistBusy=busy;
+  $('admin-whitelist').setAttribute('aria-busy',String(busy));
+  for(const control of $('admin-whitelist').querySelectorAll('input,button'))control.disabled=busy;
+  $('whitelist-enabled').disabled=busy || !!adminWhitelist?.snapshotProtected;
+}
+function renderAdminWhitelist() {
+  const data=adminWhitelist,section=$('admin-whitelist');
+  section.hidden=!state.user?.isSuperAdmin || data?.supported!==true;
+  if(section.hidden)return;
+  const ids=Array.isArray(data.ids)?data.ids:[];
+  $('whitelist-enabled').checked=!!data.enabled || !!data.snapshotProtected;
+  $('whitelist-toggle-note').textContent=data.snapshotProtected ? 'Copied production data stays restricted to listed testers and the super admin.' : 'Off allows everyone. On allows listed users; an empty list also allows everyone.';
+  $('whitelist-summary').textContent=data.snapshotProtected ? '🔒 Dev access · protected snapshot' : data.restricted ? '🔒 Dev access · restricted' : '🔒 Dev access · open';
+  $('whitelist-access').textContent=data.invalid ? (data.restricted ? 'The saved access settings need attention. Access is restricted for safety; repair the setting and update the user IDs below.' : 'Anyone can access the dev bot and Mini App. The saved whitelist needs attention; repair the access setting before using it.') : data.snapshotProtected ? (ids.length ? 'Only the listed users and the super admin can use this development snapshot.' : 'This development snapshot is available to the super admin only. Add user IDs to invite testers.') : data.restricted ? 'Only the listed users and the super admin can access the dev bot and Mini App.' : data.enabled ? 'The list is empty, so anyone can access the dev bot and Mini App. Add a user ID to restrict access.' : 'Whitelist is off. Anyone can access the dev bot and Mini App.';
+  $('whitelist-snapshot-note').hidden=!data.snapshotProtected;
+  $('whitelist-repair-options').hidden=!data.invalid;
+  $('whitelist-repair-note').hidden=!data.invalid;
+  $('whitelist-empty').hidden=ids.length>0;
+  $('whitelist-empty').textContent=data.invalid ? 'No valid user IDs are shown. Repair the access setting, then add a valid user ID.' : data.snapshotProtected ? 'No testers added yet.' : 'No user IDs added yet. An empty whitelist leaves access open.';
+  const list=$('whitelist-users');list.replaceChildren();
+  for(const id of ids){
+    const row=element('li','','whitelist-user'),label=element('code',String(id));
+    const remove=action('✕ Remove',()=>changeAdminWhitelist({action:'remove',ids:String(id)}));
+    remove.className='secondary';remove.setAttribute('aria-label','Remove Telegram user ID '+String(id));
+    row.append(label,remove);list.append(row);
+  }
+  setWhitelistBusy(whitelistBusy);
+}
+async function loadAdminWhitelist() {
+  if(!state.user?.isSuperAdmin){adminWhitelist=null;$('admin-whitelist').hidden=true;return;}
+  setWhitelistBusy(true);
+  try { adminWhitelist=await api('admin/whitelist');renderAdminWhitelist(); }
+  finally { setWhitelistBusy(false); }
+}
+async function changeAdminWhitelist(body,repair=false) {
+  if(whitelistBusy || !adminWhitelist?.supported || !state.user?.isSuperAdmin)return;
+  const data=adminWhitelist;
+  setWhitelistBusy(true);$('whitelist-status').textContent='';
+  try {
+    let warning='',operation='';
+    if(repair){
+      warning='Repair turns on a valid whitelist access setting. When valid user IDs are saved, only listed users and the super admin can enter. If the user list still needs attention after repair, add a valid user ID below. Your super admin access is always kept.'+(data.snapshotProtected ? ' Copied production data stays protected.' : ' An empty valid list leaves access open.');operation='whitelist-repair';
+    }else if(body.action==='set-enabled'){
+      warning=body.enabled ? 'When the whitelist is on and has user IDs, other users cannot access the dev bot or Mini App. Only listed users and the super admin can enter. An empty list leaves access open. Your super admin access is always kept.' : 'Turning off the whitelist allows everyone to access the dev bot and Mini App. Saved user IDs will stay in the list.';
+      operation=body.enabled?'whitelist-enable':'whitelist-disable';
+    }else if(body.action==='remove' && data.ids?.length===1 && data.enabled && !data.snapshotProtected){
+      warning='Removing the last user ID leaves the whitelist empty. Anyone will be able to access the dev bot and Mini App.';operation='whitelist-last';
+    }else if(body.action==='add' && !data.ids?.length && data.enabled && !data.snapshotProtected){
+      warning='Adding the first user ID will restrict access. Other users cannot access the dev bot or Mini App. Only listed users and the super admin can enter.';operation='whitelist-first';
+    }
+    if(warning && !await confirmAction(warning,operation))return;
+    adminWhitelist=await api('admin/whitelist',body);renderAdminWhitelist();
+    if(body.action==='add')$('whitelist-user-id').value='';
+    $('whitelist-status').textContent=repair ? (adminWhitelist.invalid ? 'Access setting repaired. Add a valid user ID to repair the saved list.' : 'Access setting repaired and whitelist turned on.') : body.action==='set-enabled' ? (body.enabled?'Whitelist turned on.':'Whitelist turned off.') : body.action==='add' ? 'User added to the whitelist.' : 'User removed from the whitelist.';
+  }catch(error){$('whitelist-status').textContent=error.message;}
+  finally {renderAdminWhitelist();setWhitelistBusy(false);}
+}
+$('whitelist-enabled').onchange=event=>{
+  const enabled=event.target.checked;event.target.checked=!!adminWhitelist?.enabled;
+  changeAdminWhitelist({action:'set-enabled',enabled});
+};
+$('whitelist-repair').onclick=()=>changeAdminWhitelist({action:'set-enabled',enabled:true},true);
+$('whitelist-add-form').onsubmit=event=>{
+  event.preventDefault();const input=$('whitelist-user-id'),id=input.value.trim();
+  if(!/^[1-9]\d{0,15}$/.test(id)){$('whitelist-status').textContent='Enter a valid numeric Telegram user ID.';input.focus();return;}
+  changeAdminWhitelist({action:'add',ids:id});
+};
 function renderAdmin() {
   if (!adminData) return;
   $('admin-summary').textContent=`${adminData.events.length} events · ${adminData.users.length} users · ${adminData.events.filter(e=>e.group==='Upcoming events').length} upcoming`;

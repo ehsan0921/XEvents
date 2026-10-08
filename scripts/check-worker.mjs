@@ -153,12 +153,59 @@ async function checkTestAccess() {
         await test.message(710060,'/new',blockedUser);
         assert.ok(await test.db.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(blockedUser)).first(),scenario.name+' bot access');
       }
-      if(scenario.bindings.APP_ENV==='production' || scenario.bindings.TEST_WHITELIST_ENABLED==='false'){
+      if(scenario.bindings.APP_ENV==='production'){
         await test.message(710061,'/whitelist add '+seedUser);
         assert.equal(await test.setting(),null,scenario.name+' must not enable whitelist administration');
       }
     }finally{await test.worker.dispose();}
   }
+  const controls=await fixture({WHITELIST_USER_IDS:String(seedUser)});
+  try {
+    const {db,api,message,setting,calls}=controls;
+    assert.equal((await api('admin/whitelist',seedUser)).status,403,'Permitted testers cannot read admin access settings.');
+    const initial=await api('admin/whitelist',admin);
+    assert.equal(initial.status,200);
+    assert.deepEqual(await initial.json(),{supported:true,enabled:true,restricted:true,ids:[String(seedUser)],snapshotProtected:false,invalid:false});
+    const change=async input=>{
+      const response=await api('admin/whitelist',admin,'POST',input);
+      assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+      return response.json();
+    };
+    const initialCalls=calls.length;
+    const added=await change({action:'add',ids:`${otherUser}, ${otherUser}`});
+    assert.deepEqual([...added.ids].sort(),[seedUser,otherUser].map(String).sort(),'Panel additions preserve the secret seed and deduplicate IDs.');
+    assert.equal(calls.length,initialCalls,'Panel edits must not send bot messages.');
+    for(const input of [{action:'add',ids:'invalid'},{action:'remove',ids:otherUser},{action:'set-enabled',enabled:'false'},{action:'unknown'}]){
+      assert.equal((await api('admin/whitelist',admin,'POST',input)).status,400,'Invalid access edits must be rejected.');
+      assert.deepEqual((await setting()).sort(),[seedUser,otherUser].map(String).sort());
+    }
+    assert.equal((await change({action:'set-enabled',enabled:false})).restricted,false);
+    assert.equal((await api('bootstrap',blockedUser)).status,200,'Saved off switch opens normal development without discarding its IDs.');
+    await message(710080,'/new',blockedUser);
+    assert.ok(await db.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(blockedUser)).first(),'Bot messages obey the saved switch too.');
+    const disabledAdd=await change({action:'add',ids:String(blockedUser)});
+    assert.equal(disabledAdd.enabled,false);assert.ok(disabledAdd.ids.includes(String(blockedUser)));
+    await change({action:'remove',ids:String(otherUser)});
+    assert.equal((await change({action:'set-enabled',enabled:true})).restricted,true);
+    assert.equal((await api('bootstrap',otherUser)).status,403);
+    assert.equal((await api('bootstrap',seedUser)).status,200);
+    await change({action:'remove',ids:`${seedUser} ${blockedUser}`});
+    assert.equal((await api('bootstrap',otherUser)).status,200,'An empty ordinary list preserves the existing open-access rule.');
+    await change({action:'add',ids:String(seedUser)});
+    await db.prepare("INSERT INTO app_settings(key,value) VALUES ('production-snapshot','{}')").run();
+    const copied=await (await api('admin/whitelist',admin)).json();assert.equal(copied.snapshotProtected,true);assert.equal(copied.restricted,true);
+    assert.equal((await api('admin/whitelist',admin,'POST',{action:'set-enabled',enabled:false})).status,400,'Panel cannot disable production-snapshot protection.');
+    const emptyCopy=await change({action:'remove',ids:String(seedUser)});assert.equal(emptyCopy.restricted,true);assert.deepEqual(emptyCopy.ids,[]);
+    assert.equal((await api('bootstrap',seedUser)).status,403,'Removing the final copied-data tester keeps admin-only access.');
+    assert.equal((await api('bootstrap',admin)).status,200);
+  }finally{await controls.worker.dispose();}
+  const productionControls=await fixture({APP_ENV:'production',WHITELIST_USER_IDS:String(seedUser)});
+  try {
+    assert.equal((await (await productionControls.api('admin/whitelist',admin)).json()).supported,false);
+    assert.equal((await productionControls.api('admin/whitelist',admin,'POST',{action:'set-enabled',enabled:true})).status,403);
+    assert.equal(await productionControls.setting(),null);
+    assert.equal((await productionControls.api('bootstrap',blockedUser)).status,200,'Production access cannot be restricted by the development panel.');
+  }finally{await productionControls.worker.dispose();}
   const snapshot=await fixture({TEST_WHITELIST_ENABLED:'false',WHITELIST_USER_IDS:''});
   try {
     const {worker,db,calls,api,message,setting}=snapshot;

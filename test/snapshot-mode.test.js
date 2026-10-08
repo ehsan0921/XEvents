@@ -20,6 +20,7 @@ function fixture({ snapshot = { value: '{}' }, stored = { value: '["111002"]' },
     DB: {
       prepare(sql) {
         if (sql === "SELECT value FROM app_settings WHERE key='production-snapshot'") return { async first() { return snapshot; } };
+        if (sql === "SELECT value FROM app_settings WHERE key='test-whitelist-enabled'") return { async first() { return null; } };
         if (sql === "SELECT value FROM app_settings WHERE key='test-whitelist'") return { async first() { return stored; } };
         assert.fail('Unexpected database query.');
       }
@@ -120,6 +121,7 @@ test('a Mini App read crossing the database refresh cannot return copied private
   const env = { APP_ENV: 'development', TEST_WHITELIST_ENABLED: 'false', TELEGRAM_BOT_TOKEN: 'snapshot-test-token', BOT_USERNAME: 'FictionalSnapshotBot', DB: {
     prepare(sql) {
       if (sql === "SELECT value FROM app_settings WHERE key='production-snapshot'") return { async first() { return copied ? { value: '{}' } : null; } };
+      if (sql === "SELECT value FROM app_settings WHERE key='test-whitelist-enabled'") return { async first() { return null; } };
       if (sql === "SELECT value FROM app_settings WHERE key='test-whitelist'") return { async first() { return { value: '[]' }; } };
       if (sql === "SELECT data FROM records WHERE kind='events' AND id=?") return { bind() { return this; }, async first() { copied = true; return { data: JSON.stringify(event) }; } };
       assert.fail('Unexpected database query.');
@@ -136,6 +138,7 @@ test('a Mini App mutation rechecks access under its lease before loading copied 
   const env = { APP_ENV: 'development', TEST_WHITELIST_ENABLED: 'false', TELEGRAM_BOT_TOKEN: 'snapshot-test-token', snapshotUser: { id: 999001 }, SUPER_ADMIN_ID: '999001', DB: {
     prepare(sql) {
       if (sql === "SELECT value FROM app_settings WHERE key='production-snapshot'") return { async first() { return copied ? { value: '{}' } : null; } };
+      if (sql === "SELECT value FROM app_settings WHERE key='test-whitelist-enabled'") return { async first() { return null; } };
       if (sql === "SELECT value FROM app_settings WHERE key='test-whitelist'") return { async first() { return { value: '[]' }; } };
       if (sql.startsWith('INSERT INTO lease')) return { bind() { return this; }, async first() { copied = true; return { owner: 'fictional-lease' }; } };
       if (sql === 'DELETE FROM lease WHERE owner=?') return { bind() { return this; }, async run() { released = true; } };
@@ -155,6 +158,7 @@ test('a Telegram callback crossing a refresh does not render the copied event', 
   const env = { APP_ENV: 'development', TEST_WHITELIST_ENABLED: 'false', BOT_USERNAME: 'FictionalSnapshotBot', DB: {
     prepare(sql) {
       if (sql === "SELECT value FROM app_settings WHERE key='production-snapshot'") return { async first() { return copied ? { value: '{}' } : null; } };
+      if (sql === "SELECT value FROM app_settings WHERE key='test-whitelist-enabled'") return { async first() { return null; } };
       if (sql === "SELECT value FROM app_settings WHERE key='test-whitelist'") return { async first() { return { value: '[]' }; } };
       if (sql.startsWith('INSERT INTO lease')) return { bind() { return this; }, async first() { copied = true; return { owner: 'fictional-lease' }; } };
       if (sql.startsWith("INSERT INTO records(kind,id,data) VALUES ('users'")) return { bind() { return this; }, async run() {} };

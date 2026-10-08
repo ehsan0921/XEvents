@@ -5,7 +5,7 @@ import { sendDueReminders } from './reminders.js';
 import { checkout, refundResult } from './payments.js';
 import {refreshOnlineRates} from './exchange.js';
 import { botCommands, botCommandsVersion } from './telegram-menu.js';
-import { handleWhitelistCommand, mayUseTestApp, testAccessMessage, whitelistEnabled } from './test-access.js';
+import { handleWhitelistCommand, mayUseTestApp, testAccessMessage } from './test-access.js';
 import { snapshotActive, snapshotDeliveryAllowed } from './snapshot-mode.js';
 
 export async function authorized(request, secret) {
@@ -186,7 +186,8 @@ export async function configureMiniApp(env) {
   const adminId = Number(env.SUPER_ADMIN_ID);
   if (isSuperAdmin({ id: adminId }, env)) {
     const adminCommands = await env.DB.prepare("SELECT value FROM app_settings WHERE key='test-admin-commands'").first();
-    const enabled = whitelistEnabled(env) || await snapshotActive(env);
+    // The administrator can edit saved tester IDs even while the switch is off.
+    const enabled = env.APP_ENV === 'development';
     const version = `${botCommandsVersion}:${adminId}:${enabled}`;
     if ((enabled || adminCommands) && adminCommands?.value !== version) {
       const result = await telegram(env, 'setMyCommands', {

@@ -2,48 +2,61 @@
 
 XEvents uses one application with two deployment branches. Work on `dev`, test with a separate Telegram bot and Cloudflare D1 database, then promote the reviewed code to `main`. Production invitations, payments and guest data stay in the production database.
 
-| Branch | Purpose | Cloudflare target | GitHub environment |
+| Branch | Purpose | Cloudflare target | Private local configuration |
 | --- | --- | --- | --- |
-| `main` | Production releases | Production Worker and production D1 | `production` |
-| `dev` | Development and testing | Development Worker and `xevents-dev` D1 | `development` |
+| `main` | Production releases | Production Worker and production D1 | `wrangler.production.jsonc` |
+| `dev` | Development and testing | Development Worker and `xevents-dev` D1 | `wrangler.development.jsonc` |
 
 The development bot runs the same bot, Mini App and API code as production. Telegram verifies Mini App launches using that bot's own token. A person can use the same Telegram account in both bots, but their events, profiles, invitations and uploads are stored separately. Start the development bot before testing private messages or uploads.
 
 ## Day-to-day workflow
 
 1. Switch to `dev` and make a focused change. Short-lived feature branches can merge into `dev` when useful.
-2. Push `dev`. When deployment is enabled and its credentials are configured, GitHub builds and deploys development without running the automated test suite. Dependency installation, configuration isolation, migrations and the service health check still apply.
+2. Push `dev`, then deploy it explicitly using the private development configuration. GitHub does not deploy either environment. Dependency installation, configuration isolation, migrations and the service health check still apply.
 3. Run local tests when useful while developing; they are not required before every development push. Use fictional events and mocked payments in automated tests.
 4. Test the relevant Telegram and Mini App flows through the development bot.
-5. Open a pull request from `dev` to `main`. The required **Regression and Worker checks** job runs `npm test` and `npm run test:worker` on every PR targeting `main`, and again on `main` pushes or manual runs. Merge after those checks and development testing pass. Production deployment requires successful checks for that exact commit, uses production configuration and applies compatible production migrations.
-6. After a production-only fix, run **Sync production code to development** to bring `main` changes back into `dev`.
+5. Open a pull request from `dev` to `main`. The **Production tests** workflow runs the required **Regression and Worker checks** job: `npm test` and `npm run test:worker` on every PR targeting `main`, and again on `main` pushes or manual runs from `main`. Merge after those checks and development testing pass. Deploy production explicitly only after checks pass for that exact commit, using production configuration and compatible production migrations.
+6. After a production-only fix, merge `main` back into `dev` in a normal checkout. Resolve conflicts and review the result before pushing.
 
 Keep changes small so that `main` remains releasable. Do not treat development database contents as something to promote: promotion moves code and migrations, not test events or users.
 
-Automated test jobs are skipped for `dev` pushes, PRs targeting `dev`, and manual workflow runs on `dev`. Production checks include authentication, access and permission boundaries, invitation compatibility, payment/refund handling and local Worker/D1 integration. A failed, skipped or cancelled production check blocks production deployment; PRs never deploy either environment.
+Development pushes and PRs targeting `dev` do not trigger automated test jobs. Run manual production tests from `main`. Production checks include authentication, access and permission boundaries, invitation compatibility, payment/refund handling and local Worker/D1 integration. A failed, skipped or cancelled production check must be resolved before production deployment.
 
-## Enable GitHub deployment
+## GitHub Actions
 
-The canonical deployment repository is [ehsan0921/XEvents](https://github.com/ehsan0921/XEvents). Keep mirrored repositories in checks-only mode so they cannot race to deploy the same Worker or run its migrations twice.
+There are two workflows:
 
-In the canonical repository, set the GitHub Actions repository variable `XEVENTS_DEPLOY_ENABLED` to `true` once Cloudflare credentials and both environment configurations are ready. Leave it unset or `false` in mirrors. Without the Cloudflare token and environment configuration, checks can run but hosted deployment is not ready.
+- **Production tests** validates pull requests targeting `main`, pushes to `main`, and manual runs from `main`. It requires no Cloudflare secrets and does not deploy.
+- **Copy production database to dev** is a manual database-only operation from `main`. It does not synchronize code or deploy Workers.
 
-Create GitHub environments named `production` and `development`. Configure these **environment secrets** separately for each:
+The canonical database-refresh repository is [ehsan0921/Telegram-event-management](https://github.com/ehsan0921/Telegram-event-management). Set its repository variable `XEVENTS_DATABASE_REFRESH_ENABLED` to `true`. The [ehsan0921/XEvents](https://github.com/ehsan0921/XEvents) mirror runs production checks only; leave its database-refresh variable unset or `false`. A database action attempted in a disabled mirror reports an error directing you to the canonical repository instead of silently skipping.
+
+In the canonical repository, create the GitHub environment `development-refresh`, restrict it to `main`, and configure these four **environment secrets**:
 
 | Secret | Value |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | A Cloudflare API token with the permissions needed to deploy the intended Worker and manage its D1 migrations. Use a dedicated, suitably scoped token. |
-| `CLOUDFLARE_ACCOUNT_ID` | The private Cloudflare account identifier for that environment. |
-| `WRANGLER_CONFIG_JSON` | The complete private Wrangler configuration for that environment, as valid JSON. Use different Worker names, D1 IDs, bot usernames and app URLs. |
-| `PRODUCTION_CONFIG_JSON` | Development only: the private production configuration used to reject production resource collisions. It is a workflow reference, never the development Worker's runtime configuration. |
+| `CLOUDFLARE_API_TOKEN` | A dedicated Cloudflare API token permitting production D1 export and development D1 import. |
+| `CLOUDFLARE_ACCOUNT_ID` | The private Cloudflare account identifier. |
+| `WRANGLER_CONFIG_JSON` | The complete private development Wrangler configuration as valid JSON. |
+| `PRODUCTION_CONFIG_JSON` | The complete private production configuration as valid JSON, used for read-only export and to reject resource collisions. |
 
-`PRODUCTION_CONFIG_JSON` must match the actual production target. Also create the `development-refresh` environment with the same four secrets as development; restrict this environment to `main`. It is used for manual database refreshes. Production needs only the first three secrets. Keep private configuration in GitHub secrets, never repository variables, checked-in files or workflow text.
+The two configurations must use different Worker names, D1 identifiers, bot usernames and app URLs. `PRODUCTION_CONFIG_JSON` must match the actual production target. Keep private configuration in GitHub secrets, never repository variables, checked-in files or workflow text. The action checks required secrets before installing database tools and reports missing secret names without their values.
 
-The deployment helper, `scripts/deploy-environment.mjs`, applies migrations to the selected environment and deploys with `--keep-vars`. The private configuration is materialized for that run and must not become a build artifact or committed file. Keep existing production bindings and secrets intact.
-
-Branch policies should keep `main` changes going through pull requests and successful checks. Restrict the production environment to `main` and development deployment to `dev`; allow the guarded refresh job from `main` to target development. Workflow branch checks also enforce their intended targets.
+Branch policies should keep `main` changes going through pull requests and the successful **Regression and Worker checks** job. The database-copy workflow and its environment are restricted to `main`.
 
 See [GitHub environment secrets](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets) and [Cloudflare API tokens](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/).
+
+## Explicit deployments
+
+Deployment is separate from GitHub Actions and database refresh. Install dependencies with `npm ci`, then use the existing CLI helper from a private authenticated shell:
+
+```sh
+node scripts/deploy-environment.mjs
+```
+
+Supply `DEPLOY_ENVIRONMENT=development` and `GH_REF_NAME=dev` for development, or `DEPLOY_ENVIRONMENT=production` and `GH_REF_NAME=main` for production. Load `WRANGLER_CONFIG_JSON`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` privately; development also requires `PRODUCTION_CONFIG_JSON` to validate resource isolation. Do not put secret values in shell history or committed scripts.
+
+The helper validates the environment, applies its migrations, builds and deploys with `--keep-vars`, then checks the service health endpoint. Production requires successful regression and Worker checks for the selected commit before running this command. The temporary private configuration must never become a build artifact or committed file. Keep existing production bindings and secrets intact, and avoid deploying development while its database refresh is running.
 
 ## Separate development configuration
 
@@ -93,7 +106,7 @@ Store these secrets on the **development Cloudflare Worker**, using private inte
 - `SUPER_ADMIN_ID`: your administrator Telegram identity, if needed.
 - `WHITELIST_USER_IDS`: optional initial allowed Telegram IDs for development, separated by commas or whitespace. Leave it blank to permit everyone.
 
-These bot secrets do not belong in GitHub source or `WRANGLER_CONFIG_JSON`, and the deployment workflow does not need copies of them in GitHub. Set `vars.BOT_USERNAME` to the development bot and `vars.APP_URL` to the development Mini App URL. The [self-hosting guide](self-hosting.md#3-set-worker-secrets) explains interactive secret setup and webhook registration.
+These bot secrets do not belong in GitHub source or `WRANGLER_CONFIG_JSON`, and GitHub Actions does not need copies of them. Set `vars.BOT_USERNAME` to the development bot and `vars.APP_URL` to the development Mini App URL. The [self-hosting guide](self-hosting.md#3-set-worker-secrets) explains interactive secret setup and webhook registration.
 
 Do not connect production's bot to the development Worker. Telegram uses a single webhook per bot, so doing that would redirect production updates. A separate bot is also necessary for authentication and media isolation: Telegram [`file_id` values are specific to each bot](https://core.telegram.org/bots/api#sending-files).
 
@@ -126,9 +139,9 @@ This restriction applies to the Cloudflare Worker, including its webhook and Min
 
 ## Copy production data to dev
 
-Open **Actions → Copy production database to dev → Run workflow**, select `main`, and run it whenever you need the latest production records in development. This replaces the existing development database contents. It does not merge either branch, deploy a Worker, change bot credentials, or write to production.
+In [ehsan0921/Telegram-event-management](https://github.com/ehsan0921/Telegram-event-management/actions/workflows/copy-production-db-to-dev.yml), open **Actions → Copy production database to dev → Run workflow**, select `main`, and run it whenever you need the latest production records in development. This replaces the existing development database contents. It does not merge either branch, deploy a Worker, change bot credentials, or write to production.
 
-Enable this action only in the canonical repository by setting the repository variable `XEVENTS_DATABASE_REFRESH_ENABLED=true`. Leave it unset or `false` in mirrors. This switch is independent of `XEVENTS_DEPLOY_ENABLED`. The `development-refresh` environment needs all four secrets listed above, including its own `CLOUDFLARE_API_TOKEN` with D1 export and import access. A missing token must be configured before the action can run.
+Enable this action only in the canonical repository by setting the repository variable `XEVENTS_DATABASE_REFRESH_ENABLED=true`. Leave it unset or `false` in mirrors. The `development-refresh` environment needs all four secrets listed above, including its own `CLOUDFLARE_API_TOKEN` with D1 export and import access. A disabled repository or missing secret produces an actionable failure before database operations; it does not silently skip the copy.
 
 The action exports production, prepares the snapshot privately, and imports one replacement SQL file into the verified development D1. It copies events, users, profiles, guest responses, invitation links, ticket/check-in records, payment audits and media references. Development settings, including the test whitelist, are retained; production settings are not copied. Sessions, queued deliveries, processed-update markers and coordination locks are cleared. Already-applied migrations are preserved, and pending migrations from the current `dev` checkout are applied offline before import. An incompatible migration set stops the refresh before writing development data.
 
@@ -136,19 +149,9 @@ The development Worker must already include the database-refresh safeguards; the
 
 Telegram media references are copied, but their `file_id` values belong to the production bot. Some existing images or files will need to be uploaded again through the development bot. Never use the production bot token to work around this isolation.
 
-Exports and prepared SQL files are temporary, private files deleted after the run. They are never printed or uploaded as artifacts. D1 export can briefly block production database requests; import can briefly block development requests. A failed D1 file import rolls back the replacement. Both development deployment and database refresh use the same concurrency group. See Cloudflare's [D1 import and export guide](https://developers.cloudflare.com/d1/best-practices/import-export-data/).
+Exports and prepared SQL files are temporary, private files deleted after the run. They are never printed or uploaded as artifacts. D1 export can briefly block production database requests; import can briefly block development requests. A failed D1 file import rolls back the replacement. Database-copy runs share a concurrency group so copies cannot overlap. Keep explicit development deployments separate from an active refresh. See Cloudflare's [D1 import and export guide](https://developers.cloudflare.com/d1/best-practices/import-export-data/).
 
 Automated tests continue to use fictional local fixtures and mocked Telegram calls. Production snapshots are private operational data, never test fixtures or public artifacts.
-
-## Sync production code to dev
-
-Run **Sync production code to development** manually from GitHub Actions on `main`. It merges production code into `dev` without resetting the branch or force-pushing. It preserves development work and stops if there is a merge conflict. Resolve that conflict in a normal checkout and push the reviewed result. After the merge, it explicitly starts the development deployment workflow because a push using GitHub's workflow token does not start another push workflow. That development run skips automated tests.
-
-The `copy_database_schema` input defaults to `false`. With that default, the workflow syncs code only and leaves the development database unchanged.
-
-Select `copy_database_schema` only when the development database is empty and you want to initialize it from production's schema. `scripts/refresh-development.mjs` verifies the separate targets and refuses a nonempty development database, preserving existing test data. It exports **schema only**, imports it into development, and applies reviewed `main` migrations; the subsequent development deployment applies any additional `dev` migrations. Schema export can briefly block production database requests, so use it deliberately. Cloudflare documents the supported [D1 schema export and import](https://developers.cloudflare.com/d1/best-practices/import-export-data/).
-
-Only schema and applied migration filenames are transferred by that optional initialization step, so already-applied schema changes are not replayed. For actual records, use the separate **Copy production database to dev** action above. Neither workflow promotes development data to production.
 
 ## Before promoting a change
 

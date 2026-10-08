@@ -49,7 +49,9 @@ existing invitations, and users' private event data when making changes.
   production checks. Invitation, visibility, or schema changes need coverage for existing
   events, legacy modes, privacy, and stored response preservation.
 - Keep development deployments fast: automated test jobs run for PRs targeting
-  `main` and for `main` pushes/manual runs, not for `dev`. Local tests during
+  `main` and for `main` pushes/manual runs, not for `dev`. GitHub Actions contains
+  only production tests and the manual production-to-dev database copy; do not add
+  deployment or code-sync workflows. Local tests during
   development are optional when useful; require the full regression and Worker
   checks before production promotion and deployment. Keep development builds,
   environment isolation validation and deployment health checks enabled.
@@ -73,8 +75,11 @@ existing invitations, and users' private event data when making changes.
   Never merge code, deploy Workers, write production data or publish database
   exports as part of this database-only workflow. Automated tests still use
   fictional local fixtures, never actual production snapshots.
-- Run deployment automation from one canonical repository; mirrors run checks
-  only. Store private configuration in GitHub environment secrets and ignored files.
+- Enable database-copy automation in one repository only, currently
+  `ehsan0921/Telegram-event-management`. Mirrors run production checks and report
+  an actionable error if database copying is requested there. Never silently skip
+  a requested database copy. Store private configuration in GitHub environment
+  secrets and ignored files. Deploy separately with the CLI after required checks.
 
 - Inspect the final diff and stage explicit intended files. Keep local credentials,
   generated private data, deployment logs, and machine-specific helpers untracked.

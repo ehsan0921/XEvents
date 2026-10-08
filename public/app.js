@@ -77,6 +77,7 @@ function go(tab) {
   if (tab === 'events' || tab === 'pending') { listFilter = tab === 'pending' ? 'pending' : 'all'; renderEvents(); }
   if (tab === 'admin' && !state.user?.isSuperAdmin) return;
   if(target!=='gallery')dismissPendingMedia?.();
+  dismissTicket();
   pageNavigationGeneration++;currentView=target;updateAppClose();
   for (const name of ['home','events', 'create', 'settings', 'admin', 'gallery', 'explore']) $(name + '-view').hidden = name !== target;
   if(tab==='home'){renderHome();loadHomeSuggestions();}
@@ -87,7 +88,7 @@ function go(tab) {
   }
   window.scrollTo(0, 0);
 }
-function updateAppClose(){const exits=compactPicker || currentView==='home',label=exits && initData && typeof tg?.close==='function'?'Close App':compactPicker?'Return to Telegram':'Close this page and return Home';$('app-close').setAttribute('aria-label',label);$('app-close').title=label;$('app-close').disabled=formSaving;$('cancel-edit').disabled=formSaving;$('edit-delete-event').disabled=formSaving;$('edit-cancel-event').disabled=formSaving || !!activeEvent?.cancelled;}
+function updateAppClose(){const exits=compactPicker || currentView==='home',label=exits && initData && typeof tg?.close==='function'?'Close App':compactPicker?'Return to Telegram':'Close this page and return Home';$('app-close').setAttribute('aria-label',label);$('app-close').title=label;$('app-close').disabled=formSaving;$('cancel-edit').disabled=formSaving;$('edit-delete-event').disabled=formSaving;$('edit-cancel-event').disabled=formSaving || !!activeEvent?.cancelled;$('edit-checkin').disabled=formSaving || !!activeEvent?.cancelled;}
 function dateInZone(instant, zone) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(instant)).map(p => [p.type, p.value]));
   return `${parts.year}-${parts.month}-${parts.day}`;
@@ -175,47 +176,73 @@ async function openGuestList(id) {
   $('guest-list-manage').onclick=()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=manage_'+e.id);
   $('guest-list-close').onclick=()=>$('guest-list-dialog').close();render('all');$('guest-list-dialog').showModal();
 }
-async function openTicket(id) {
-  const navigation=pageNavigationGeneration;
-  const {ticket}=await api(`events/${id}/ticket`,{});
-  if(navigation!==pageNavigationGeneration)return;
-  $('ticket-title').textContent=ticket.title;
-  $('ticket-name').textContent=`${ticket.name} · ${ticket.participants} ${ticket.participants===1?'person':'people'}`;
-  $('ticket-image').hidden=!ticket.image;if(ticket.image)$('ticket-image').src=ticket.image;else $('ticket-image').removeAttribute('src');$('ticket-code').textContent=ticket.code;
-  $('ticket-message').textContent=ticket.checkedInAt?'Already checked in.':ticket.image?'Show this QR code at the event.':'Show this ticket code at the event.';
-  $('ticket-copy').onclick=async()=>{try{await navigator.clipboard.writeText(ticket.code);$('ticket-message').textContent='Ticket code copied.';}catch{$('ticket-message').textContent='Select the code to copy it.';}};
-  $('ticket-close').onclick=()=>$('ticket-dialog').close();$('ticket-dialog').showModal();
+let ticketGeneration=0,ticketTimer=null,ticketView=null,ticketBusy=false;
+function stopTicketTimer(){if(ticketTimer!==null)clearTimeout(ticketTimer);ticketTimer=null;}
+function dismissTicket(){ticketGeneration++;stopTicketTimer();ticketView=null;ticketBusy=false;$('ticket-copy').disabled=true;if($('ticket-dialog').open)$('ticket-dialog').close();}
+function updateTicketCountdown(){
+  stopTicketTimer();if(!ticketView || !$('ticket-dialog').open)return;
+  const remaining=Math.max(0,Math.ceil((ticketView.expiresAt-Date.now())/1000));
+  $('ticket-copy').disabled=ticketBusy || remaining===0 || !!ticketView.checkedInAt;
+  $('ticket-countdown').textContent=ticketView.checkedInAt?'Already checked in.':remaining?'Expires in '+Math.floor(remaining/60)+':'+String(remaining%60).padStart(2,'0'):'Code expired. Tap Refresh code.';
+  if(!remaining && !ticketView.checkedInAt)$('ticket-message').textContent='Refresh to get a current check-in code.';
+  if(remaining && !ticketView.checkedInAt){const generation=ticketGeneration;ticketTimer=setTimeout(()=>{if(generation===ticketGeneration)updateTicketCountdown();},Math.min(1000,Math.max(1,ticketView.expiresAt-Date.now())));}
 }
+async function openTicket(id) {
+  const navigation=pageNavigationGeneration,generation=++ticketGeneration,startedAt=Date.now();stopTicketTimer();ticketView=null;ticketBusy=true;
+  $('ticket-copy').disabled=true;$('ticket-refresh').disabled=true;$('ticket-code').textContent='······';$('ticket-countdown').textContent='Generating code…';
+  $('ticket-refresh').onclick=()=>{if(!ticketBusy)return openTicket(id);};
+  try{
+    const {ticket}=await api(`events/${id}/ticket`,{});
+    if(navigation!==pageNavigationGeneration || generation!==ticketGeneration)return;
+    const lifetime=Date.parse(ticket.codeExpiresAt)-Date.parse(ticket.serverTime);
+    if(!/^\d{6}$/.test(ticket.code) || !Number.isFinite(lifetime))throw Error('Could not generate a check-in code. Try Refresh code.');
+    ticketView={...ticket,expiresAt:startedAt+Math.max(0,lifetime)};
+    $('ticket-title').textContent=ticket.title;$('ticket-name').textContent=`${ticket.name} · ${ticket.participants} ${ticket.participants===1?'person':'people'}`;
+    $('ticket-image').hidden=!ticket.image;if(ticket.image)$('ticket-image').src=ticket.image;else $('ticket-image').removeAttribute('src');$('ticket-code').textContent=ticket.code;
+    $('ticket-message').textContent=ticket.checkedInAt?'Already checked in.':'Show this code to the organiser. Refresh if it expires.';
+    if(!$('ticket-dialog').open)$('ticket-dialog').showModal();
+  }catch(error){if(navigation===pageNavigationGeneration && generation===ticketGeneration){$('ticket-countdown').textContent='Code unavailable.';if($('ticket-dialog').open)$('ticket-message').textContent=error.message;else notice(error.message);}}
+  finally{if(generation===ticketGeneration){ticketBusy=false;$('ticket-refresh').disabled=false;updateTicketCountdown();}}
+}
+$('ticket-copy').onclick=async()=>{updateTicketCountdown();if(!ticketView || $('ticket-copy').disabled)return;const generation=ticketGeneration,code=ticketView.code;try{await navigator.clipboard.writeText(code);if(generation===ticketGeneration)$('ticket-message').textContent='Code copied.';}catch{if(generation===ticketGeneration)$('ticket-message').textContent='Select the code to copy it.';}};
+$('ticket-close').onclick=()=>$('ticket-dialog').close();
+$('ticket-dialog').onclose=()=>{ticketGeneration++;stopTicketTimer();ticketView=null;ticketBusy=false;$('ticket-copy').disabled=true;$('ticket-code').textContent='';$('ticket-countdown').textContent='';};
 let checkinGeneration=0;
 async function openCheckin(id) {
   const navigation=pageNavigationGeneration;
   const {event}=await api(`events/${id}`);if(navigation!==pageNavigationGeneration || !isManager(event))return;
-  const generation=++checkinGeneration;let busy=false,verifiedCode=null;
-  const input=$('checkin-code'),result=$('checkin-result'),confirm=$('checkin-confirm');
-  input.disabled=false;$('checkin-check').disabled=false;$('checkin-scan').disabled=false;
+  const generation=++checkinGeneration;let busy=false,verifiedCode=null,scannedCode=null,completedCode=null;
+  const input=$('checkin-code'),result=$('checkin-result'),confirm=$('checkin-confirm'),checkButton=$('checkin-check'),keypad=$('checkin-keypad');keypad.replaceChildren();
+  input.disabled=false;$('checkin-scan').disabled=false;
   $('checkin-scan').hidden=event.qrEnabled===false;
   $('checkin-event').textContent=event.title;input.value='';result.textContent='';confirm.hidden=true;
-  input.oninput=()=>{verifiedCode=null;confirm.hidden=true;result.textContent='';};
+  const active=()=>generation===checkinGeneration && $('checkin-dialog').open;
+  const codeValue=()=>scannedCode || input.value;
+  const update=()=>{for(let index=0;index<6;index++){$('checkin-digit-'+index).textContent=input.value[index] || '·';$('checkin-digit-'+index).classList.toggle('current',index===input.value.length);}checkButton.disabled=busy || completedCode===codeValue() || !(verifiedCode===codeValue() && !!verifiedCode || /^\d{6}$/.test(input.value));for(const button of keypad.children)button.disabled=busy;input.disabled=busy;$('checkin-scan').disabled=busy;confirm.hidden=true;};
+  input.oninput=()=>{input.value=input.value.replace(/\D/g,'').slice(0,6);verifiedCode=scannedCode=completedCode=null;result.textContent='';result.className='';update();};
   const check=async(mark=false)=>{
-    if(busy)return;busy=true;
-    const code=input.value.trim();confirm.hidden=true;$('checkin-check').disabled=true;$('checkin-scan').disabled=true;input.disabled=true;
+    if(busy || !active())return;
+    const code=codeValue();if(mark && !(/^\d{6}$/.test(code) || code===verifiedCode))return;if(!mark && !code)return;busy=true;update();result.textContent=mark?'Checking in…':'Checking QR…';result.className='';
     try{
       const {ticket}=await api(`events/${id}/ticket-check`,{code,checkIn:mark});
-      if(generation!==checkinGeneration || !$('checkin-dialog').open)return;
+      if(!active())return;
       result.textContent=ticket.valid ? `${ticket.alreadyCheckedIn?'⚠ Already checked in':mark?'✓ Checked in':'✓ Valid ticket'}\n${ticket.name} · ${ticket.participants} ${ticket.participants===1?'person':'people'}${ticket.checkedInAt?'\n'+format({startsAt:ticket.checkedInAt}):''}` : '✕ '+ticket.reason;
-      verifiedCode=ticket.valid && !ticket.checkedInAt ? code:null;confirm.hidden=!verifiedCode;
-      result.className=ticket.valid ? '' : 'error';
-    }catch(error){if(generation===checkinGeneration)result.textContent=error.message;}
-    finally{busy=false;if(generation===checkinGeneration){$('checkin-check').disabled=false;$('checkin-scan').disabled=false;input.disabled=false;}}
+      verifiedCode=ticket.valid && !ticket.checkedInAt && !ticket.alreadyCheckedIn ? code:null;
+      if(ticket.valid && (mark || ticket.checkedInAt || ticket.alreadyCheckedIn))completedCode=code;
+      result.className=ticket.valid ? ticket.alreadyCheckedIn?'checkin-warning':'checkin-success' : 'error';
+    }catch(error){if(active()){result.textContent=error.message;result.className='error';}}
+    finally{busy=false;if(active())update();}
   };
-  $('checkin-check').onclick=()=>check();confirm.onclick=()=>{if(verifiedCode && input.value.trim()===verifiedCode)return check(true);};
+  checkButton.onclick=()=>{if(!checkButton.disabled)return check(true);};confirm.onclick=()=>{if(verifiedCode)return check(true);};
+  input.onkeydown=keyboard=>{if(keyboard.key==='Enter'){keyboard.preventDefault();if(!checkButton.disabled)void check(true);}};
+  for(const value of ['1','2','3','4','5','6','7','8','9','Clear','0','⌫']){const button=action(value,()=>{if(busy || !active() || /^\d$/.test(value) && input.value.length>=6)return;input.value=value==='Clear'?'':value==='⌫'?input.value.slice(0,-1):input.value+value;input.oninput();},'secondary');button.setAttribute('aria-label',value==='⌫'?'Delete last digit':value==='Clear'?'Clear code':value);keypad.append(button);}
   $('checkin-scan').onclick=()=>{
     if(!tg?.showScanQrPopup || (tg.isVersionAtLeast && !tg.isVersionAtLeast('6.4'))){result.textContent='QR scanning is unavailable here. Enter the ticket code instead.';return;}
-    try{tg.showScanQrPopup({text:'Scan the guest’s ticket QR.'},text=>{if(generation!==checkinGeneration || !$('checkin-dialog').open)return true;input.value=text;void check();return true;});}catch{result.textContent='Could not open the scanner. Enter the ticket code instead.';}
+    try{tg.showScanQrPopup({text:'Scan the guest’s ticket QR.'},text=>{if(!active())return true;scannedCode=String(text).trim();verifiedCode=completedCode=null;input.value=/^\d{6}$/.test(scannedCode)?scannedCode:'';update();void check();return true;});}catch{result.textContent='Could not open the scanner. Enter the ticket code instead.';}
   };
   $('checkin-close').onclick=()=>$('checkin-dialog').close();
   $('checkin-dialog').onclose=()=>{checkinGeneration++;try{tg?.closeScanQrPopup?.();}catch{}};
-  $('checkin-dialog').showModal();
+  $('checkin-dialog').showModal();update();
 }
 const {openGallery,showQr,dismissPendingMedia}=setupGallery({$,api,element,action,go,notice,openTelegram,initData});
 const {cancelEvent,deleteEvent}=setupEventActions({$,api,refresh,notice,onEnded:event=>{
@@ -327,7 +354,7 @@ function renderHome(){
         if(e.invitationMode==='named')actions.append(action('✉️ Invitations',()=>openNamedLinks(e)));
       }
       if(isManager(e) || e.status==='yes' && e.permissions?.viewMedia)actions.append(action('🗂 Shared media',()=>openGallery(e.id)));
-      if(!isManager(e) && e.ticket)actions.append(action('🎟 My ticket',()=>openTicket(e.id)));
+      if(!isManager(e) && e.ticket)actions.append(action('🎟 Check-in code',()=>openTicket(e.id)));
       card.append(actions);list.append(card);}
   }
 }
@@ -369,15 +396,15 @@ function renderEvents() {
     if(priceEstimate(e))card.append(element('p',priceEstimate(e),'small muted'));
     if (e.starPrice) card.append(element('p', '⭐ ' + e.starPrice + ' Stars ' + (e.starPricing === 'person' ? 'per person' : 'per group') + (e.paymentStatus ? ' · ' + e.paymentStatus.replaceAll('_',' ') : ''), 'small muted'));
     if (e.participants) card.append(element('p', 'Your group: ' + e.participants + (e.participants === 1 ? ' person' : ' people'), 'small muted'));
-    if (e.ticket) card.append(element('p', `🎟 ${e.ticket.name}${e.ticket.code ? ' · ' + e.ticket.code : ''}${e.ticket.info ? '\n' + e.ticket.info : ''}`, 'time-preview'));
+    if (e.ticket) card.append(element('p', `🎟 ${e.ticket.name}${e.ticket.info ? '\n' + e.ticket.info : ''}`, 'time-preview'));
     if (e.startsAt && selectedZone() !== e.timezone) card.append(element('p', 'Organiser time: ' + format({ startsAt: e.startsAt }, e.timezone), 'small muted'));
     if (e.counts) card.append(element('div', e.invitationMode==='tickets' ? `${e.counts.yes} confirmed bookings · ${e.counts.participants} people · ${e.counts.pending} approval requests · ${e.counts.awaitingPayment} awaiting payment` : `${e.counts.participants} people coming (${e.counts.yes} responses) · ${e.counts.pendingParticipants || 0} people awaiting approval · ${e.counts.awaitingPayment || 0} awaiting payment · ${e.counts.maybe} tentative · ${e.counts.no} declined · ${e.counts.later} later`, 'counts'));
     else card.append(element('div', 'Guest list is private to the organiser.', 'counts'));
     const actions = element('div', '', 'event-actions'); actions.append(action('💬 Open in chat', () => openTelegram(e.inviteUrl), 'primary'));
     if (isManager(e) && !e.cancelled) actions.append(action('✏️ Edit event', () => editEvent(e.id)));
     if(isManager(e))actions.append(action('👥 Guest list',()=>openGuestList(e.id)));
-    if(isManager(e) && !e.cancelled)actions.append(action(e.qrEnabled!==false?'📷 Scan tickets':'🎟 Check tickets',()=>openCheckin(e.id)));
-    if(e.ticket && e.qrEnabled!==false)actions.append(action('🔳 Ticket QR',()=>openTicket(e.id)));
+    if(isManager(e) && !e.cancelled)actions.append(action('🎟 Check in guests',()=>openCheckin(e.id)));
+    if(e.ticket)actions.append(action('🎟 Check-in code',()=>openTicket(e.id)));
     if((e.starPrice || ['bank','link'].includes(e.paymentMethod)) && !isManager(e) && e.status==='yes' && e.approval==='approved' && e.paymentStatus!=='paid')actions.append(action(e.starPrice?'⭐ Pay with Stars':'💳 Payment instructions',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=pay_'+e.id)));
     if(e.invitationMode==='named' && isManager(e))actions.append(action('✉️ Guest invitations',()=>openNamedLinks(e)));else actions.append(action('📋 Copy link', async () => { try { await navigator.clipboard.writeText(e.inviteUrl); notice('✓ Event link copied.'); } catch { notice('Could not copy the link. Use Share invite under the three-dot menu.'); } }));
     const more = document.createElement('details'); more.className = 'event-more';
@@ -647,6 +674,7 @@ function setupForm(event = null) {
   $('save-event').textContent = deadlinePicker ? 'Set response deadline' : picker ? 'Use this time & continue' : event ? 'Save event settings' : 'Create event & get invite';
   $('cancel-edit').hidden = !event;
   $('edit-event-actions').hidden=!event?.isOwner || compactPicker;
+  $('edit-checkin-panel').hidden=!event || !isManager(event) || compactPicker;$('edit-checkin').disabled=!!event?.cancelled;
   $('edit-cancel-event').disabled=!!event?.cancelled;
   $('save-event').disabled=!!event?.cancelled;
   const zone = deadlinePicker ? state.session?.timezone || selectedZone() : event?.timezone || selectedZone(); options('event-zone', zone);
@@ -835,12 +863,13 @@ $('owner-pricing-form').onsubmit=async event=>{
 };
 for (const b of document.querySelectorAll('[data-tab]')) b.onclick = () => { notice(''); b.dataset.tab === 'create' && (!formReady || $('event-form').hidden) ? setupForm() : go(b.dataset.tab); };
 $('home-brand').onclick=event=>{event.preventDefault();go('home');};
-$('app-close').onclick=()=>{if(formSaving)return;pageNavigationGeneration++;dismissPendingMedia?.();if((compactPicker || currentView==='home') && initData && typeof tg?.close==='function'){try{tg.close();}catch(error){notice(error.message);}}else if(compactPicker)notice('Close this window to return to Telegram.');else go('home');};updateAppClose();
+$('app-close').onclick=()=>{if(formSaving)return;pageNavigationGeneration++;dismissPendingMedia?.();dismissTicket();if((compactPicker || currentView==='home') && initData && typeof tg?.close==='function'){try{tg.close();}catch(error){notice(error.message);}}else if(compactPicker)notice('Close this window to return to Telegram.');else go('home');};updateAppClose();
 $('hero-create').onclick = () => setupForm();
 $('banner').onchange = () => { ++bannerLoadGeneration; if (bannerPreviewUrl) URL.revokeObjectURL(bannerPreviewUrl); const file=$('banner').files[0]; $('banner-preview').hidden=!file; if (file) { bannerPreviewUrl=URL.createObjectURL(file); $('banner-preview').src=bannerPreviewUrl; } };
 $('cancel-edit').onclick = () => {if(formSaving)return;formReady=false;go('events');};
 $('edit-cancel-event').onclick=()=>!formSaving && activeEvent && cancelEvent(activeEvent);
 $('edit-delete-event').onclick=()=>!formSaving && activeEvent && deleteEvent(activeEvent);
+$('edit-checkin').onclick=()=>!formSaving && !$('edit-checkin').disabled && activeEvent && openCheckin(activeEvent.id);
 $('refresh').onclick = async () => { $('refresh').disabled = true; try { await refresh(); notice(''); } catch (e) { notice(e.message); } finally { $('refresh').disabled = false; } };
 for (const id of ['date', 'time', 'event-zone']) $(id).addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(preview, 180); });
 for (const [search, select] of [['event-zone-search', 'event-zone'], ['local-zone-search', 'local-zone']]) $(search).oninput = () => options(select, $(select).value, $(search).value);

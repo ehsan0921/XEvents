@@ -108,7 +108,7 @@ export function publicEvent(e, id, username) {
     askParticipantCount: asksParticipantCount(e), participants: e.guests[id]?.status === 'yes' ? participantCount(e, e.guests[id]) : null, requireApproval: requiresApproval(e), hideLocation: hidesLocation(e),
     responseDeadline: e.responseDeadline || null, responsesClosed: responsesClosed(e), deadlineDate: e.deadlineDate || '', deadlineTime: e.deadlineTime || '', deadlineTimezone: e.deadlineTimezone || e.timezone || null,
     ...(manager ? { ticketInfo: e.ticketInfo || '' } : {}),
-    ticket: e.owner !== id && confirmed(e, e.guests[id]) && !e.cancelled ? { code: e.guests[id].ticket || '', name: e.guests[id].name, info: e.ticketInfo || '' } : null,
+    ticket: e.owner !== id && confirmed(e, e.guests[id]) && !e.cancelled ? { name: e.guests[id].name, info: e.ticketInfo || '', participants:participantCount(e,e.guests[id]),checkedInAt:e.checkIns?.[e.guests[id].ticket]?.at || null } : null,
     counts: can(e, id, 'guestList') ? responseCounts(e) : null,
     approval: e.owner !== id && e.guests[id]?.status === 'yes' ? (!requiresApproval(e) || e.guests[id]?.approval === 'approved') ? 'approved' : 'pending' : null,
     status: e.owner === id ? null : e.guests[id]?.status || null

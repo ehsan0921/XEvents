@@ -397,7 +397,7 @@ try {
   await db.prepare("UPDATE records SET data=json_set(data,'$.responseDeadline','2020-01-01T00:00:00Z') WHERE kind='events' AND id=?").bind(privateId).run();
   await callback(26, `r:${privateId}:no`, 456); assert.equal((await api('bootstrap', null, 456)).data.events[0].status, 'yes');
   await callback(27, `approve:${privateId}:456`);
-  guestView = (await api('bootstrap', null, 456)).data.events[0]; assert.equal(guestView.approval, 'approved'); assert.equal(guestView.location, 'SECRET LOCATION'); assert.equal(guestView.ticket.info, 'SECRET TICKET'); assert.ok(guestView.ticket.code);
+  guestView = (await api('bootstrap', null, 456)).data.events[0]; assert.equal(guestView.approval, 'approved'); assert.equal(guestView.location, 'SECRET LOCATION'); assert.equal(guestView.ticket.info, 'SECRET TICKET'); assert.equal(guestView.ticket.code,undefined);
   assert.equal((await api('bootstrap')).data.events.find(e => e.id === privateId).counts.yes, 1);
   assert.equal((await api('bootstrap', null, 789)).data.events.length, 0);
   assert.equal((await api(`events/${privateId}/reminder`, {minutes:60},456)).status,200);
@@ -537,13 +537,48 @@ try {
   assert.equal((await api(`events/${ticketId}`,null,456)).data.event.approval,'pending');
   assert.equal((await api(`events/${ticketId}/ticket`,{},456)).status,400);
   await callback(5005,`approve:${ticketId}:456`);
-  const qrTicket=await api(`events/${ticketId}/ticket`,{},456);assert.equal(qrTicket.status,200);assert.match(qrTicket.data.ticket.image,/^data:image\/gif;base64,/);
-  const ticketCode=qrTicket.data.ticket.code;
-  assert.equal((await api(`events/${ticketId}/ticket-check`,{code:ticketCode},456)).status,400);
+  const ticketStored=async()=>JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(ticketId).first()).data);
+  assert.equal((await ticketStored()).guests[456].ticketCode,undefined,'Approval must not generate a short check-in code.');
+  const unopenedTicketState=await ticketStored();
+  unopenedTicketState.guests[457]={name:'Unopened legacy booking',status:'yes',approval:'approved'};
+  await db.prepare("UPDATE records SET data=? WHERE kind='events' AND id=?").bind(JSON.stringify(unopenedTicketState),ticketId).run();
+  // Request near a minute boundary only after the next minute starts, keeping the
+  // integration independent of wall-clock timing. No live event or bot is used.
+  const currentTicket=async()=>{
+    let result=await api(`events/${ticketId}/ticket`,{},456);
+    assert.equal(result.status,200,JSON.stringify(result.data));
+    const left=Date.parse(result.data.ticket.codeExpiresAt)-Date.now();
+    if(left<2500){await new Promise(resolve=>setTimeout(resolve,Math.max(0,left)+50));result=await api(`events/${ticketId}/ticket`,{},456);assert.equal(result.status,200);}
+    return result;
+  };
+  const qrTicket=await currentTicket();assert.match(qrTicket.data.ticket.image,/^data:image\/gif;base64,/);assert.match(qrTicket.data.ticket.code,/^\d{6}$/);
+  const ticketState=await ticketStored(),ticketCode=ticketState.guests[456].ticket;
+  assert.equal(ticketState.guests[457].ticket,undefined);assert.equal(ticketState.guests[457].ticketCode,undefined,'Opening one ticket must tolerate and preserve unopened legacy bookings.');
+  assert.match(ticketCode,/^[A-F0-9]{12}$/);assert.match(ticketState.guests[456].ticketCode.secret,/^[a-f0-9]{64}$/);
+  assert.equal(ticketState.guests[456].ticketCode.ticket,ticketCode);
+  const issuedAt=Date.parse(qrTicket.data.ticket.serverTime),expiresAt=Date.parse(qrTicket.data.ticket.codeExpiresAt);
+  assert.equal(expiresAt,(Math.floor(issuedAt/60000)+1)*60000);assert.equal(ticketState.guests[456].ticketCode.issuedMinute,Math.floor(issuedAt/60000));
+  assert.equal((await api(`events/${ticketId}/ticket-check`,{code:qrTicket.data.ticket.code},456)).status,400);
+  assert.equal((await ticketStored()).ticketCheckAttempts,undefined,'Guests cannot mutate organiser rate limits.');
+  const otpValidated=await api(`events/${ticketId}/ticket-check`,{code:qrTicket.data.ticket.code});
+  assert.equal(otpValidated.status,200);assert.equal(otpValidated.data.ticket.valid,true);assert.equal(otpValidated.data.ticket.code,ticketCode);
+  const guestTicketProjection=(await api(`events/${ticketId}`,null,456)).data.event;
+  assert.equal(guestTicketProjection.ticket.code,undefined);assert.equal(guestTicketProjection.ticketCode,undefined);
+  const managerTicketProjection=(await api(`events/${ticketId}`)).data.event;
+  const ticketSeed=ticketState.guests[456].ticketCode.secret;
+  for(const projection of [guestTicketProjection,managerTicketProjection,(await api('bootstrap',null,456)).data,(await api('admin/overview',null,999001)).data]){
+    const projected=JSON.stringify(projection);assert.ok(!projected.includes(ticketSeed));assert.ok(!projected.includes('"ticketCode":'));assert.ok(!projected.includes('"code":"'+qrTicket.data.ticket.code+'"'));
+  }
+  assert.deepEqual((await ticketStored()).guests[456].ticketCode,ticketState.guests[456].ticketCode,'Reading app pages must not rotate or issue a code.');
+  const expiredTicketState=await ticketStored();expiredTicketState.guests[456].ticketCode.issuedMinute--;
+  await db.prepare("UPDATE records SET data=? WHERE kind='events' AND id=?").bind(JSON.stringify(expiredTicketState),ticketId).run();
+  assert.equal((await api(`events/${ticketId}/ticket-check`,{code:qrTicket.data.ticket.code})).data.ticket.valid,false,'Only codes requested in the current minute may validate.');
+  const refreshedTicket=await currentTicket();assert.match(refreshedTicket.data.ticket.code,/^\d{6}$/);
+  assert.equal((await ticketStored()).guests[456].ticket,ticketCode,'Refreshing a short code preserves legacy QR and check-in identity.');
   const checkinMessages=()=>telegramCalls.filter(c=>c.method==='sendMessage' && c.params.chat_id===456 && c.params.text?.startsWith('✅ Checked in\n'+ticketInput.title));
   const validated=await api(`events/${ticketId}/ticket-check`,{code:`XE1:${ticketId}:${ticketCode}`});assert.equal(validated.data.ticket.valid,true);assert.equal(validated.data.ticket.checkedInAt,null);
   assert.equal(checkinMessages().length,0);
-  const admitted=await api(`events/${ticketId}/ticket-check`,{code:ticketCode,checkIn:true});assert.equal(admitted.data.ticket.valid,true);assert.equal(admitted.data.ticket.alreadyCheckedIn,false);
+  const admitted=await api(`events/${ticketId}/ticket-check`,{code:refreshedTicket.data.ticket.code,checkIn:true});assert.equal(admitted.data.ticket.valid,true);assert.equal(admitted.data.ticket.alreadyCheckedIn,false);assert.equal(admitted.data.ticket.code,ticketCode);
   // The notification commits with attendance; background delivery may still be draining older messages.
   const queuedCheckins=async()=> (await db.prepare("SELECT params FROM outbox WHERE method='sendMessage' AND json_extract(params,'$.chat_id')=456 AND json_extract(params,'$.text')=?").bind('✅ Checked in\n'+ticketInput.title+'\n1 person').all()).results;
   const queued=await queuedCheckins();assert.ok(checkinMessages().length===1 || queued.length===1);
@@ -552,6 +587,16 @@ try {
   const stillQueued=await queuedCheckins();assert.ok(stillQueued.length<=1);assert.ok(checkinMessages().length<=1);
   assert.ok(checkinMessages().length===1 || stillQueued.length===1);
   const checkedEvent=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(ticketId).first()).data);assert.equal(checkedEvent.checkIns[ticketCode].userId,456);
+  const rateTicket=await currentTicket(),rateState=await ticketStored();
+  rateState.ticketCheckAttempts={123:{minute:Math.floor(Date.parse(rateTicket.data.ticket.serverTime)/60000),failed:9}};
+  await db.prepare("UPDATE records SET data=? WHERE kind='events' AND id=?").bind(JSON.stringify(rateState),ticketId).run();
+  const wrongCode=rateTicket.data.ticket.code==='000000'?'999999':'000000';
+  assert.equal((await api(`events/${ticketId}/ticket-check`,{code:wrongCode})).data.ticket.valid,false);
+  assert.equal((await ticketStored()).ticketCheckAttempts[123].failed,10,'Failed short-code attempts must persist in D1.');
+  const throttledTicket=await api(`events/${ticketId}/ticket-check`,{code:rateTicket.data.ticket.code});
+  assert.equal(throttledTicket.data.ticket.valid,false);assert.match(throttledTicket.data.ticket.reason,/Too many incorrect codes/);
+  assert.equal((await api(`events/${ticketId}/ticket-check`,{code:ticketCode})).data.ticket.valid,true,'Rate limiting must leave legacy QR/manual recovery usable.');
+  assert.deepEqual((await ticketStored()).checkIns,checkedEvent.checkIns,'Expired and throttled OTP attempts cannot change attendance.');
   await api(`events/${ticketId}/cancel`,{confirm:true});assert.equal((await api(`events/${ticketId}/ticket-check`,{code:ticketCode})).data.ticket.valid,false);
   const namedInput={...ticketInput,title:'Named workflow',invitationMode:'named',askParticipantCount:true,inviteMessage:'Join our club celebration!',guestNames:'Alex Smith = 3\nSam Jones',requestId:'77777777-7777-7777-7777-777777777777'};
   const namedEvent=await api('events',namedInput);assert.equal(namedEvent.status,200);assert.equal(namedEvent.data.event.invitees.length,2);assert.equal(namedEvent.data.event.oneTimeInvite,true);assert.equal(namedEvent.data.event.requireApproval,false);assert.equal(namedEvent.data.event.askParticipantCount,false);
@@ -807,13 +852,13 @@ try {
   const guestCohostInvite=await api(`events/${cohostId}/cohost/invite`,{version:cohostRevoked.data.event.cohostVersion,label:'Guest helper'});assert.equal(guestCohostInvite.status,200);
   await message(8007,'/start '+new URL(guestCohostInvite.data.event.cohostInviteUrl).searchParams.get('start'),902);
   const retainedGuest=(await cohostStored()).guests[902];assert.equal(retainedGuest.ticket,cohostGuest.ticket);assert.equal(retainedGuest.participants,2);assert.equal(retainedGuest.status,'yes');
-  assert.equal((await api(`events/${cohostId}/ticket`,{},902)).data.ticket.code,cohostGuest.ticket);
+  assert.match((await api(`events/${cohostId}/ticket`,{},902)).data.ticket.code,/^\d{6}$/);assert.equal((await cohostStored()).guests[902].ticket,cohostGuest.ticket);
   assert.equal((await api(`events/${cohostId}`)).data.event.counts.participants,2);
   const guestCohostOwner=(await api(`events/${cohostId}`)).data.event;
   const guestCohostLinkId=guestCohostOwner.cohostLinks.find(entry=>entry.status==='active' && entry.cohost.id===902).id;
   assert.equal((await api(`events/${cohostId}/cohost/revoke`,{version:guestCohostOwner.cohostVersion,linkId:guestCohostLinkId})).status,200);
   const restoredGuest=(await api(`events/${cohostId}`,null,902)).data.event;
-  assert.equal(restoredGuest.isManager,false);assert.equal(restoredGuest.isOwner,false);assert.equal(restoredGuest.ticket.code,cohostGuest.ticket);assert.equal(restoredGuest.participants,2);
+  assert.equal(restoredGuest.isManager,false);assert.equal(restoredGuest.isOwner,false);assert.equal(restoredGuest.ticket.code,undefined);assert.equal((await cohostStored()).guests[902].ticket,cohostGuest.ticket);assert.equal(restoredGuest.participants,2);
   assert.equal((await api(`events/${cohostId}/gallery`,null,902)).status,403);
   const paidCohostInput={...cohostInput,title:'Paid co-host editing',invitationMode:'tickets',paymentMethod:'bank',displayPrice:'AUD $25',paymentInstructions:'Pay with your booking name as reference.',paymentTerms:'Contact the event owner about refunds.',requestId:'abababab-abab-abab-abab-abababababab'};
   const paidCohostCreated=await api('events',paidCohostInput);assert.equal(paidCohostCreated.status,200);
@@ -855,7 +900,7 @@ try {
   assert.deepEqual(legacyClaimed.cohosts.map(host=>host.id),[1001,1002]);assert.ok((await api('bootstrap',null,1002)).data.events.some(e=>e.id===legacyCohostId && e.isManager));
   const legacyRevoked=await api(`events/${legacyCohostId}/cohost/revoke`,{version:legacyClaimed.cohostVersion,linkId:legacyOwner.cohostLinks[0].id});assert.equal(legacyRevoked.status,200);
   const legacyRestored=(await api(`events/${legacyCohostId}`,null,1001)).data.event;
-  assert.equal(legacyRestored.isManager,false);assert.equal(legacyRestored.ticket.code,'ABCDEF987654');assert.equal((await api(`events/${legacyCohostId}`,null,1002)).data.event.isManager,true);
+  assert.equal(legacyRestored.isManager,false);assert.equal(legacyRestored.ticket.code,undefined);assert.equal((await api(`events/${legacyCohostId}`,null,1002)).data.event.isManager,true);
   const canonicalLegacy=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(legacyCohostId).first()).data);
   assert.deepEqual(canonicalLegacy.guests,legacyStored.guests);
   // A stale compatibility alias cannot resurrect access or leak a reusable event via bootstrap.
@@ -1236,6 +1281,6 @@ try {
   assert.equal((await api(fixedPath,null,flexibleGuestId)).data.event.participants,3);
   assert.equal((await api(fixedPath,null,fixedOwner)).data.event.counts.participants,5);
   await db.prepare('DELETE FROM delivery_lease WHERE owner=?').bind(invitationDeliveryOwner).run();
-  console.log('Worker integration passed: compact invitation tools, private history and archives, edits, response changes, revocation/deletion and idempotent notifications; fixed personal attendee counts and live count button captions, invitation response summaries, add/revoke with notify or silent removal, exact durable notifications, native button event creation, profiles, private photos, ticket bookings, personal RSVP links, multiple tagged co-host links and isolated revocation, legacy co-host migration, approvals, payments, durable refunds and media. Telegram mocked.');
+  console.log('Worker integration passed: compact invitation tools, private history and archives, edits, response changes, revocation/deletion and idempotent notifications; fixed personal attendee counts and live count button captions, invitation response summaries, add/revoke with notify or silent removal, exact durable notifications, native button event creation, profiles, private photos, ticket bookings, private expiring check-in codes and legacy QR compatibility, personal RSVP links, multiple tagged co-host links and isolated revocation, legacy co-host migration, approvals, payments, durable refunds and media. Telegram mocked.');
 } finally { await mf.dispose(); }
 await checkTestAccess();

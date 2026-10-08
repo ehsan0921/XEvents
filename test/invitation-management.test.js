@@ -235,6 +235,7 @@ test('organiser RSVP consumes the single-use link for its actual guest, keeps de
   assert.deepEqual(changeInvitationResponse(f.e,1,input,f.data.sessions),{changed:true,status:'yes',notifyCount:1,recipients:[2]});
   assert.equal(f.e.invitees[f.token].respondedBy,2);assert.equal(f.e.guests[3],undefined);assert.equal(f.e.responseDeadline,'2000-01-01T00:00:00Z');
   assert.equal(invitationAvailable(f.e,3,f.token),false);assert.equal(verifyTicket(f.e,1,f.e.guests[2].ticket).valid,true);assert.equal(f.e.reminders[2].minutes,120);
+  assert.equal(f.e.guests[2].ticketCode,undefined,'organiser acceptance does not issue a rotating code before the guest requests it');
   const history=structuredClone(f.e.invitationHistory);
   assert.deepEqual(changeInvitationResponse(f.e,1,input,f.data.sessions),{changed:true,status:'yes',notifyCount:0,alreadyApplied:true,recipients:[]});assert.deepEqual(f.e.invitationHistory,history);
   const reordered=Object.fromEntries(Object.entries(input).reverse());assert.equal(changeInvitationResponse(f.e,1,reordered,f.data.sessions).alreadyApplied,true);

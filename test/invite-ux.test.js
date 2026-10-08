@@ -72,15 +72,29 @@ test('custom invitation message reaches event cards and public or personal Teleg
   }
 });
 
-test('QR disabled removes guest QR buttons while preserving a confirmed ticket and code',async()=>{
+test('check-in codes are requested from the ticket page even with QR disabled',async()=>{
   const f=fixture('tickets',{qrEnabled:false,askPhone:false,askComments:false});
   await f.open();await f.accept();await f.msg(2,'Ticket holder');
   assert.equal(f.e.guests[2].status,'yes');assert.ok(f.e.guests[2].ticket);
   const ticketMessage=f.calls.find(c=>c.chat_id===2 && c.text?.includes('YOUR TICKET'));
-  assert.ok(ticketMessage.text.includes(`Ticket: ${f.e.guests[2].ticket}`));
+  assert.equal(ticketMessage.text.includes(f.e.guests[2].ticket),false);
+  assert.equal(f.e.guests[2].ticketCode,undefined,'confirmation does not generate a code in the background');
+  assert.ok(ticketMessage.reply_markup.inline_keyboard.flat().some(b=>b.text==='🎟 Check-in code' && b.web_app.url.endsWith(`?ticket=${f.e.id}`)));
   assert.equal(f.calls.some(c=>c.chat_id===2 && c.reply_markup?.inline_keyboard?.flat().some(b=>/QR/.test(b.text))),false);
   f.calls.length=0;await f.cb(2,`ticket:${f.e.id}`);
   assert.equal(f.calls.some(c=>c.reply_markup?.inline_keyboard?.flat().some(b=>/QR/.test(b.text))),false);
   f.e.qrEnabled=true;f.calls.length=0;await f.bot.ticket(2,f.e);
-  assert.ok(f.calls.some(c=>c.reply_markup?.inline_keyboard?.flat().some(b=>b.text==='🎟 Ticket QR')));
+  assert.ok(f.calls.some(c=>c.reply_markup?.inline_keyboard?.flat().some(b=>b.text==='🎟 Check-in code')));
+});
+
+test('bot-only installations show an on-demand six-digit code instead of the permanent ticket identifier',async()=>{
+  const f=fixture('tickets',{qrEnabled:false,askPhone:false,askComments:false});f.bot.appUrl='';
+  await f.open();await f.accept();await f.msg(2,'Ticket holder');
+  assert.equal(f.e.guests[2].ticketCode,undefined);
+  f.calls.length=0;await f.cb(2,`ticket:${f.e.id}`);
+  const message=f.calls.find(c=>c.chat_id===2 && c.text?.includes('YOUR TICKET'));
+  assert.match(message.text,/Check-in code: \d{6}\nValid this minute/);
+  assert.equal(message.text.includes(f.e.guests[2].ticket),false);
+  f.e.endsAt='2000-01-01T00:00:00Z';f.calls.length=0;await f.cb(2,`ticket:${f.e.id}`);
+  assert.match(f.calls.at(-1).text,/finished/);
 });

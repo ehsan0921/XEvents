@@ -9,7 +9,7 @@ const eventFixture=fields=>({id:'0123456789abcdef',title:'Club evening',location
 const pendingLink=(id,label)=>({id,label,status:'pending',createdAt:'2026-10-07T00:00:00Z',cohost:null,url:'https://t.me/test?start=cohost_'+id});
 const activeLink=(id,label,person)=>({...pendingLink(id,label),status:'active',url:null,cohost:{id:2,name:'Alex',username:'alex',joinedAt:'2026-10-07T00:00:00Z',...person}});
 
-async function harness(initial,{scheduleError,clipboardMode='ok',search='',invitationError,telegramErrors={},telegramClose=true}={}){
+async function harness(initial,{scheduleError,clipboardMode='ok',search='',invitationError,telegramErrors={},telegramClose=true,clock=null,ticketResponses=[],ticketCheckResponses=[]}={}){
   class El{
     constructor(tag=''){this.tag=tag;this.children=[];this.dataset={};this.value='';this.files=[];this.attributes={};this.listeners={};this.open=false;this.classList={toggle(){},add(){},remove(){}};}
     append(...children){this.children.push(...children);this.firstChild=this.children[0];}
@@ -28,7 +28,8 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
   const telegramCall=method=>{telegramStartupCalls.push(method);if(telegramErrors[method])throw new Error(telegramErrors[method]);};
   const window={Telegram:{WebApp:{initData:'test-session',ready(){telegramCall('ready');},expand(){telegramCall('expand');},onEvent(){telegramCall('onEvent');},close(){telegramCall('close');},showScanQrPopup:(options,callback)=>scanCallbacks.push(callback),closeScanQrPopup(){},openTelegramLink:url=>telegramLinks.push(url)}},scrollTo(){},reportAppError:(error,context)=>{errors.push(error.message);errorContexts.push(context);}};
   if(!telegramClose)delete window.Telegram.WebApp.close;
-  let event=initial,token=0,revision=0,invitationHold,eventReadHold,eventSaveHold,ticketHold;
+  let event=initial,token=0,revision=0,invitationHold,eventReadHold,eventSaveHold,ticketHold,ticketCheckHold;
+  const ticketQueue=[...ticketResponses],ticketCheckQueue=[...ticketCheckResponses],timers=new Map();let timerSequence=0;
   const project=value=>({...value,cohosts:(value.cohostLinks || []).filter(link=>link.status==='active').map(link=>link.cohost),cohost:(value.cohostLinks || []).find(link=>link.status==='active')?.cohost || null,cohostInviteUrl:[...(value.cohostLinks || [])].reverse().find(link=>link.status==='pending')?.url || null});
   const response=(data,status=200)=>({ok:status<400,status,json:async()=>data,blob:async()=>new Blob(['image'],{type:'image/jpeg'})});
   const fetcher=async(path,options={})=>{
@@ -38,8 +39,8 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
     if(path.startsWith('/api/explore?'))return response({events:[]});
     if(path==='/api/branding/icon')return response({error:'Not found'},404);
     if(path==='/api/events/'+event.id){if(eventReadHold){const hold=eventReadHold;eventReadHold=null;await hold;}return response({event});}
-    if(path==='/api/events/'+event.id+'/ticket'){if(ticketHold){const hold=ticketHold;ticketHold=null;await hold;}return response({ticket:{title:event.title,name:'Alex',participants:2,code:'FICTIONAL1234',image:null}});}
-    if(path.endsWith('/ticket-check'))return response({ticket:{valid:false,reason:'Fictional ticket not found.'}});
+    if(path==='/api/events/'+event.id+'/ticket'){if(ticketHold){const hold=ticketHold;ticketHold=null;await hold;}const now=clock?.now ?? Date.now(),item=ticketQueue.shift();if(item?.error)return response({error:item.error},item.status || 400);return response({ticket:{title:event.title,name:'Alex',participants:2,code:'004281',codeExpiresAt:new Date(now+30000).toISOString(),serverTime:new Date(now).toISOString(),image:null,...item}});}
+    if(path.endsWith('/ticket-check')){if(ticketCheckHold){const hold=ticketCheckHold;ticketCheckHold=null;await hold;}const item=ticketCheckQueue.shift();if(item?.error)return response({error:item.error},item.status || 400);return response({ticket:item || {valid:false,reason:'Fictional ticket not found.'}});}
     if(/\/invitations\/(add|edit|response|revoke|delete|remove)$/.test(path)){
       if(invitationHold){const hold=invitationHold;invitationHold=null;await hold;}
       if(body.version!==event.invitationsVersion)return response({error:'Invitations changed. Review the current list.'},409);
@@ -81,12 +82,15 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
   const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
   const navigator={};
   if(clipboardMode!=='absent')navigator.clipboard={writeText:async text=>{if(clipboardMode==='denied')throw Error('Clipboard denied.');copied.push(text);}};
-  await new AsyncFunction('window','document','location','fetch','crypto','navigator','setupGallery','setupEventActions',source)(window,document,{search},fetcher,webcrypto,navigator,setupGallery,setupEventActions);
+  const TestDate=clock?class extends Date{constructor(...args){super(...(args.length?args:[clock.now]));}static now(){return clock.now;}}:Date;
+  const schedule=clock?(callback,delay=0)=>{const id=++timerSequence;timers.set(id,{callback,at:clock.now+delay});return id;}:setTimeout;
+  const unschedule=clock?id=>timers.delete(id):clearTimeout;
+  await new AsyncFunction('window','document','location','fetch','crypto','navigator','setupGallery','setupEventActions','Date','setTimeout','clearTimeout',source)(window,document,{search},fetcher,webcrypto,navigator,setupGallery,setupEventActions,TestDate,schedule,unschedule);
   await new Promise(resolve=>setImmediate(resolve));
   const descendants=node=>node.children.flatMap(child=>[child,...descendants(child)]);
   const findButton=(id,label)=>descendants(ids.get(id)).find(node=>node.tag==='button' && node.textContent===label);
   const findEntry=id=>ids.get('cohost-list').children.find(node=>node.dataset.linkId===id);
-  return {ids,tabs,calls,errors,errorContexts,copied,telegramLinks,telegramStartupCalls,scanCallbacks,findButton,findEntry,descendants,setClipboardMode:value=>{clipboardMode=value;},setEvent:value=>{event=value;},getEvent:()=>event,setInvitationError:value=>{invitationError=value;},holdNextInvitationMutation:()=>{let release;invitationHold=new Promise(resolve=>{release=resolve;});return release;},holdNextEventRead:()=>{let release;eventReadHold=new Promise(resolve=>{release=resolve;});return release;},holdNextEventSave:()=>{let release;eventSaveHold=new Promise(resolve=>{release=resolve;});return release;},holdNextTicket:()=>{let release;ticketHold=new Promise(resolve=>{release=resolve;});return release;}};
+  return {ids,tabs,calls,errors,errorContexts,copied,telegramLinks,telegramStartupCalls,scanCallbacks,findButton,findEntry,descendants,setClipboardMode:value=>{clipboardMode=value;},setEvent:value=>{event=value;},getEvent:()=>event,setInvitationError:value=>{invitationError=value;},holdNextInvitationMutation:()=>{let release;invitationHold=new Promise(resolve=>{release=resolve;});return release;},holdNextEventRead:()=>{let release;eventReadHold=new Promise(resolve=>{release=resolve;});return release;},holdNextEventSave:()=>{let release;eventSaveHold=new Promise(resolve=>{release=resolve;});return release;},holdNextTicket:()=>{let release;ticketHold=new Promise(resolve=>{release=resolve;});return release;},holdNextTicketCheck:()=>{let release;ticketCheckHold=new Promise(resolve=>{release=resolve;});return release;},pendingTimers:()=>timers.size,advanceTime:milliseconds=>{clock.now+=milliseconds;for(const [id,timer] of [...timers])if(timer.at<=clock.now){timers.delete(id);timer.callback();}}};
 }
 
 for(const method of ['ready','expand','onEvent'])test('a Telegram '+method+' bridge failure keeps Home, My events and Create usable',async()=>{
@@ -133,14 +137,57 @@ test('saving an event disables close and competing form navigation until the sav
 });
 
 test('closing a page while manager details load prevents a late dialog or editor from reopening',async()=>{
-  for(const [label,dialog] of [['👥 Guest list','guest-list-dialog'],['📷 Scan tickets','checkin-dialog'],['🤝 Co-hosts','cohost-dialog'],['✉️ Guest invitations','invitation-links-dialog'],['✏️ Edit event',null]]){
+  for(const [label,dialog] of [['👥 Guest list','guest-list-dialog'],['🎟 Check in guests','checkin-dialog'],['🤝 Co-hosts','cohost-dialog'],['✉️ Guest invitations','invitation-links-dialog'],['✏️ Edit event',null]]){
     const f=await harness(eventFixture());f.tabs.find(tab=>tab.dataset.tab==='events').onclick();const release=f.holdNextEventRead(),opening=f.findButton('event-list',label).onclick();f.ids.get('app-close').onclick();release();await opening;assert.equal(f.ids.get('home-view').hidden,false,label);assert.equal(f.ids.get('create-view').hidden,true,label);if(dialog)assert.equal(f.ids.get(dialog).open,false,label);
   }
-  const f=await harness(eventFixture({ticket:{name:'Alex',code:'FICTIONAL1234'}}));f.tabs.find(tab=>tab.dataset.tab==='events').onclick();const release=f.holdNextTicket(),opening=f.findButton('event-list','🔳 Ticket QR').onclick();f.ids.get('app-close').onclick();release();await opening;assert.equal(f.ids.get('ticket-dialog').open,false);assert.equal(f.ids.get('home-view').hidden,false);
+  const f=await harness(eventFixture({ticket:{name:'Alex',code:'FICTIONAL1234'}}));f.tabs.find(tab=>tab.dataset.tab==='events').onclick();const release=f.holdNextTicket(),opening=f.findButton('event-list','🎟 Check-in code').onclick();f.ids.get('app-close').onclick();release();await opening;assert.equal(f.ids.get('ticket-dialog').open,false);assert.equal(f.ids.get('home-view').hidden,false);
 });
 
 test('the ticket-check close button shuts the dialog and a delayed native scan cannot overwrite a newer session',async()=>{
-  const f=await harness(eventFixture());await f.findButton('event-list','📷 Scan tickets').onclick();f.ids.get('checkin-scan').onclick();assert.equal(f.scanCallbacks.length,1);f.ids.get('checkin-close').onclick();assert.equal(f.ids.get('checkin-dialog').open,false);await f.findButton('event-list','📷 Scan tickets').onclick();f.ids.get('checkin-code').value='CURRENT';assert.equal(f.scanCallbacks[0]('STALE'),true);assert.equal(f.ids.get('checkin-code').value,'CURRENT');assert.equal(f.calls.filter(call=>call.path.endsWith('/ticket-check')).length,0);
+  const f=await harness(eventFixture());await f.findButton('event-list','🎟 Check in guests').onclick();f.ids.get('checkin-scan').onclick();assert.equal(f.scanCallbacks.length,1);f.ids.get('checkin-close').onclick();assert.equal(f.ids.get('checkin-dialog').open,false);await f.findButton('event-list','🎟 Check in guests').onclick();f.ids.get('checkin-code').value='CURRENT';assert.equal(f.scanCallbacks[0]('STALE'),true);assert.equal(f.ids.get('checkin-code').value,'CURRENT');assert.equal(f.calls.filter(call=>call.path.endsWith('/ticket-check')).length,0);
+});
+
+test('check-in codes are generated on demand, preserve leading zeroes and expire without automatic requests',async()=>{
+  const clock={now:Date.parse('2026-10-08T00:00:30Z')},f=await harness(eventFixture({qrEnabled:false,ticket:{name:'Alex',participants:2}}),{clock,ticketResponses:[{code:'004281'},{code:'005729'}]});
+  const requests=()=>f.calls.filter(call=>call.path.endsWith('/ticket'));assert.equal(requests().length,0);assert.equal(f.pendingTimers(),0);await f.findButton('event-list','🎟 Check-in code').onclick();assert.equal(requests().length,1);assert.equal(f.ids.get('ticket-code').textContent,'004281');assert.equal(f.ids.get('ticket-image').hidden,true);assert.equal(f.ids.get('ticket-countdown').textContent,'Expires in 0:30');assert.equal(f.pendingTimers(),1);await f.ids.get('ticket-copy').onclick();assert.equal(f.copied.at(-1),'004281');
+  f.advanceTime(30000);assert.equal(f.ids.get('ticket-copy').disabled,true);assert.match(f.ids.get('ticket-countdown').textContent,/Code expired/);assert.equal(f.pendingTimers(),0);await f.ids.get('ticket-copy').onclick();assert.equal(f.copied.length,1);assert.equal(requests().length,1);
+  await f.ids.get('ticket-refresh').onclick();assert.equal(requests().length,2);assert.equal(f.ids.get('ticket-code').textContent,'005729');assert.equal(f.ids.get('ticket-copy').disabled,false);assert.equal(f.pendingTimers(),1);f.ids.get('ticket-close').onclick();assert.equal(f.pendingTimers(),0);assert.equal(f.ids.get('ticket-code').textContent,'');f.advanceTime(60000);assert.equal(requests().length,2);
+});
+
+test('Home opens confirmed check-in codes with QR disabled and server time controls expiry despite a wrong device clock',async()=>{
+  const clock={now:Date.parse('2026-10-08T00:00:00Z')},f=await harness(eventFixture({isOwner:false,isManager:false,status:'yes',qrEnabled:false,ticket:{name:'Alex',participants:2}}),{clock,ticketResponses:[{serverTime:'2035-10-08T12:34:40Z',codeExpiresAt:'2035-10-08T12:35:00Z'}]});assert.equal(f.calls.some(call=>call.path.endsWith('/ticket')),false);await f.findButton('home-upcoming','🎟 Check-in code').onclick();assert.equal(f.ids.get('ticket-dialog').open,true);assert.equal(f.ids.get('ticket-countdown').textContent,'Expires in 0:20');f.advanceTime(20000);assert.equal(f.ids.get('ticket-copy').disabled,true);f.ids.get('ticket-close').onclick();
+});
+
+test('closing or navigating during a code refresh clears its timer and ignores the late response',async()=>{
+  const clock={now:Date.parse('2026-10-08T00:00:00Z')},f=await harness(eventFixture({ticket:{name:'Alex',participants:2}}),{clock});await f.findButton('event-list','🎟 Check-in code').onclick();const release=f.holdNextTicket(),refreshing=f.ids.get('ticket-refresh').onclick();assert.equal(f.ids.get('ticket-copy').disabled,true);assert.equal(f.pendingTimers(),0);f.ids.get('ticket-close').onclick();release();await refreshing;assert.equal(f.ids.get('ticket-dialog').open,false);assert.equal(f.pendingTimers(),0);assert.equal(f.ids.get('ticket-code').textContent,'');
+  await f.findButton('event-list','🎟 Check-in code').onclick();assert.equal(f.pendingTimers(),1);f.tabs.find(tab=>tab.dataset.tab==='settings').onclick();assert.equal(f.ids.get('ticket-dialog').open,false);assert.equal(f.pendingTimers(),0);
+});
+
+test('an expired code refresh error remains visible and only an explicit retry generates another code',async()=>{
+  const clock={now:Date.parse('2026-10-08T00:00:00Z')},f=await harness(eventFixture({ticket:{name:'Alex',participants:2}}),{clock,ticketResponses:[{code:'004281'},{error:'Please try again.'},{code:'009123'}]});await f.findButton('event-list','🎟 Check-in code').onclick();f.advanceTime(30000);await f.ids.get('ticket-refresh').onclick();assert.match(f.ids.get('ticket-message').textContent,/Please try again/);assert.equal(f.ids.get('ticket-copy').disabled,true);assert.equal(f.pendingTimers(),0);f.advanceTime(60000);assert.equal(f.calls.filter(call=>call.path.endsWith('/ticket')).length,2);await f.ids.get('ticket-refresh').onclick();assert.equal(f.ids.get('ticket-code').textContent,'009123');assert.equal(f.ids.get('ticket-copy').disabled,false);f.ids.get('ticket-close').onclick();
+});
+
+test('the six-digit number pad keeps leading zeroes and checks in directly with one request',async()=>{
+  const f=await harness(eventFixture(),{ticketCheckResponses:[{valid:true,name:'Alex and Sam',participants:2,checkedInAt:'2026-10-08T00:00:00Z'}]});await f.findButton('event-list','🎟 Check in guests').onclick();assert.equal(f.ids.get('checkin-check').disabled,true);assert.deepEqual(f.ids.get('checkin-keypad').children.map(button=>button.textContent),['1','2','3','4','5','6','7','8','9','Clear','0','⌫']);
+  for(const digit of '004281')await f.findButton('checkin-keypad',digit).onclick();assert.equal(f.ids.get('checkin-code').value,'004281');assert.deepEqual(Array.from({length:6},(_,i)=>f.ids.get('checkin-digit-'+i).textContent),[...'004281']);await f.findButton('checkin-keypad','9').onclick();assert.equal(f.ids.get('checkin-code').value,'004281');assert.equal(f.ids.get('checkin-check').disabled,false);
+  const release=f.holdNextTicketCheck(),checking=f.ids.get('checkin-check').onclick();assert.equal(f.ids.get('checkin-check').disabled,true);assert.ok(f.ids.get('checkin-keypad').children.every(button=>button.disabled));await f.ids.get('checkin-check').onclick();assert.equal(f.calls.filter(call=>call.path.endsWith('/ticket-check')).length,1);release();await checking;assert.deepEqual(f.calls.find(call=>call.path.endsWith('/ticket-check')).body,{code:'004281',checkIn:true});assert.match(f.ids.get('checkin-result').textContent,/✓ Checked in/);assert.match(f.ids.get('checkin-result').textContent,/Alex and Sam · 2 people/);assert.equal(f.ids.get('checkin-check').disabled,true);
+  await f.findButton('checkin-keypad','⌫').onclick();assert.equal(f.ids.get('checkin-code').value,'00428');assert.equal(f.ids.get('checkin-check').disabled,true);await f.findButton('checkin-keypad','Clear').onclick();assert.equal(f.ids.get('checkin-code').value,'');assert.ok(Array.from({length:6},(_,i)=>f.ids.get('checkin-digit-'+i).textContent).every(value=>value==='·'));f.ids.get('checkin-close').onclick();
+});
+
+test('typed codes remain six-digit strings and an already checked-in ticket displays a useful result',async()=>{
+  const f=await harness(eventFixture(),{ticketCheckResponses:[{valid:true,alreadyCheckedIn:true,name:'Alex',participants:1,checkedInAt:'2026-10-08T00:00:00Z'}]});await f.findButton('event-list','🎟 Check in guests').onclick();f.ids.get('checkin-code').value='00a428199';f.ids.get('checkin-code').oninput();assert.equal(f.ids.get('checkin-code').value,'004281');let prevented=false;f.ids.get('checkin-code').onkeydown({key:'Enter',preventDefault(){prevented=true;}});await new Promise(resolve=>setImmediate(resolve));assert.equal(prevented,true);assert.deepEqual(f.calls.find(call=>call.path.endsWith('/ticket-check')).body,{code:'004281',checkIn:true});assert.match(f.ids.get('checkin-result').textContent,/Already checked in/);assert.match(f.ids.get('checkin-result').textContent,/Alex · 1 person/);assert.equal(f.ids.get('checkin-result').className,'checkin-warning');f.ids.get('checkin-close').onclick();
+});
+
+test('legacy QR tickets are verified before their direct check-in action and never converted to a numeric code',async()=>{
+  const code='XE1:fictional-legacy-ticket',f=await harness(eventFixture(),{ticketCheckResponses:[{valid:true,name:'Alex',participants:2},{valid:true,name:'Alex',participants:2,checkedInAt:'2026-10-08T00:00:00Z'}]});await f.findButton('event-list','🎟 Check in guests').onclick();f.ids.get('checkin-scan').onclick();f.scanCallbacks[0](code);await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(f.calls.find(call=>call.path.endsWith('/ticket-check')).body,{code,checkIn:false});assert.equal(f.ids.get('checkin-code').value,'');assert.match(f.ids.get('checkin-result').textContent,/Valid ticket/);assert.equal(f.ids.get('checkin-check').disabled,false);await f.ids.get('checkin-check').onclick();assert.deepEqual(f.calls.filter(call=>call.path.endsWith('/ticket-check'))[1].body,{code,checkIn:true});f.ids.get('checkin-close').onclick();
+});
+
+test('a late check-in result cannot overwrite a newly opened check-in session',async()=>{
+  const f=await harness(eventFixture(),{ticketCheckResponses:[{valid:true,name:'First guest',participants:2,checkedInAt:'2026-10-08T00:00:00Z'}]});await f.findButton('event-list','🎟 Check in guests').onclick();f.ids.get('checkin-code').value='004281';f.ids.get('checkin-code').oninput();const release=f.holdNextTicketCheck(),checking=f.ids.get('checkin-check').onclick();f.ids.get('checkin-close').onclick();await f.findButton('event-list','🎟 Check in guests').onclick();f.ids.get('checkin-code').value='009123';f.ids.get('checkin-code').oninput();release();await checking;assert.equal(f.ids.get('checkin-code').value,'009123');assert.equal(f.ids.get('checkin-result').textContent,'');assert.equal(f.ids.get('checkin-check').disabled,false);f.ids.get('checkin-close').onclick();
+});
+
+test('owners and co-hosts can check in guests from Edit and new events omit that entry',async()=>{
+  for(const isOwner of [true,false]){const f=await harness(eventFixture({isOwner,isCoHost:!isOwner}));await f.findButton('event-list','✏️ Edit event').onclick();assert.equal(f.ids.get('edit-checkin-panel').hidden,false);await f.ids.get('edit-checkin').onclick();assert.equal(f.ids.get('checkin-dialog').open,true);f.ids.get('checkin-close').onclick();f.ids.get('hero-create').onclick();assert.equal(f.ids.get('edit-checkin-panel').hidden,true);}
 });
 
 test('closing or dismissing a confirmation cancels the operation and permits the next confirmation',async()=>{
@@ -166,7 +213,7 @@ test('compact guest list status badges distinguish approval, payment, actual Lat
 
 test('co-host events expose management actions and keep payment fields read-only',async()=>{
   const f=await harness(eventFixture({isOwner:false,isCoHost:true}));
-  for(const label of ['✏️ Edit event','👥 Guest list','📷 Scan tickets','✉️ Guest invitations','🗂 Shared media'])assert.ok(f.findButton('event-list',label),label+' should be available');
+  for(const label of ['✏️ Edit event','👥 Guest list','🎟 Check in guests','✉️ Guest invitations','🗂 Shared media'])assert.ok(f.findButton('event-list',label),label+' should be available');
   for(const label of ['🤝 Co-hosts','🛑 Cancel event','🗑 Delete event','💳 Payments & refunds'])assert.equal(f.findButton('event-list',label),undefined,label+' should remain owner-only');
   assert.ok(f.descendants(f.ids.get('home-upcoming')).some(node=>node.textContent==='Co-hosting'));
   assert.ok(f.descendants(f.ids.get('event-list')).some(node=>node.textContent==='CO-HOSTING'));

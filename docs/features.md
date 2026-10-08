@@ -68,9 +68,9 @@ The owner's edit page has a red event-actions section with Cancel event and Dele
 
 ## Tickets and check-in
 
-Confirmed guests receive a unique ticket code. Confirmation requires an accepted response plus any required approval and verified payment. Private locations and ticket instructions stay locked until those requirements are satisfied.
+Confirmed guests can request a six-digit check-in code from their ticket page. It expires at the next minute; **Refresh code** requests a new one. Codes are generated on demand, without background polling or scheduled generation. Confirmation requires an accepted response plus any required approval and verified payment. Private locations and ticket instructions stay locked until those requirements are satisfied.
 
-Hosts can enter a code to check its validity, then check in the entire group. The result shows the guest name and participant count. A repeat check reports the existing check-in; a newly recorded check-in notifies the guest in Telegram.
+Owners and co-hosts can use the event editor's check-in keypad to enter a code and check in the entire group. The result shows the guest name and participant count. A repeat check reports the existing check-in; a newly recorded check-in notifies the guest in Telegram. Existing QR tickets and check-in records remain valid.
 
 Ticket validation checks the current event, acceptance, approval, and payment state. Cancelled or no-longer-confirmed tickets fail validation. An event with a saved finish time also rejects tickets after that time; an event without a finish time has no automatic end-time ticket expiry.
 

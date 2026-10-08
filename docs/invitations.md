@@ -143,7 +143,9 @@ For contributions without an RSVP, enable uploads and the separate public media 
 
 Hosts can review accepted responses and people totals separately, distinguish confirmed attendance from approval requests and unpaid bookings, and filter the roster by response state. Named lists also show unopened guest placeholders. An unopened name can appear in the roster, but the bot cannot contact a Telegram account that has not interacted with it.
 
-Confirmed guests receive a unique ticket code. With QR codes enabled, the Mini App also provides a scannable ticket. Owners and co-hosts can verify a code or scan the QR and check in the entire group. A new check-in notifies the guest; repeat checks show that the ticket was already checked in.
+Confirmed guests open **Check-in code** to request a six-digit code. It expires at the next minute; a countdown and **Refresh code** button help them request another. Codes are generated only when requested, with no background polling or scheduled generation. Owners and co-hosts open **Check in guests** from the event editor and enter the code using the numeric keypad to check in the entire group. A new check-in notifies the guest; repeat checks show that the ticket was already checked in.
+
+With QR codes enabled, the ticket page also provides a scannable ticket. Existing ticket QR codes and saved check-in records continue to work.
 
 QR codes start off for new events. Turning them off hides guest QR options and upload QR generation, while manual ticket codes, check-in by code and media upload links still work. Existing events without a saved QR setting retain QR functionality until it is disabled. Ticket QR payloads contain an event ID and ticket code, not the hosting URL.
 

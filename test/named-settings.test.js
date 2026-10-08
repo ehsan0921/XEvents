@@ -35,7 +35,7 @@ test('legacy approval privacy remains until named acceptance, then confirmation 
   g.status='yes';assert.equal(confirmed(f.e,g),true);assert.equal(canSeeLocation(f.e,2),true);
   assert.equal(responseCounts(f.e).yes,1);assert.equal(responseCounts(f.e).pending,0);
   const ticket=issueTicket(f.e,2);assert.ok(ticket.code);assert.equal(ticket.participants,1);
-  const accepted=publicEvent(f.e,2,'ExampleBot');assert.equal(accepted.location,'Private venue');assert.equal(accepted.approval,'approved');assert.equal(accepted.ticket.code,ticket.code);
+  const accepted=publicEvent(f.e,2,'ExampleBot');assert.equal(accepted.location,'Private venue');assert.equal(accepted.approval,'approved');assert.equal(accepted.ticket.code,undefined);assert.equal(accepted.ticket.name,g.name);assert.equal(accepted.ticket.participants,ticket.participants);
   const owner=publicEvent(f.e,1,'ExampleBot');assert.equal(owner.guestRoster[0].approval,'approved');
   const admin=adminOverview([{kind:'events',id:f.e.id,data:JSON.stringify(f.e)}]).events[0];assert.equal(admin.requireApproval,false);assert.equal(admin.askParticipantCount,false);assert.equal(admin.hideLocation,true);assert.equal(admin.guests[0].approval,'approved');
 });

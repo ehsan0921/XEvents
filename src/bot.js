@@ -6,9 +6,10 @@ import {appendInvitationHistory} from './invitation-history.js';
 import {startChatCreation,chatCreationMessage,chatCreationCallback} from './chat-creation.js';
 import {manualInstructions,manualReport,manualConfirm} from './manual-payment.js';
 import { priceText } from './pricing.js';
+import { issueTicket } from './tickets.js';
 import { randomBytes } from 'node:crypto';
 import { invoice, checkout, successful, orderFor, requestRefund, refundResult } from './payments.js';
-import { eventTime } from './time.js';
+import { eventTime, InputError } from './time.js';
 import { uploadLink, shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
 import { upcoming, eventGroup, setReminder, reminderOptions, reminderLabel, applyDefaultReminder } from './reminders.js';
 import { permissions, permissionLabels, can, guests, confirmed, canSeeLocation, responsesClosed, responseCounts, participantCount } from './permissions.js';
@@ -128,11 +129,17 @@ export class Bot {
     await this.home(id, events.length ? '⏳ Invitations you haven’t responded to yet. Tap an event to respond.' : 'You have no unanswered invitations.');
     for (const e of events) await this.send(id, `${e.title}\n${this.time(e, id)}${responsesClosed(e) ? '\nResponses closed — deadline passed' : ''}`, keyboard([button('Open invitation', `v:${e.id}`)]));
   }
-  async ticket(id, e) {
+  async ticket(id, e, requested = false) {
     const g = e.guests[id];
     if (!g || !confirmed(e, g) || e.owner === id || e.cancelled) return this.send(id, 'Your invitation details will be available after your response is approved.');
     g.ticket ||= randomBytes(6).toString('hex').toUpperCase();
-    return this.long(id, `🎟 ${invitationMode(e)==='tickets' ? 'YOUR TICKET' : 'YOUR INVITATION'}\n\n${e.title}\nGuest: ${g.name}\nPeople: ${participantCount(e, g)}\nTicket: ${g.ticket}\n\n🗓 ${this.time(e, id)}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n📍 ${e.location || 'Location to follow'}${e.ticketInfo ? '\n\n' + e.ticketInfo : ''}\n\n✅ Your place is confirmed.`, keyboard(...(this.appUrl && e.qrEnabled!==false?[[this.miniButton('🎟 Ticket QR',`?ticket=${e.id}`)]]:[]),[button('Back to event', `v:${e.id}`)]));
+    let codeText='';
+    if(!this.appUrl && requested){
+      try{codeText=`\nCheck-in code: ${issueTicket(e,id).code}\nValid this minute. Request your ticket again to refresh.`;}
+      catch(error){if(!(error instanceof InputError))throw error;return this.send(id,error.message,keyboard([button('Back to event',`v:${e.id}`)]));}
+    }
+    const codeButton=this.appUrl ? this.miniButton('🎟 Check-in code',`?ticket=${e.id}`) : button('🎟 Check-in code',`ticket:${e.id}`);
+    return this.long(id, `🎟 ${invitationMode(e)==='tickets' ? 'YOUR TICKET' : 'YOUR INVITATION'}\n\n${e.title}\nGuest: ${g.name}\nPeople: ${participantCount(e, g)}${codeText}\n\n🗓 ${this.time(e, id)}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n📍 ${e.location || 'Location to follow'}${e.ticketInfo ? '\n\n' + e.ticketInfo : ''}\n\n✅ Your place is confirmed.`, keyboard([codeButton],[button('Back to event', `v:${e.id}`)]));
   }
   paymentInfo(id,e){return paymentMethod(e)==='stars'?invoice(this,id,e):manualInstructions(this,id,e);}
   async beginAcceptance(id,e,from){
@@ -247,7 +254,7 @@ export class Bot {
       if (can(e, id, 'uploadMedia')) extras.push(button('📎 Add media', `u:${e.id}`));
       if (this.appUrl && can(e, id, 'viewMedia')) extras.push(this.miniButton('🗂 Shared media', `?gallery=${e.id}`));
       if(this.appUrl && host)extras.push(this.miniButton(e.qrEnabled!==false?'Scan tickets':'Check tickets',`?checkin=${e.id}`));
-      if(this.appUrl && e.qrEnabled!==false && !host && confirmed(e,e.guests[id]))extras.push(this.miniButton('🎟 Ticket QR',`?ticket=${e.id}`));
+      if(this.appUrl && !host && confirmed(e,e.guests[id]))extras.push(this.miniButton('🎟 Check-in code',`?ticket=${e.id}`));
       if (upcoming(e)) extras.push(button('🔔 Reminder', `reminder:${e.id}`));
       if (canSeeLocation(e, id) && e.location) extras.push(e.location.length <= 256 ? { text: '📋 Copy address', copy_text: { text: e.location } } : button('📋 Copy address', `address:${e.id}`));
       if (host && shareUploadLink(e,this.username)) extras.push(this.appUrl && e.qrEnabled!==false ? this.miniButton('Upload QR code',`?qr=${e.id}`) : {text:'Share upload link',url:`https://t.me/share/url?url=${encodeURIComponent(shareUploadLink(e,this.username))}`});
@@ -651,7 +658,7 @@ export class Bot {
     if (action === 'c') {
       return this.send(id, isManager(e,id) ? 'You’re an event host — no RSVP needed.' : 'Choose an RSVP to add or update your comment.');
     }
-    if (action === 'ticket') return this.ticket(id, e);
+    if (action === 'ticket') return this.ticket(id, e, true);
     if (action === 'approve' || action === 'reject') {
       const guestId = Number(arg); const guest = e.guests[guestId];
       await this.clearButtons(id,q.message);

@@ -5,7 +5,7 @@ import {invitationMode,invitationSettings,namedLink,consumeInvitation,invitation
 import {confirmed,participantCount,requiresApproval} from './permissions.js';
 import {paidEvent} from './event-payment.js';
 import {applyDefaultReminder} from './reminders.js';
-import {issueTicket} from './tickets.js';
+import {ensureTicket} from './tickets.js';
 import {appendInvitationHistory,invitationHistory} from './invitation-history.js';
 
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0,16);
@@ -182,7 +182,7 @@ export function changeInvitationResponse(e,actor,input,sessions={},now=Date.now(
   }
   e.guests[uid]=response;
   if(sessions[uid]?.event===e.id)delete sessions[uid];
-  if(confirmed(e,response)){issueTicket(e,input.userId);applyDefaultReminder(e,input.userId,now);}
+  if(confirmed(e,response)){ensureTicket(e,input.userId);applyDefaultReminder(e,input.userId,now);}
   appendInvitationHistory(e,input.token,recorded?'changed':'responded',{actorId:actor,actorRole:'organiser',userId:input.userId,name:response.name,status:response.status,previousStatus,participants:response.status==='yes'?participants:undefined,previousParticipants:previousStatus==='yes'?previousParticipants:undefined,notify:input.notify},now);
   return completeMutation(e,actor,input,request.fingerprint,{changed:true,status:response.status,notifyCount:input.notify?1:0,recipients:input.notify?[input.userId]:[]},now);
 }

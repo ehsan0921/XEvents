@@ -697,8 +697,8 @@ export class Bot {
       const rows=[[button('Guest responses', `a:${eid}`), button('Guest options', `permissions:${eid}`)], [button('Edit title', `edit:${eid}:title`), button('Edit time', `edit:${eid}:when`)], [button('Edit location', `edit:${eid}:location`), button('Edit description', `edit:${eid}:description`)], [button('Edit invite message',`edit:${eid}:inviteMessage`),button('🖼 Edit banner', `banner:${eid}`)]];
       if(invitationMode(e)==='named')rows.push([button('Invitation links',`invite-links:${eid}:0`)]);
       if(e.owner===id)rows.push([button('Co-hosts',`cohost:${eid}`),button('Replace invite link', `rotate:${eid}`)],[button('Cancel event', `x:${eid}`), button('Delete event', `delete:${eid}`)]);
-      rows.push([button('Back to event',`v:${eid}`)]);
-      return this.send(id,(e.owner===id?'Organiser':'Co-host')+' tools\n'+priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing),keyboard(...rows));
+      rows.push([button('↻ Refresh',`h:${eid}`),button('Back to event',`v:${eid}`)]);
+      return this.send(id,`${e.title}\nEvent settings\n`+priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing),keyboard(...rows));
     }
     if (action === 'permissions' || action === 'toggle') {
       if(invitationMode(e)==='named'){
@@ -721,7 +721,7 @@ export class Bot {
       const counts=responseCounts(e),accepted=guests(e).filter(g=>g.status==='yes');
       const rows = guests(e).map(g => `${g.name} — ${g.status === 'yes' && !confirmed(e, g) ? requiresApproval(e) && g.approval==='pending' ? 'Awaiting approval':'Awaiting payment' : labels[g.status]}${g.status==='yes'?' · '+participantCount(e,g)+' people':''}${g.phone?'\nPhone: '+g.phone:''}${(g.answers || []).map(a=>'\n'+a.question+': '+(a.answer || 'Skipped')).join('')}${g.comment?'\n'+g.comment:''}`);
       const unopened=Object.entries(e.invitees || {}).filter(([token])=>!Object.values(e.guests).some(g=>g.invitationToken===token)).map(([,g])=>g.name+' — Not opened');
-      await this.long(id, `${e.title}\nAccepted: ${accepted.length} responses · ${accepted.reduce((sum,g)=>sum+participantCount(e,g),0)} people\nConfirmed: ${counts.participants} people · Approval: ${counts.pending} · Payment: ${counts.awaitingPayment}\nMaybe: ${counts.maybe} · Rejected: ${counts.no} · Unanswered: ${counts.later+unopened.length}\n\n${[...rows,...unopened].join('\n\n') || 'No guests yet.'}`, keyboard([button('Back to organiser tools', `h:${eid}`)]));
+      await this.long(id, `${e.title}\nAccepted: ${accepted.length} responses · ${accepted.reduce((sum,g)=>sum+participantCount(e,g),0)} people\nConfirmed: ${counts.participants} people · Approval: ${counts.pending} · Payment: ${counts.awaitingPayment}\nMaybe: ${counts.maybe} · Rejected: ${counts.no} · Unanswered: ${counts.later+unopened.length}\n\n${[...rows,...unopened].join('\n\n') || 'No guests yet.'}`, keyboard([button('↻ Refresh', `a:${eid}`),button('Event settings', `h:${eid}`)]));
       if(e.owner===id && ['bank','link'].includes(paymentMethod(e)))for(const [uid,g] of Object.entries(e.guests)){
         if(g.payment?.status==='reported')await this.send(id,g.name+' — payment reported',keyboard([button('Confirm received',`manual-confirm:${e.id}:${uid}`),button('Clear report',`manual-clear:${e.id}:${uid}`)]));
         if(g.payment?.status==='paid')await this.send(id,g.name+' — payment confirmed',keyboard([button('Clear payment record',`manual-clear:${e.id}:${uid}`)]));

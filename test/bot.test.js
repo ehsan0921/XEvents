@@ -26,6 +26,27 @@ function fixture() {
   return { store, bot, calls, msg, cb, create };
 }
 
+test('event settings identify the event and response refresh loads current counts for managers only',async()=>{
+  const f=fixture(),e=await f.create();
+  await f.cb(1,`h:${e.id}`);
+  let card=f.calls.at(-1);
+  assert.match(card.text,/^Birthday\nEvent settings\n/);
+  assert.ok(card.reply_markup.inline_keyboard.flat().some(b=>b.text==='↻ Refresh' && b.callback_data===`h:${e.id}`));
+  await f.cb(1,`a:${e.id}`);
+  card=f.calls.at(-1);
+  const refresh=card.reply_markup.inline_keyboard.flat().find(b=>b.text==='↻ Refresh');
+  assert.equal(refresh.callback_data,`a:${e.id}`);
+  assert.match(card.text,/Accepted: 0 responses/);
+  e.guests[2]={name:'Example guest',status:'yes',participants:2};
+  await f.cb(1,refresh.callback_data);
+  assert.match(f.calls.at(-1).text,/Accepted: 1 responses/);
+  assert.match(f.calls.at(-1).text,/Example guest/);
+  for(const action of ['a','h']){
+    await f.cb(3,`${action}:${e.id}`);
+    assert.doesNotMatch(f.calls.at(-1).text,/Example guest|Event settings/);
+  }
+});
+
 test('native App menu stays available without duplicate App buttons or stale keyboard launchers',async()=>{
   const f=fixture();f.bot.appUrl='https://example.test/app';
   await f.msg(1,'/start');

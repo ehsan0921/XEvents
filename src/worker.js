@@ -80,13 +80,13 @@ export async function drainOutbox(env, immediate=false, attempt=0) {
   const owner = crypto.randomUUID();
   const lock = await env.DB.prepare('INSERT INTO delivery_lease(id,owner,expires) VALUES (1,?,unixepoch()+60) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,expires=excluded.expires WHERE delivery_lease.expires<unixepoch() RETURNING owner').bind(owner).first();
   if (!lock) {
-    if(immediate && attempt<25){await new Promise(resolve=>setTimeout(resolve,200));return drainOutbox(env,true,attempt+1);}
+    if(attempt<(immediate?25:5)){await new Promise(resolve=>setTimeout(resolve,200));return drainOutbox(env,immediate,attempt+1);}
     return;
   }
   const deadline = Date.now() + 20000;
   try {
   deliveryLoop: do {
-  const query=immediate ? "SELECT id,due FROM outbox ORDER BY CASE WHEN json_type(params,'$.__broadcastDelete') IS NOT NULL THEN 0 WHEN json_type(params,'$.__broadcast') IS NOT NULL OR json_type(params,'$.__broadcastNotice') IS NOT NULL THEN 1 ELSE 2 END,rowid LIMIT 20" : 'SELECT id,due FROM outbox ORDER BY rowid LIMIT 20';
+  const query=immediate ? "SELECT id,due FROM outbox ORDER BY CASE WHEN json_type(params,'$.__broadcastDelete') IS NOT NULL THEN 0 WHEN json_type(params,'$.__broadcastNotice') IS NOT NULL THEN 1 WHEN json_type(params,'$.__broadcast') IS NOT NULL THEN 2 ELSE 3 END,rowid LIMIT 20" : 'SELECT id,due FROM outbox ORDER BY rowid LIMIT 20';
   const { results } = await env.DB.prepare(query).all();
   if(!results.length)break;
   for (const { id, due } of results) {
@@ -94,6 +94,7 @@ export async function drainOutbox(env, immediate=false, attempt=0) {
     const row = await env.DB.prepare('UPDATE outbox SET due=unixepoch()+60, attempts=attempts+1 WHERE id=? AND due<=unixepoch() RETURNING *').bind(id).first();
     if (!row) continue;
     const {__broadcast:tracking,__broadcastDelete:deletion,__broadcastNotice,__broadcastDelivered:delivered,...deliveryParams}=JSON.parse(row.params);
+    try{
     if(tracking && !delivered){
       const allowed=await mutateState(env,data=>{
         const record=broadcastRecord(data,tracking.owner,tracking.token);
@@ -134,8 +135,18 @@ export async function drainOutbox(env, immediate=false, attempt=0) {
       await env.DB.prepare('UPDATE outbox SET due=unixepoch()+? WHERE id=?').bind(seconds, id).run();
       break deliveryLoop;
     }
+    }catch(error){
+      // A state lease collision must not strand this claimed message for a minute.
+      // Successful broadcast sends already persist their Telegram message ID,
+      // so retrying receipt persistence cannot send the content twice.
+      if(error instanceof BusyError){
+        await env.DB.prepare('UPDATE outbox SET due=unixepoch() WHERE id=?').bind(id).run();
+        if(Date.now()<deadline){await new Promise(resolve=>setTimeout(resolve,100));continue deliveryLoop;}
+      }
+      throw error;
+    }
   }
-  } while(immediate && Date.now()<deadline);
+  } while(Date.now()<deadline);
   } finally { await env.DB.prepare('DELETE FROM delivery_lease WHERE owner=?').bind(owner).run(); }
 }
 

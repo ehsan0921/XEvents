@@ -96,6 +96,19 @@ export async function checkGuestMessages(){
     const edited=calls.slice(start).find(c=>c.method==='editMessageText');assert.ok(edited);assert.equal(edited.params.message_id,444);
     assert.ok(edited.params.reply_markup.inline_keyboard.flat().some(b=>b.text.startsWith('❌')));
     assert.equal(edited.params.__broadcastNotice,undefined);assert.equal(calls.slice(start).some(c=>c.method==='sendMessage'),false);
+    // A guest delivery completing while a webhook owns the state lease must
+    // retry receipt persistence without leaving content waiting for a minute.
+    blocked=false;release=undefined;holdNext=true;
+    const contentionDraft=await api('start'),contentionStart=calls.length;
+    await api('send',{token:contentionDraft.data.token,groups:['yes'],text:'Lease contention fixture'});
+    for(let i=0;!release && i<100;i++)await new Promise(resolve=>setTimeout(resolve,20));
+    assert.equal(typeof release,'function');
+    await db.prepare("INSERT INTO lease(id,owner,expires) VALUES (1,'fictional-contention',unixepoch()+60)").run();
+    const unlock=(async()=>{await new Promise(resolve=>setTimeout(resolve,250));await db.prepare("DELETE FROM lease WHERE owner='fictional-contention'").run();})();
+    release();await unlock;await settle();
+    const contentionHistory=(await api('history')).data.messages.find(m=>m.token===contentionDraft.data.token);
+    assert.equal(contentionHistory.delivered,1);assert.equal(contentionHistory.pending,0);
+    assert.equal(calls.slice(contentionStart).filter(c=>c.params.text==='Lease contention fixture').length,1);
     console.log('Guest messaging Worker integration passed: creator authorization, filters, attachments, durable receipts, idempotent send and undo. Telegram mocked.');
   }finally{await worker.dispose();}
 }

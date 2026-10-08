@@ -16,7 +16,7 @@ test('unavailable photo fallback preserves authorised content, entities and butt
 for(const retry of [false,true])test(`photo delivery persists text fallback and ${retry?'retries transient errors':'delivers the event buttons'}`,async t=>{
   const row={id:'fictional-delivery',method:'sendPhoto',params:JSON.stringify(photo),due:0,attempts:1},calls=[],removed=[],saved=[];
   const env={APP_ENV:'production',TELEGRAM_BOT_TOKEN:'fictional-token',DB:{prepare(sql){
-    return {values:[],bind(...values){this.values=values;return this;},async first(){if(sql.startsWith('INSERT INTO delivery_lease'))return {owner:'fixture'};if(sql.startsWith('UPDATE outbox SET due=unixepoch()+60'))return {...row};throw Error('Unexpected first');},async all(){assert.match(sql,/SELECT id,due FROM outbox/);return {results:[row]};},async run(){
+    return {values:[],bind(...values){this.values=values;return this;},async first(){if(sql.startsWith('INSERT INTO delivery_lease'))return {owner:'fixture'};if(sql.startsWith('UPDATE outbox SET due=unixepoch()+60'))return {...row};throw Error('Unexpected first');},async all(){assert.match(sql,/SELECT id,due FROM outbox/);return {results:removed.length?[]:[row]};},async run(){
       if(sql==='UPDATE outbox SET method=?,params=? WHERE id=?'){saved.push(this.values);row.method=this.values[0];row.params=this.values[1];}
       else if(sql==='DELETE FROM outbox WHERE id=?')removed.push(this.values[0]);
       else if(sql.startsWith('UPDATE outbox SET due=unixepoch()+?'))saved.push(['retry']);

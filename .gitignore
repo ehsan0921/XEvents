@@ -9,6 +9,8 @@ node_modules/
 secrets*.json
 worker-configuration.d.ts
 wrangler.production.jsonc
+wrangler.development.jsonc
+wrangler.ci*.jsonc
 *.pem
 *.key
 .env.*

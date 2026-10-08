@@ -56,6 +56,15 @@ existing invitations, and users' private event data when making changes.
 
 ## Publishing and deployment
 
+- Work on `dev` and verify changes there before promoting them to `main`.
+  `main` deploys production; `dev` deploys the separate development Worker and D1.
+  Keep all bot credentials, app URLs and database bindings isolated by environment.
+- The production-to-dev workflow merges code without force-pushing. Optional D1
+  copying is schema-only into an empty development database. Never copy real
+  guest records, media references, payment state or delivery queues into tests.
+- Run deployment automation from one canonical repository; mirrors run checks
+  only. Store private configuration in GitHub environment secrets and ignored files.
+
 - Inspect the final diff and stage explicit intended files. Keep local credentials,
   generated private data, deployment logs, and machine-specific helpers untracked.
 - Scan staged content and repository history for secrets before a public push.

@@ -90,7 +90,7 @@ You need **Node.js 22+**, npm, your own [Telegram bot](https://t.me/BotFather), 
    Open `/app` on the local address Wrangler prints. Private data needs signed Telegram identity; an ordinary browser preview cannot sign you in. Follow the [Telegram testing instructions](docs/self-hosting.md#run-the-worker-locally) for a complete flow.
 
 6. **Check the project.** `npm test` runs the Node.js suite; `npm run test:worker` builds the Worker and runs local integration checks with mocked Telegram requests.
-7. **Deploy your instance.** The [self-hosting guide](docs/self-hosting.md) covers Cloudflare login, D1 creation, your own ignored production configuration, server-side secrets, remote migrations, deployment, and authenticated webhook setup.
+7. **Deploy your instance.** The [self-hosting guide](docs/self-hosting.md) covers Cloudflare login, D1 creation, your own ignored production configuration, server-side secrets, remote migrations, deployment, and authenticated webhook setup. For isolated testing, use the [main/dev development workflow](docs/development.md): separate bots, Workers and databases, with GitHub checks before deployment.
 
 `npm start` runs a separate polling bot with JSON-file storage, rather than the hosted Mini App. It removes that bot's webhook on startup. See [standalone bot development](docs/self-hosting.md#standalone-polling-bot) before using it.
 

@@ -148,7 +148,7 @@ function inviteText(e,guest){
 function share(e) { if(e.invitationMode==='named' && isManager(e))return openNamedLinks(e);openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(inviteText(e))}`); }
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
 function action(text, fn, className = 'secondary') { const b = element('button', text, className); b.type = 'button'; b.onclick = async () => { if(b.disabled)return; b.disabled=true; try { await fn(); } catch(error) { notice(error.message); } finally { b.disabled=false; } }; return b; }
-const openGuestMessages=setupGuestMessages({$,document,api,notice,initData});
+const openGuestMessages=setupGuestMessages({$,document,api,notice,initData,zone:selectedZone});
 async function openGuestList(id) {
   const navigation=pageNavigationGeneration;
   const {event:e}=await api(`events/${id}`);

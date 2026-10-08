@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Bot} from '../src/bot.js';
-import {broadcastRecipients,broadcastReceipt} from '../src/guest-messages.js';
+import {broadcastRecipients,broadcastReceipt,broadcastHistory,broadcastDeliveryResult,undoBroadcast} from '../src/guest-messages.js';
 
 function fixture(){
   const e={id:'0123456789abcdef',title:'Fictional gathering',owner:1,invitationMode:'legacy',guests:{2:{status:'yes',name:'A'},3:{status:'no',name:'B'},4:{status:'maybe',name:'C'},5:{status:'later',responseRecorded:true,name:'D'},6:{status:'later',name:'E'}},permissions:{guestList:true},media:[]};
@@ -58,4 +58,33 @@ test('undo is owner-scoped, expires after five minutes, and deletes deliveries r
   await f.cb(1,`bm-send:${f.e.id}:${next}`);t.mock.timers.tick(300001);
   await f.cb(1,`bm-undo:${next}`);assert.match(f.calls.at(-1).text,/window has ended/);
   assert.equal(f.data.preferences[1].broadcasts[next].undone,false);
+});
+
+test('history counts complete deliveries instead of partial messages, preserves old history and records deletion results',async()=>{
+  const f=fixture();
+  f.data.preferences[1]={broadcasts:{old:{event:f.e.id,count:1,undoUntil:Date.now()-86400000*3,receipts:[]}}};
+  await f.cb(1,`bm:${f.e.id}`);await f.msg(1,'Example announcement');const token=f.data.sessions[1].token;
+  await f.cb(1,`bm-send:${f.e.id}:${token}`);
+  let history=broadcastHistory(f.data,1,f.e.id);assert.equal(history.length,2);
+  assert.equal(history[0].preview,'Example announcement');assert.equal(history[0].delivered,1);assert.equal(history[1].delivered,null);
+  const record=f.data.preferences[1].broadcasts[token];record.count=3;record.receipts.push({key:'3:900',chatId:3,messageId:900});
+  broadcastDeliveryResult(f.data,1,token,4,{ok:false,error_code:403});
+  history=broadcastHistory(f.data,1,f.e.id);assert.equal(history[0].delivered,1);assert.equal(history[0].pending,1);assert.equal(history[0].failed,1);
+  await undoBroadcast(f.bot,1,token,true);
+  broadcastDeliveryResult(f.data,1,token,3,{ok:true},900);
+  assert.equal(broadcastHistory(f.data,1,f.e.id)[0].deleted,1);
+  assert.equal(broadcastHistory(f.data,2,f.e.id).length,0);
+});
+
+test('history deletion works after five-minute undo until Telegram deletion limit',async(t)=>{
+  const f=fixture();t.mock.timers.enable({apis:['Date'],now:1000000});
+  await f.cb(1,`bm:${f.e.id}`);await f.msg(1,'Example');const token=f.data.sessions[1].token;await f.cb(1,`bm-send:${f.e.id}:${token}`);
+  t.mock.timers.tick(3600000);await f.cb(1,`bm-undo:${token}`);
+  assert.equal(f.data.preferences[1].broadcasts[token].undone,false);
+  assert.equal(broadcastHistory(f.data,1,f.e.id)[0].canDelete,true);
+  await undoBroadcast(f.bot,1,token,true);assert.equal(f.data.preferences[1].broadcasts[token].undone,true);
+  await f.cb(1,`bm:${f.e.id}`);await f.msg(1,'Another');const next=f.data.sessions[1].token;await f.cb(1,`bm-send:${f.e.id}:${next}`);
+  t.mock.timers.tick(48*3600000);await undoBroadcast(f.bot,1,next,true);
+  assert.equal(f.data.preferences[1].broadcasts[next].undone,false);
+  assert.match(f.calls.at(-1).text,/48 hours/);
 });

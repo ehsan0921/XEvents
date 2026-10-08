@@ -1,5 +1,5 @@
 import { mutateState, BusyError } from './worker-store.js';
-import {broadcastRecord,broadcastReceipt} from './guest-messages.js';
+import {broadcastRecord,broadcastReceipt,broadcastDeliveryResult} from './guest-messages.js';
 import {invitationAvailable} from './invitations.js';
 import { miniApi } from './mini-api.js';
 import { isSuperAdmin, rememberUser } from './admin.js';
@@ -75,28 +75,34 @@ export function unavailablePhotoFallback(params, result) {
     ...(disable_notification !== undefined ? { disable_notification } : {}), ...(protect_content !== undefined ? { protect_content } : {}) };
 }
 
-export async function drainOutbox(env) {
+export async function drainOutbox(env, immediate=false, attempt=0) {
   const owner = crypto.randomUUID();
   const lock = await env.DB.prepare('INSERT INTO delivery_lease(id,owner,expires) VALUES (1,?,unixepoch()+60) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,expires=excluded.expires WHERE delivery_lease.expires<unixepoch() RETURNING owner').bind(owner).first();
-  if (!lock) return;
+  if (!lock) {
+    if(immediate && attempt<25){await new Promise(resolve=>setTimeout(resolve,200));return drainOutbox(env,true,attempt+1);}
+    return;
+  }
   const deadline = Date.now() + 20000;
   try {
-  const { results } = await env.DB.prepare('SELECT id,due FROM outbox ORDER BY rowid LIMIT 20').all();
+  deliveryLoop: do {
+  const query=immediate ? "SELECT id,due FROM outbox ORDER BY CASE WHEN json_type(params,'$.__broadcastDelete') IS NOT NULL THEN 0 WHEN json_type(params,'$.__broadcast') IS NOT NULL OR json_type(params,'$.__broadcastNotice') IS NOT NULL THEN 1 ELSE 2 END,rowid LIMIT 20" : 'SELECT id,due FROM outbox ORDER BY rowid LIMIT 20';
+  const { results } = await env.DB.prepare(query).all();
+  if(!results.length)break;
   for (const { id, due } of results) {
-    if (Date.now() > deadline || due > Math.floor(Date.now() / 1000)) break;
+    if (Date.now() > deadline || due > Math.floor(Date.now() / 1000)) break deliveryLoop;
     const row = await env.DB.prepare('UPDATE outbox SET due=unixepoch()+60, attempts=attempts+1 WHERE id=? AND due<=unixepoch() RETURNING *').bind(id).first();
     if (!row) continue;
-    const {__broadcast:tracking,__broadcastDelivered:delivered,...deliveryParams}=JSON.parse(row.params);
+    const {__broadcast:tracking,__broadcastDelete:deletion,__broadcastNotice,__broadcastDelivered:delivered,...deliveryParams}=JSON.parse(row.params);
     if(tracking && !delivered){
       const allowed=await mutateState(env,data=>{
         const record=broadcastRecord(data,tracking.owner,tracking.token);
         const event=record && data.events[record.event];
-        return !!(record && !record.undone && event && !event.cancelled && event.owner===tracking.owner && event.guests[deliveryParams.chat_id] && invitationAvailable(event,deliveryParams.chat_id));
+        return !!(record && !record.undone && !record.failures?.[deliveryParams.chat_id] && event && !event.cancelled && event.owner===tracking.owner && event.guests[deliveryParams.chat_id] && invitationAvailable(event,deliveryParams.chat_id));
       });
       if(!allowed){await env.DB.prepare('DELETE FROM outbox WHERE id=?').bind(id).run();continue;}
     }
     let result = delivered ? {ok:true,result:{message_id:delivered}} : await telegram(env, row.method, deliveryParams);
-    if(tracking && result.ok && Number.isSafeInteger(result.result?.message_id)) {
+    if(tracking && result.ok && Number.isSafeInteger(result.result?.message_id) && result.result.message_id>0) {
       if(!delivered){
         row.params=JSON.stringify({...deliveryParams,__broadcast:tracking,__broadcastDelivered:result.result.message_id});
         await env.DB.prepare('UPDATE outbox SET method=?,params=? WHERE id=?').bind(row.method,row.params,id).run();
@@ -116,14 +122,19 @@ export async function drainOutbox(env) {
       await mutateState(env, (data,bot) => refundResult(bot,params.user_id,params.telegram_payment_charge_id,result.ok));
     }
     if (result.ok || [400, 403].includes(result.error_code)) {
+      if(deletion || tracking && !result.ok){
+        const target=deletion || tracking;
+        await mutateState(env,data=>broadcastDeliveryResult(data,target.owner,target.token,deliveryParams.chat_id,result,deletion?deliveryParams.message_id:undefined));
+      }
       await env.DB.prepare('DELETE FROM outbox WHERE id=?').bind(id).run();
       if (!result.ok) console.log(JSON.stringify({ event: 'delivery_rejected', method: row.method, code: result.error_code }));
     } else {
       const seconds = Math.max(5, Math.min(result.parameters?.retry_after || 2 ** Math.min(row.attempts, 10), 3600));
       await env.DB.prepare('UPDATE outbox SET due=unixepoch()+? WHERE id=?').bind(seconds, id).run();
-      break;
+      break deliveryLoop;
     }
   }
+  } while(immediate && Date.now()<deadline);
   } finally { await env.DB.prepare('DELETE FROM delivery_lease WHERE owner=?').bind(owner).run(); }
 }
 
@@ -134,7 +145,7 @@ export default {
       try {
       const response = await miniApi(request, env);
       if (!response.ok) console.log(JSON.stringify({event:'mini_api_rejected',path:url.pathname,status:response.status}));
-      if (response.ok && request.method === 'POST') ctx.waitUntil(drainOutbox(env));
+      if (response.ok && request.method === 'POST' && !url.pathname.endsWith('/messages/history')) ctx.waitUntil(drainOutbox(env,/\/messages\/(send|undo|delete)$/.test(url.pathname)));
       return response;
       } catch (error) { const reference=crypto.randomUUID();console.error(JSON.stringify({event:'mini_api_failed',reference,path:url.pathname,type:error.name})); return Response.json({ error: 'Could not load the planner. Please try again.',reference }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
     }
@@ -188,7 +199,7 @@ export default {
     if (!Number.isSafeInteger(update.update_id)) return new Response('Invalid update', { status: 400 });
     try {
       const response = await processUpdate(env, update);
-      if (response.ok) ctx.waitUntil(drainOutbox(env));
+      if (response.ok) ctx.waitUntil(drainOutbox(env,/^bm-(send|undo):/.test(update.callback_query?.data || '')));
       return response;
     } catch {
       console.error(JSON.stringify({ event: 'update_failed', update_id: update.update_id }));

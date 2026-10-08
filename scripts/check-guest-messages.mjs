@@ -4,7 +4,7 @@ import {createHmac} from 'node:crypto';
 import assert from 'node:assert/strict';
 
 export async function checkGuestMessages(){
-  const calls=[],eventId='1010101010101010';let messageId=100,holdNext=false,release;
+  const calls=[],eventId='1010101010101010';let messageId=100,holdNext=false,release,blocked=false;
   const worker=new Miniflare(convertV4MiniflareOptions({workers:[{
     name:'guest-messages',modules:true,scriptPath:'.wrangler/build/worker.js',compatibilityDate:'2026-10-05',compatibilityFlags:['nodejs_compat'],d1Databases:['DB'],
     bindings:{APP_ENV:'production',BOT_USERNAME:'fictionalBot',APP_URL:'https://messages.test/app',TELEGRAM_BOT_TOKEN:'fictional-message-token',TELEGRAM_WEBHOOK_SECRET:'fictional-secret'},
@@ -12,6 +12,7 @@ export async function checkGuestMessages(){
       const method=new URL(request.url).pathname.split('/').at(-1);
       const params=request.headers.get('Content-Type')?.includes('application/json')?await request.json():{};
       calls.push({method,params});
+      if(blocked && params.chat_id===710003 && ['sendMessage','copyMessage'].includes(method))return Response.json({ok:false,error_code:403});
       if(holdNext && params.text?.startsWith('📨 Message from the organiser')){holdNext=false;await new Promise(resolve=>{release=resolve;});}
       return Response.json({ok:true,result:{message_id:++messageId}});
     }
@@ -32,13 +33,14 @@ export async function checkGuestMessages(){
     };
     const settle=async(kick)=>{
       for(let i=0;i<100;i++){
-        if((await db.prepare('SELECT COUNT(*) AS n FROM outbox').first()).n===0)return;
+        if((await db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE id<>'fixture-delayed'").first()).n===0)return;
         if(kick && i%5===0)await kick();
         await new Promise(r=>setTimeout(r,20));
       }
       throw Error('Fictional message delivery did not finish.');
     };
     assert.equal((await api('start',{},710003)).status,400);
+    assert.equal((await api('history',{},710003)).status,400);
     const draft=await api('start');assert.equal(draft.status,200);assert.equal(draft.data.counts.yes,1);assert.equal(draft.data.counts.no,1);
     assert.equal((await api('send',{groups:['yes'],text:'Example'})).status,400);
     assert.equal((await api('send',{token:draft.data.token,groups:['invalid'],text:'Example'})).status,400);
@@ -47,15 +49,23 @@ export async function checkGuestMessages(){
     const uploaded=await worker.dispatchFetch(`https://messages.test/api/events/${eventId}/messages/upload`,{method:'POST',headers:{Authorization:auth(710001),'X-Draft-Token':draft.data.token,'Content-Type':uploadRequest.headers.get('Content-Type')},body:await uploadRequest.arrayBuffer()});
     assert.equal(uploaded.status,200,await uploaded.text());
     const input={token:draft.data.token,groups:['yes'],text:'Fictional announcement'};
+    await db.prepare("INSERT INTO outbox(id,method,params,due) VALUES ('fixture-delayed','sendMessage',?,unixepoch()+3600)").bind(JSON.stringify({chat_id:710001,text:'Delayed routine message'})).run();
     const sent=await api('send',input);assert.equal(sent.status,200);assert.equal(sent.data.count,1);
     await settle();
     assert.equal((await api('send',input)).status,200);await settle();
     const deliveries=calls.filter(c=>c.method==='copyMessage' || c.params.text==='Fictional announcement');
     assert.equal(deliveries.length,2);assert.ok(deliveries.every(c=>c.params.chat_id===710002));
+    assert.equal(calls.some(c=>c.params.text==='Delayed routine message'),false);
+    const history=await api('history');assert.equal(history.status,200);assert.equal(history.data.messages[0].delivered,1);assert.equal(history.data.messages[0].pending,0);assert.equal(history.data.messages[0].preview,'Fictional announcement');assert.deepEqual(history.data.messages[0].attachments,['example.txt']);
     assert.ok(calls.every(c=>!('__broadcast' in c.params) && !('__broadcastDelivered' in c.params)));
     assert.equal((await api('undo',{token:sent.data.token},710003)).status,400);
-    assert.equal((await api('undo',{token:sent.data.token})).status,200);await settle();
+    const pref=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='preferences' AND id='710001'").first()).data);pref.broadcasts[sent.data.token].undoUntil=Date.now()-1;
+    await db.prepare("UPDATE records SET data=? WHERE kind='preferences' AND id='710001'").bind(JSON.stringify(pref)).run();
+    assert.equal((await api('undo',{token:sent.data.token})).status,400);
+    assert.equal((await api('delete',{token:sent.data.token})).status,200);await settle();
     assert.equal(calls.filter(c=>c.method==='deleteMessage' && c.params.chat_id===710002).length,3);
+    assert.equal((await api('history')).data.messages[0].deleted,3);
+    assert.ok(calls.every(c=>!('__broadcastDelete' in c.params)));
     // Undo while a Telegram send is in flight: delete its receipt and skip the
     // remaining queued content, including attachments.
     const second=await api('start');holdNext=true;const before=calls.length;
@@ -64,9 +74,13 @@ export async function checkGuestMessages(){
     for(let i=0;!release && i<100;i++)await new Promise(r=>setTimeout(r,20));
     assert.equal(typeof release,'function');
     const undone=await api('undo',{token:next.data.token});assert.equal(undone.status,200);
-    release();await settle(()=>api('undo',{token:next.data.token}));
+    release();await settle();
     assert.equal(calls.slice(before).some(c=>c.params.text==='Should not be delivered'),false);
     assert.equal(calls.slice(before).filter(c=>c.method==='deleteMessage' && c.params.chat_id===710003).length,1);
+    blocked=true;
+    const third=await api('start');await api('send',{token:third.data.token,groups:['no'],text:'Blocked guest fixture'});await settle();
+    const failed=(await api('history')).data.messages.find(m=>m.token===third.data.token);
+    assert.equal(failed.failed,1);assert.equal(failed.delivered,0);assert.equal(failed.pending,0);
     console.log('Guest messaging Worker integration passed: creator authorization, filters, attachments, durable receipts, idempotent send and undo. Telegram mocked.');
   }finally{await worker.dispose();}
 }

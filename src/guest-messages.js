@@ -7,25 +7,50 @@ const groups = { yes: 'Accepted', no: 'Rejected', maybe: 'Maybe', later: 'Respon
 const markup = rows => ({ inline_keyboard: rows });
 const button = (text, callback_data) => ({ text, callback_data });
 export function broadcastRecord(data, owner, token) { return data.preferences[owner]?.broadcasts?.[token]; }
+export function broadcastHistory(data,owner,eventId) {
+  return Object.entries(data.preferences[owner]?.broadcasts || {}).filter(([,r])=>r.event===eventId).map(([token,r])=>{
+    const recipients=new Map();
+    for(const receipt of r.receipts)recipients.set(String(receipt.chatId),(recipients.get(String(receipt.chatId)) || 0)+1);
+    const delivered=r.expectedMessages ? [...recipients.values()].filter(n=>n>=r.expectedMessages).length : null;
+    const failed=Object.keys(r.failures || {}).filter(id=>!r.expectedMessages || (recipients.get(id) || 0)<r.expectedMessages).length;
+    const createdAt=r.createdAt || r.undoUntil-300000;
+    const deleted=r.receipts.filter(receipt=>receipt.deleted).length;
+    const deleteFailed=r.receipts.filter(receipt=>receipt.deleteFailed).length;
+    return {token,createdAt,preview:r.preview || 'Previous message (content unavailable)',attachments:r.attachments || [],count:r.count,delivered,failed,pending:delivered===null?null:Math.max(0,r.count-delivered-failed),undone:!!r.undone,deleted,deleteFailed,deletePending:r.undone?Math.max(0,r.receipts.length-deleted-deleteFailed):0,canDelete:!r.undone && Date.now()-createdAt<48*3600000};
+  }).sort((a,b)=>b.createdAt-a.createdAt).slice(0,100);
+}
+export async function queueBroadcastDelete(bot,owner,token,receipt) {
+  if(receipt.deleted)return;
+  const result=await bot.api('deleteMessage',{chat_id:receipt.chatId,message_id:receipt.messageId,__broadcastDelete:{owner,token}});
+  if(result===true)receipt.deleted=true;
+}
+export function broadcastDeliveryResult(data,owner,token,chatId,result,messageId) {
+  const r=broadcastRecord(data,owner,token);if(!r)return;
+  if(messageId!==undefined){
+    const receipt=r.receipts.find(item=>item.chatId===chatId && item.messageId===messageId);
+    if(receipt){receipt.deleted=result.ok===true;receipt.deleteFailed=!result.ok;}
+  }else if(!result.ok){(r.failures ||= {})[chatId]=result.snapshotBlocked?'test-restricted':result.error_code===403?'unavailable':'failed';}
+}
 export function broadcastRecipients(e, selected) {
   return Object.entries(e.guests).filter(([id,g]) => Number.isSafeInteger(Number(id)) && Number(id)>0 && Number(id)!==e.owner && invitationAvailable(e,Number(id)) && selected.includes(hasRecordedResponse(g,invitationHistory(e,g.invitationToken),Number(id)) ? g.status : 'unanswered')).map(([id])=>Number(id));
 }
 export async function broadcastReceipt(bot, owner, token, chatId, messageId) {
   const record=broadcastRecord(bot.db,owner,token);
-  if(!record || !Number.isSafeInteger(messageId))return;
+  if(!record || !Number.isSafeInteger(messageId) || messageId<=0)return;
   const key=chatId+':'+messageId;
   if(record.receipts.some(r=>r.key===key))return;
-  record.receipts.push({key,chatId,messageId});
-  if(record.undone)await bot.api('deleteMessage',{chat_id:chatId,message_id:messageId});
+  const receipt={key,chatId,messageId,sentAt:Date.now()};record.receipts.push(receipt);
+  if(record.undone)await queueBroadcastDelete(bot,owner,token,receipt);
 }
-export async function undoBroadcast(bot,id,token) {
+export async function undoBroadcast(bot,id,token,deleteOld=false) {
   const record=broadcastRecord(bot.db,id,token);
   if(!record)return bot.send(id,'This message is unavailable.');
   if(record.undone)return bot.send(id,'Undo already requested.');
-  if(Date.now()>record.undoUntil)return bot.send(id,'The five-minute undo window has ended.');
+  if(deleteOld ? Date.now()-(record.createdAt || record.undoUntil-300000)>=48*3600000 : Date.now()>record.undoUntil)return bot.send(id,deleteOld?'Telegram can only delete messages sent within 48 hours.':'The five-minute undo window has ended.');
   record.undone=true;
-  for(const r of record.receipts)await bot.api('deleteMessage',{chat_id:r.chatId,message_id:r.messageId});
-  return bot.send(id,'Undo requested. Queued messages are stopped; delivered messages are being deleted.');
+  record.deleteRequestedAt=Date.now();
+  for(const r of record.receipts)await queueBroadcastDelete(bot,id,token,r);
+  return bot.api('sendMessage',{chat_id:id,text:'Undo requested. Queued messages are stopped; delivered messages are being deleted.',__broadcastNotice:true});
 }
 export function startBroadcast(bot,id,e,quiet=false) {
   bot.session(id,{step:'broadcast',event:e.id,token:randomBytes(6).toString('hex'),groups:['yes'],items:[]});
@@ -52,6 +77,8 @@ export function collectBroadcast(bot,id,e,m) {
   if(s.items.includes(m.message_id))return;
   if(s.items.length>=20)return bot.send(id,'Maximum 20 items. Tap Done to send.');
   s.items.push(m.message_id);
+  (s.previews ||= []).push((m.text || m.caption || '').slice(0,500));
+  if(!m.text)(s.attachments ||= []).push(m.document?.file_name || m.audio?.file_name || (m.photo?'Photo':m.video?'Video':m.voice?'Voice message':'Attachment'));
   // Albums arrive as separate updates; avoid a reply for every attachment.
 }
 export async function sendBroadcast(bot,id,e) {
@@ -59,9 +86,8 @@ export async function sendBroadcast(bot,id,e) {
   if(!recipients.length)return bot.send(id,'No reachable guests selected. Choose another group.');
   if(!s.items.length && !s.text)return bot.send(id,'Add a message or attachment first.',markup([[button('📨 Send message',`bm-send:${e.id}:${s.token}`),button('✖ Cancel',`bm-cancel:${e.id}:${s.token}`)]]));
   const pref=bot.db.preferences[id] ||= {},records=pref.broadcasts ||= {};
-  for(const [key,r] of Object.entries(records))if(r.undoUntil<Date.now()-86400000)delete records[key];
   const token=s.token;
-  records[token]={event:e.id,count:recipients.length,undoUntil:Date.now()+300000,receipts:[],undone:false};
+  records[token]={event:e.id,count:recipients.length,createdAt:Date.now(),preview:(s.text || s.previews?.filter(Boolean).join('\n') || 'Message with attachments').slice(0,4000),attachments:s.attachments || [],expectedMessages:1+(s.text?1:0)+s.items.length,undoUntil:Date.now()+300000,receipts:[],undone:false};
   const items=[...s.items];bot.session(id);
   for(const chatId of recipients){
     const header=await bot.api('sendMessage',{chat_id:chatId,text:`📨 Message from the organiser · ${e.title}`,__broadcast:{owner:id,token}});
@@ -75,5 +101,5 @@ export async function sendBroadcast(bot,id,e) {
       await broadcastReceipt(bot,id,token,chatId,result?.message_id);
     }
   }
-  return bot.send(id,`Queued for ${recipients.length} guests. Undo is available for 5 minutes.`,markup([[button('↩ Undo message',`bm-undo:${token}`)],[button('Back to event',`v:${e.id}`)]]));
+  return bot.api('sendMessage',{chat_id:id,text:`Sending to ${recipients.length} guests now. Undo is available for 5 minutes.`,reply_markup:markup([[button('↩ Undo message',`bm-undo:${token}`)],[button('Back to event',`v:${e.id}`)]]),__broadcastNotice:true});
 }

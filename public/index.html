@@ -130,7 +130,9 @@
   <dialog id="guest-message-dialog" aria-labelledby="guest-message-title">
     <div class="dialog-heading"><h2 id="guest-message-title">Message guests</h2><button type="button" id="guest-message-close" class="secondary dialog-close" aria-label="Close message guests">&times;</button></div>
     <p id="guest-message-event" class="small muted"></p>
-    <form id="guest-message-form">
+    <div id="guest-message-history-view"><div class="event-actions"><button type="button" id="guest-message-new" class="primary">＋ New message</button><button type="button" id="guest-message-refresh" class="secondary">↻ Refresh</button></div><p class="small muted">Delivery counts update while sending. Telegram allows deletion within 48 hours.</p><div id="guest-message-history" role="list"></div></div>
+    <p id="guest-message-history-status" role="status" aria-live="polite"></p>
+    <form id="guest-message-form" hidden>
       <div id="guest-message-compose">
         <label class="check-option"><input type="checkbox" id="guest-message-all"><span>All guest groups</span></label>
         <div id="guest-message-groups"></div>
@@ -139,7 +141,7 @@
         <p class="small muted">Up to 20 attachments, 20 MB each.</p><ul id="guest-message-uploads"></ul>
       </div>
       <p id="guest-message-status" role="status" aria-live="polite"></p>
-      <div class="event-actions"><button type="submit" id="guest-message-send" class="primary">✅ Done · Send</button><button type="button" id="guest-message-undo" class="secondary" hidden>↩ Undo message</button></div>
+      <div class="event-actions"><button type="submit" id="guest-message-send" class="primary">📨 Send message</button><button type="button" id="guest-message-back" class="secondary">Back to messages</button><button type="button" id="guest-message-undo" class="secondary" hidden>↩ Undo message</button></div>
     </form>
   </dialog>
   <dialog id="invitation-links-dialog" aria-labelledby="invitation-links-title">

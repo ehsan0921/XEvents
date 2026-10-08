@@ -1,5 +1,5 @@
 import { mutateState } from './worker-store.js';
-import { startBroadcast,broadcastRecipients,sendBroadcast,undoBroadcast } from './guest-messages.js';
+import { startBroadcast,broadcastRecipients,sendBroadcast,undoBroadcast,broadcastHistory } from './guest-messages.js';
 import { InputError } from './time.js';
 import { mayUseTestApp } from './test-access.js';
 import { snapshotDeliveryAllowed } from './snapshot-mode.js';
@@ -30,7 +30,7 @@ export async function guestMessageApi(request,env,user,eventId,action,respond) {
       const upload=new FormData();upload.set('chat_id',String(user.id));upload.set('document',file);upload.set('disable_notification','true');
       const result=await(await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendDocument`,{method:'POST',body:upload,signal:AbortSignal.timeout(20000)})).json();
       if(!result.ok || !Number.isSafeInteger(result.result?.message_id))throw new InputError('Could not upload attachment. Please retry.');
-      await mutateState(env,data=>{const {s}=check(data,token);if(s.items.length>=20)throw new InputError('Maximum 20 attachments.');s.items.push(result.result.message_id);});
+      await mutateState(env,data=>{const {s}=check(data,token);if(s.items.length>=20)throw new InputError('Maximum 20 attachments.');s.items.push(result.result.message_id);(s.attachments ||= []).push(file.name.slice(0,200));});
       return respond({uploaded:true});
     }
     const reader=request.body?.getReader();if(!reader)throw new InputError('Invalid request.');
@@ -38,12 +38,20 @@ export async function guestMessageApi(request,env,user,eventId,action,respond) {
     while(true){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>24000){await reader.cancel();return respond({error:'Too much text.'},413);}chunks.push(part.value);}
     let input;
     try{input=JSON.parse(await new Blob(chunks).text());if(!input || typeof input!=='object' || Array.isArray(input))throw Error();}catch{throw new InputError('Invalid request.');}
+    if(action==='history'){
+      const [event,preference]=await Promise.all([
+        env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(eventId).first(),
+        env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(user.id)).first()
+      ]);
+      if(!event || JSON.parse(event.data).owner!==user.id)throw new InputError('Only the event creator can view message history.');
+      return respond({messages:broadcastHistory({preferences:{[user.id]:preference?JSON.parse(preference.data):{}}},user.id,eventId)});
+    }
     return respond(await mutateState(env,async(data,bot)=>{
-      if(action==='undo'){
+      if(action==='undo' || action==='delete'){
         const r=data.preferences[user.id]?.broadcasts?.[input.token];
         if(!r || r.event!==eventId)throw new InputError('This message is unavailable.');
-        if(Date.now()>r.undoUntil)throw new InputError('The five-minute undo window has ended.');
-        if(!r.undone)await undoBroadcast(bot,user.id,input.token);
+        if(!r.undone && (action==='delete' ? Date.now()-(r.createdAt || r.undoUntil-300000)>=48*3600000 : Date.now()>r.undoUntil))throw new InputError(action==='delete'?'Telegram can only delete messages sent within 48 hours.':'The five-minute undo window has ended.');
+        if(!r.undone)await undoBroadcast(bot,user.id,input.token,action==='delete');
         return {undone:true};
       }
       if(action==='send'){

@@ -19,7 +19,7 @@ let bot;
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopping = true; });
 
 async function api(method, params = {}) {
-  const {__broadcast,...safeParams}=params;
+  const {__broadcast,__broadcastDelete,__broadcastNotice,...safeParams}=params;
   // Never log URLs or raw fetch errors: Telegram URLs contain the token.
   let response;
   try {

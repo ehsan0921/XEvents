@@ -1,7 +1,11 @@
 import { isSuperAdmin } from './admin.js';
 import { mutateState } from './worker-store.js';
+import { snapshotActive } from './snapshot-mode.js';
 
 export const testAccessMessage = 'This test app is limited to approved testers.';
+export class TestAccessError extends Error {
+  constructor() { super(testAccessMessage); }
+}
 export const whitelistEnabled = env => env.APP_ENV === 'development' && String(env.TEST_WHITELIST_ENABLED).trim() === 'true';
 
 function validId(value) {
@@ -16,8 +20,8 @@ function parseIds(value) {
   return ids.length && ids.every(validId) ? [...new Set(ids)] : null;
 }
 
-export async function accessPolicy(env) {
-  if (!whitelistEnabled(env)) return { enabled: false, ids: [], invalid: false };
+export async function accessPolicy(env, force = false) {
+  if (!whitelistEnabled(env) && !(force && env.APP_ENV === 'development')) return { enabled: false, ids: [], invalid: false };
   const stored = await env.DB.prepare("SELECT value FROM app_settings WHERE key='test-whitelist'").first();
   let ids;
   if (stored) {
@@ -30,13 +34,17 @@ export async function accessPolicy(env) {
 }
 
 export async function mayUseTestApp(env, user) {
-  if (!whitelistEnabled(env) || isSuperAdmin(user, env)) return true;
+  if (env.APP_ENV !== 'development' || isSuperAdmin(user, env)) return true;
+  if (whitelistEnabled(env) && (!Number.isSafeInteger(user?.id) || user.id <= 0 || user.is_bot)) return false;
+  const snapshot = await snapshotActive(env);
+  if (!whitelistEnabled(env) && !snapshot) return true;
   if (!Number.isSafeInteger(user?.id) || user.id <= 0 || user.is_bot) return false;
-  const policy = await accessPolicy(env);
-  return !policy.invalid && (!policy.ids.length || policy.ids.includes(String(user.id)));
+  const policy = await accessPolicy(env, snapshot);
+  return !policy.invalid && ((!snapshot && !policy.ids.length) || policy.ids.includes(String(user.id)));
 }
 
-function statusText(ids) {
+function statusText(ids, snapshot = false) {
+  if (snapshot) return ids.length ? `Database copy protected. Restricted to ${ids.length} tester${ids.length === 1 ? '' : 's'} and the super admin.` : 'Database copy protected. Only the super admin has access.';
   return ids.length ? `Restricted to ${ids.length} tester${ids.length === 1 ? '' : 's'}. Super admin always has access.` : 'Whitelist empty. Open to everyone.';
 }
 
@@ -48,17 +56,18 @@ export async function handleWhitelistCommand(env, update) {
   await mutateState(env, async (_data, bot, settings) => {
     const reply = text => bot.send(message.chat.id, text);
     if (!isSuperAdmin(message.from, env)) return reply('Only the super admin can manage test access.');
-    if (!whitelistEnabled(env)) return reply('Test whitelist is disabled in this environment.');
+    const snapshot = !!bot.productionSnapshot;
+    if (!whitelistEnabled(env) && !snapshot) return reply('Test whitelist is disabled in this environment.');
     const input = (command[2] || 'list').trim();
     const [operation, ...rest] = input.split(/\s+/);
     const action = operation.toLowerCase();
     if (!['list', 'add', 'remove', 'clear'].includes(action) || (['list', 'clear'].includes(action) && rest.length)) {
       return reply('Use /whitelist, /whitelist add ID, /whitelist remove ID, or /whitelist clear.');
     }
-    const policy = await accessPolicy(env);
+    const policy = await accessPolicy(env, snapshot);
     if (action !== 'clear' && policy.invalid) return reply('Whitelist configuration is invalid. Access is restricted. Use /whitelist clear to reset it.');
     if (action === 'list') {
-      await reply(statusText(policy.ids));
+      await reply(statusText(policy.ids, snapshot));
       let page = '';
       for (const id of policy.ids) {
         if (page.length + id.length + 1 > 3500) { await reply(page); page = ''; }
@@ -76,7 +85,7 @@ export async function handleWhitelistCommand(env, update) {
       ids = [...current];
     }
     settings.setAppSetting('test-whitelist', JSON.stringify(ids));
-    await reply(statusText(ids));
+    await reply(statusText(ids, snapshot));
   }, update.update_id);
   return new Response('OK');
 }

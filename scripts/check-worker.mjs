@@ -159,6 +159,42 @@ async function checkTestAccess() {
       }
     }finally{await test.worker.dispose();}
   }
+  const snapshot=await fixture({TEST_WHITELIST_ENABLED:'false',WHITELIST_USER_IDS:''});
+  try {
+    const {worker,db,calls,api,message,setting}=snapshot;
+    await db.prepare("INSERT INTO app_settings(key,value) VALUES ('production-snapshot','not-json')").run();
+    const health=await (await worker.dispatchFetch('https://access.test/')).json();
+    assert.equal(health.databaseRefreshProtection,1);
+    assert.equal((await api('bootstrap',blockedUser)).status,403,'A production copy must stay restricted even with the dev whitelist switch disabled.');
+    assert.equal((await api('bootstrap',admin)).status,200);
+    await message(710070,'/whitelist add '+seedUser);
+    assert.deepEqual(await setting(),[String(seedUser)]);
+    assert.equal((await api('bootstrap',seedUser)).status,200);
+    await message(710071,'/whitelist clear');
+    assert.deepEqual(await setting(),[]);
+    assert.equal((await api('bootstrap',seedUser)).status,403,'Clearing testers must not expose a production copy.');
+    await message(710072,'/whitelist add '+seedUser);
+    const audit={starOrders:{'snapshot-order':{id:'snapshot-order',owner:admin,title:'Copied financial audit',amount:10,status:'paid',charge:'snapshot-charge'}}};
+    await db.prepare("INSERT INTO records(kind,id,data) VALUES ('preferences',?,?)").bind(String(seedUser),JSON.stringify(audit)).run();
+    for(const [id,method,params] of [
+      ['snapshot-foreign','sendMessage',{chat_id:blockedUser,text:'Copied recipient fixture'}],
+      ['snapshot-invoice','sendInvoice',{chat_id:seedUser,title:'Blocked invoice fixture'}],
+      ['snapshot-refund','refundStarPayment',{user_id:seedUser,telegram_payment_charge_id:'snapshot-charge'}],
+      ['snapshot-permitted','sendMessage',{chat_id:seedUser,text:'Allowed tester fixture'}]
+    ])await db.prepare('INSERT INTO outbox(id,method,params) VALUES (?,?,?)').bind(id,method,JSON.stringify(params)).run();
+    await message(710073,'/whitelist list');
+    for(let attempt=0;attempt<100;attempt++){
+      if(!(await db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE id LIKE 'snapshot-%'").first()).n)break;
+      await new Promise(resolve=>setTimeout(resolve,25));
+    }
+    assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE id LIKE 'snapshot-%'").first()).n,0);
+    assert.equal(calls.some(call=>call.params?.text==='Copied recipient fixture'),false);
+    assert.equal(calls.some(call=>['sendInvoice','refundStarPayment'].includes(call.method)),false);
+    assert.ok(calls.some(call=>call.params?.text==='Allowed tester fixture'));
+    const preserved=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(seedUser)).first()).data);
+    assert.deepEqual(preserved,audit,'Suppressing copied refunds must preserve the imported payment audit.');
+    assert.ok(calls.some(call=>/Only the super admin has access/.test(call.params?.text || '')),'The clear command must describe snapshot admin-only access.');
+  }finally{await snapshot.worker.dispose();}
   console.log('Development access integration passed: environment isolation, empty and seeded lists, private admin commands, concurrent edits, Telegram retries, route privacy, callback and link claims, checkout denial and payment/refund audit preservation. Telegram mocked.');
 }
 

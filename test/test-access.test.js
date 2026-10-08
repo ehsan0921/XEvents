@@ -4,7 +4,7 @@ import { accessPolicy, mayUseTestApp, whitelistEnabled } from '../src/test-acces
 
 const development = { APP_ENV: 'development', TEST_WHITELIST_ENABLED: 'true' };
 
-function fixture({ stored = null, seed = '', ...variables } = {}) {
+function fixture({ stored = null, snapshot = null, seed = '', ...variables } = {}) {
   let reads = 0;
   const env = {
     ...development,
@@ -12,6 +12,7 @@ function fixture({ stored = null, seed = '', ...variables } = {}) {
     ...variables,
     DB: {
       prepare(sql) {
+        if (sql === "SELECT value FROM app_settings WHERE key='production-snapshot'") return { async first() { return snapshot; } };
         assert.equal(sql, "SELECT value FROM app_settings WHERE key='test-whitelist'");
         return { async first() { reads++; return stored; } };
       }
@@ -45,8 +46,30 @@ test('production ignores the test list without reading its database', async () =
 });
 
 test('disabling the test access switch preserves open development access', async () => {
-  const env = { ...development, TEST_WHITELIST_ENABLED: 'false', WHITELIST_USER_IDS: '111002' };
+  const { env } = fixture({ TEST_WHITELIST_ENABLED: 'false', seed: '111002' });
   assert.deepEqual(await accessPolicy(env), { enabled: false, ids: [], invalid: false });
+  assert.equal(await mayUseTestApp(env, { id: 111001 }), true);
+});
+
+test('database copies require explicit testers even when the whitelist switch is disabled', async () => {
+  const { env } = fixture({ snapshot: { value: '' }, TEST_WHITELIST_ENABLED: 'false', seed: '111002', SUPER_ADMIN_ID: '999001' });
+  assert.equal(await mayUseTestApp(env, { id: 111002 }), true);
+  assert.equal(await mayUseTestApp(env, { id: 111001 }), false);
+  assert.equal(await mayUseTestApp(env, { id: 999001 }), true);
+  assert.deepEqual(await accessPolicy(env, true), { enabled: true, ids: ['111002'], invalid: false });
+});
+
+test('an empty or malformed list never opens a production database copy', async () => {
+  for (const stored of [null, { value: '[]' }, { value: 'not-json' }]) {
+    const { env } = fixture({ snapshot: { value: 'not-json' }, stored, SUPER_ADMIN_ID: '999001' });
+    assert.equal(await mayUseTestApp(env, { id: 111001 }), false);
+    assert.equal(await mayUseTestApp(env, { id: 999001 }), true);
+  }
+});
+
+test('forcing test access policy still cannot enable a production restriction', async () => {
+  const env = { APP_ENV: 'production', DB: { prepare() { assert.fail('Production must not read copied database restrictions.'); } } };
+  assert.deepEqual(await accessPolicy(env, true), { enabled: false, ids: [], invalid: false });
   assert.equal(await mayUseTestApp(env, { id: 111001 }), true);
 });
 

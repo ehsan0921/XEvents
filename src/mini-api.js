@@ -6,7 +6,7 @@ import {invitationMode,invitationSettings,oneTimeInvites,invitationAvailable,rec
 import {managedInvitations,invitationsVersion,addInvitations,removeInvitation} from './invitation-management.js';
 import {isManager,cohostEntries,cohostLink,cohostVersion,createCohostInvite,revokeCohost} from './cohosts.js';
 import { authenticate } from './mini-auth.js';
-import { mayUseTestApp, testAccessMessage } from './test-access.js';
+import { mayUseTestApp, testAccessMessage, TestAccessError } from './test-access.js';
 import { parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
 import { shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
@@ -120,6 +120,25 @@ export async function miniApi(request, env) {
   const user = authenticate(request.headers.get('Authorization')?.replace(/^tma /, ''), env.TELEGRAM_BOT_TOKEN);
   if (!user) return respond({ error: 'Open the planner inside Telegram. If it was open for a while, close and reopen it.' }, 401);
   if (!await mayUseTestApp(env, user)) return respond({ error: testAccessMessage }, 403);
+  // The identity comes only from verified Telegram data. A database refresh can
+  // finish between authorization and a later route read or mutation.
+  const invocation = { ...env, snapshotUser: user };
+  try {
+    const response = await miniApiForUser(request, invocation, user);
+    if (!await mayUseTestApp(invocation, user)) {
+      if (response.body) await response.body.cancel().catch(() => {});
+      return respond({ error: testAccessMessage }, 403);
+    }
+    return response;
+  } catch (error) {
+    if (error instanceof TestAccessError || !await mayUseTestApp(invocation, user)) return respond({ error: testAccessMessage }, 403);
+    throw error;
+  }
+}
+
+async function miniApiForUser(request, env, user) {
+  const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+  const respond = (data, status = 200) => Response.json(data, { status, headers });
   const path = new URL(request.url).pathname;
   const profileResponse=await profilePhotoApi(request,env,user);if(profileResponse)return profileResponse;
   const eventMatch=path.match(/^\/api\/events\/([a-f0-9]{16})$/);
@@ -147,7 +166,7 @@ export async function miniApi(request, env) {
         const settings=parsePricing(JSON.parse(raw));
         await mutateState(env,data=>{data.preferences._pricing=settings;});
         return respond({settings});
-      }catch(e){return respond({error:e instanceof InputError ? e.message : 'Could not save pricing settings.'},e instanceof BusyError ? 503 : 400);}
+      }catch(e){if(e instanceof TestAccessError)throw e;return respond({error:e instanceof InputError ? e.message : 'Could not save pricing settings.'},e instanceof BusyError ? 503 : 400);}
     }
     if (path !== '/api/admin/overview' || request.method !== 'GET') return respond({ error: 'Not found.' }, 404);
     await rememberUser(env, user);
@@ -177,6 +196,7 @@ export async function miniApi(request, env) {
       const form = await new Response(bytes, { headers: { 'Content-Type': request.headers.get('Content-Type') || '' } }).formData();
       const photo = form.get('photo');
       if (!(photo instanceof File) || !photo.size || photo.size > 5 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(photo.type)) return respond({ error: 'Choose a JPG, PNG, or WebP photo smaller than 5 MB.' }, 400);
+      if (!await mayUseTestApp(env, user)) throw new TestAccessError();
       const upload = new FormData(); upload.set('chat_id', String(user.id)); upload.set('photo', photo); upload.set('caption', `Banner for ${event.title}`);
       const result = await (await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendPhoto`, { method: 'POST', body: upload, signal: AbortSignal.timeout(20000) })).json();
       const fileId = result.result?.photo?.at(-1)?.file_id;
@@ -188,7 +208,7 @@ export async function miniApi(request, env) {
         return { event: publicEvent(current, user.id, env.BOT_USERNAME) };
       });
       return respond(value);
-    } catch (error) { console.error('banner_failed', error.name); return respond({ error: error instanceof BusyError ? error.message : 'Could not load or save the banner. Please try again.' }, 503); }
+    } catch (error) { if(error instanceof TestAccessError)throw error;console.error('banner_failed', error.name); return respond({ error: error instanceof BusyError ? error.message : 'Could not load or save the banner. Please try again.' }, 503); }
   }
   if (path === '/api/bootstrap' && request.method === 'GET') {
     await rememberUser(env, user);
@@ -332,6 +352,7 @@ export async function miniApi(request, env) {
     });
     return respond(value);
   } catch (e) {
+    if (e instanceof TestAccessError) throw e;
     if (e instanceof BusyError) return respond({ error: e.message }, 503);
     // Validation errors are controlled strings; never expose database or fetch errors.
     if (e instanceof InputError) return respond({ error: e.message }, 400);

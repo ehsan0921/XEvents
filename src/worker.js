@@ -6,6 +6,7 @@ import { checkout, refundResult } from './payments.js';
 import {refreshOnlineRates} from './exchange.js';
 import { botCommands, botCommandsVersion } from './telegram-menu.js';
 import { handleWhitelistCommand, mayUseTestApp, testAccessMessage, whitelistEnabled } from './test-access.js';
+import { snapshotActive, snapshotDeliveryAllowed } from './snapshot-mode.js';
 
 export async function authorized(request, secret) {
   if (!secret) return false;
@@ -16,6 +17,7 @@ export async function authorized(request, secret) {
 }
 
 async function telegram(env, method, params) {
+  if (!await snapshotDeliveryAllowed(env, method, params)) return { ok: false, error_code: 403, snapshotBlocked: true };
   let response;
   try {
     response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
@@ -47,7 +49,14 @@ export async function processUpdate(env, update) {
       return new Response(result.ok ? 'OK' : 'Retry', {status: result.ok ? 200 : 503});
     }
     if (user) await rememberUser(env, user);
-    await mutateState(env, (data, bot) => bot.handle(update), update.update_id);
+    await mutateState(env, async (data, bot) => {
+      if (user && !update.message?.successful_payment && !update.message?.refunded_payment && !await mayUseTestApp(env, user)) {
+        return update.callback_query
+          ? bot.api('answerCallbackQuery', { callback_query_id: update.callback_query.id, text: testAccessMessage, show_alert: true })
+          : bot.send(update.message.chat.id, testAccessMessage);
+      }
+      return bot.handle(update);
+    }, update.update_id);
     return new Response('OK');
   } catch (e) {
     if (e instanceof BusyError) return new Response('Busy; retry', { status: 503 });
@@ -67,7 +76,7 @@ export async function drainOutbox(env) {
     const row = await env.DB.prepare('UPDATE outbox SET due=unixepoch()+60, attempts=attempts+1 WHERE id=? AND due<=unixepoch() RETURNING *').bind(id).first();
     if (!row) continue;
     const result = await telegram(env, row.method, JSON.parse(row.params));
-    if (row.method === 'refundStarPayment' && (result.ok || [400,403].includes(result.error_code))) {
+    if (row.method === 'refundStarPayment' && !result.snapshotBlocked && (result.ok || [400,403].includes(result.error_code))) {
       const params=JSON.parse(row.params);
       await mutateState(env, (data,bot) => refundResult(bot,params.user_id,params.telegram_payment_charge_id,result.ok));
     }
@@ -122,7 +131,7 @@ export default {
       }
       return response;
     }
-    if (request.method === 'GET' && url.pathname === '/') return Response.json({ service: 'XEvents', status: 'running' });
+    if (request.method === 'GET' && url.pathname === '/') return Response.json({ service: 'XEvents', status: 'running', ...(env.APP_ENV === 'development' ? { databaseRefreshProtection: 1 } : {}) });
     if (url.pathname === '/setup' && request.method === 'POST') {
       if (!await authorized(request, env.TELEGRAM_WEBHOOK_SECRET)) return new Response('Unauthorized', { status: 401 });
       const me = await telegram(env, 'getMe', {});
@@ -154,7 +163,10 @@ export default {
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(refreshOnlineRates(env).catch(()=>console.error('online_rates_storage_failed')));
     ctx.waitUntil(configureMiniApp(env));
-    ctx.waitUntil(mutateState(env, (data, bot) => sendDueReminders(data, bot)).then(() => drainOutbox(env)).catch(error => { if (!(error instanceof BusyError)) console.error('reminder_processing_failed'); }));
+    ctx.waitUntil((async () => {
+      if (!await snapshotActive(env)) await mutateState(env, (data, bot) => bot.productionSnapshot ? undefined : sendDueReminders(data, bot));
+      await drainOutbox(env);
+    })().catch(error => { if (!(error instanceof BusyError)) console.error('reminder_processing_failed'); }));
     ctx.waitUntil(env.DB.prepare('DELETE FROM processed WHERE at < unixepoch()-604800').run());
   }
 };
@@ -174,7 +186,7 @@ export async function configureMiniApp(env) {
   const adminId = Number(env.SUPER_ADMIN_ID);
   if (isSuperAdmin({ id: adminId }, env)) {
     const adminCommands = await env.DB.prepare("SELECT value FROM app_settings WHERE key='test-admin-commands'").first();
-    const enabled = whitelistEnabled(env);
+    const enabled = whitelistEnabled(env) || await snapshotActive(env);
     const version = `${botCommandsVersion}:${adminId}:${enabled}`;
     if ((enabled || adminCommands) && adminCommands?.value !== version) {
       const result = await telegram(env, 'setMyCommands', {

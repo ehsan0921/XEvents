@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { participantCount,requiresApproval } from './permissions.js';
+import { snapshotPaymentMessage } from './snapshot-mode.js';
 
 export const starTotal = (e, g) => e.starPrice * (e.starPricing === 'person' ? participantCount(e, g) : 1);
 export function orderFor(data, uid, token) { return data.preferences[uid]?.starOrders?.[token]; }
@@ -8,6 +9,7 @@ export function validOrder(data, uid, order) {
   return !!(e && !e.cancelled && e.owner === order.owner && e.starPrice > 0 && e.starPrice===order.unitPrice && e.starPricing===order.pricing && e.paymentTerms===order.terms && g?.status === 'yes' && (!requiresApproval(e) || g.approval === 'approved') && g.payment?.status !== 'paid' && order.status === 'pending' && g.payment?.order === order.id && starTotal(e,g) === order.amount && participantCount(e,g) === order.participants && (!e.startsAt || Date.parse(e.startsAt) > Date.now()));
 }
 export async function invoice(bot, uid, e, consent = false) {
+  if (bot.productionSnapshot) return bot.send(uid, snapshotPaymentMessage);
   const g=e.guests[uid];
   if (!e.starPrice || e.cancelled || g?.status !== 'yes' || (requiresApproval(e) && g.approval !== 'approved')) return bot.send(uid,'Payment is available after your acceptance is approved.');
   if (g.payment?.status === 'paid') return bot.send(uid,'Your payment is already confirmed.');
@@ -29,6 +31,7 @@ export async function invoice(bot, uid, e, consent = false) {
   return bot.api('sendInvoice',{chat_id:uid,title:e.title.slice(0,32),description:`Event admission · ${order.participants} participant(s)`.slice(0,255),payload:order.id,provider_token:'',currency:'XTR',prices:[{label:'Event admission',amount:order.amount}],start_parameter:`e_${e.id}`});
 }
 export function checkout(bot,q) {
+  if (bot.productionSnapshot) return {pre_checkout_query_id:q.id,ok:false,error_message:snapshotPaymentMessage};
   const order=orderFor(bot.db,q.from.id,q.invoice_payload);
   const ok=q.currency==='XTR' && validOrder(bot.db,q.from.id,order) && q.total_amount===order.amount && (!order.checkoutId || order.checkoutId===q.id);
   if(ok) { order.checkoutId=q.id; order.checkoutAt ||= new Date().toISOString(); bot.db.events[order.event].guests[q.from.id].payment.status='processing'; }
@@ -51,6 +54,7 @@ export async function successful(bot,m) {
   await bot.ticket(uid,e);
 }
 export async function requestRefund(bot,uid,order) {
+  if (bot.productionSnapshot) return bot.send(uid, snapshotPaymentMessage);
   if(!order?.charge || !['paid','refund_failed'].includes(order.status))return;
   order.status='refund_pending';
   const g=bot.db.events[order.event]?.guests[uid];

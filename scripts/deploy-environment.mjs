@@ -14,7 +14,7 @@ try {
     await wrangler(['deploy', '--config', generated.path, '--keep-vars']);
     const health = await fetch(new URL('/', config.vars.APP_URL), { signal: AbortSignal.timeout(15000) });
     if (!health.ok || (await health.json()).status !== 'running') throw new Error('Deployment completed, but the service health check failed.');
-    console.log('Checks passed, D1 migrations applied and ' + environment + ' deployed.');
+    console.log('D1 migrations applied and ' + environment + ' deployed.');
   } finally { await generated.cleanup(); }
 } catch (error) {
   console.error(error instanceof TypeError ? 'Deployment failed. Verify the private environment configuration and network connection.' : error.message);

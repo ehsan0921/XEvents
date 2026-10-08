@@ -1,11 +1,13 @@
-import {parseEventPayment,paymentMethod} from './event-payment.js';
+import {parseEventPayment,paymentMethod,paidEvent} from './event-payment.js';
 import {issueTicket,verifyTicket} from './tickets.js';
 import {profileFields,profilePreference,profilePhotoApi} from './profile.js';
 import {readOnlinePricing} from './exchange.js';
 import {invitationMode,invitationSettings,oneTimeInvites,invitationAvailable,reconcileInvitationClaims} from './invitations.js';
-import {managedInvitations,invitationsVersion,addInvitations,removeInvitation} from './invitation-management.js';
+import {managedInvitations,revokedInvitations,invitationsVersion,addInvitations,removeInvitation,editInvitation,changeInvitationResponse,revokeInvitation,deleteInvitation,hasRecordedResponse} from './invitation-management.js';
+import {invitationHistory} from './invitation-history.js';
 import {isManager,cohostEntries,cohostLink,cohostVersion,createCohostInvite,revokeCohost} from './cohosts.js';
 import { authenticate } from './mini-auth.js';
+import { mayUseTestApp, testAccessMessage, TestAccessError, whitelistStatus, applyWhitelistChange } from './test-access.js';
 import { parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
 import { shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
@@ -85,9 +87,9 @@ export function publicEvent(e, id, username) {
   return {
     invitationMode:invitationMode(e),guestName:e.owner!==id ? e.guests[id]?.name || null : null,
     askPhone:asksPhone(e),askComments:asksComments(e),
-    ...(manager ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,approval:g.status==='yes' ? requiresApproval(e) ? g.approval || 'pending' : 'approved' : null,confirmed:confirmed(e,g),participants:g.status==='yes'?participantCount(e,g):0,paymentStatus:g.payment?.status || null})),...Object.entries(e.invitees || {}).filter(([token])=>!Object.values(e.guests).some(g=>g.invitationToken===token)).map(([,g])=>({id:null,name:g.name,status:'unopened',participants:0,confirmed:false}))]} : {}),
+    ...(manager ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,responded:hasRecordedResponse(g,invitationHistory(e,g.invitationToken),Number(uid)),approval:g.status==='yes' ? requiresApproval(e) ? g.approval || 'pending' : 'approved' : null,confirmed:confirmed(e,g),participants:g.status==='yes'?participantCount(e,g):0,paymentStatus:g.payment?.status || null})),...Object.entries(e.invitees || {}).filter(([token])=>!Object.values(e.guests).some(g=>g.invitationToken===token)).map(([,g])=>({id:null,name:g.name,status:'unopened',responded:false,participants:0,confirmed:false}))]} : {}),
     inviteMessage:e.inviteMessage || '',qrEnabled:e.qrEnabled!==false,oneTimeInvite:oneTimeInvites(e),
-    ...(manager ? {invitees:managedInvitations(e,username),invitationsVersion:invitationsVersion(e),cohosts,cohost:cohosts[0] || null} : {}),
+    ...(manager ? {invitees:managedInvitations(e,username),revokedInvitees:revokedInvitations(e,username),invitationsVersion:invitationsVersion(e),cohosts,cohost:cohosts[0] || null} : {}),
     ...(owner ? {cohostLinks:entries.map(entry=>({id:entry.id,label:entry.label,status:entry.status,createdAt:entry.createdAt,cohost:entry.cohost,url:cohostLink(e,username,entry.id),...(entry.revokedAt ? {revokedAt:entry.revokedAt}:{})})),cohostInviteUrl:cohostLink(e,username),cohostVersion:cohostVersion(e)} : {}),
     id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
@@ -106,7 +108,7 @@ export function publicEvent(e, id, username) {
     askParticipantCount: asksParticipantCount(e), participants: e.guests[id]?.status === 'yes' ? participantCount(e, e.guests[id]) : null, requireApproval: requiresApproval(e), hideLocation: hidesLocation(e),
     responseDeadline: e.responseDeadline || null, responsesClosed: responsesClosed(e), deadlineDate: e.deadlineDate || '', deadlineTime: e.deadlineTime || '', deadlineTimezone: e.deadlineTimezone || e.timezone || null,
     ...(manager ? { ticketInfo: e.ticketInfo || '' } : {}),
-    ticket: e.owner !== id && confirmed(e, e.guests[id]) && !e.cancelled ? { code: e.guests[id].ticket || '', name: e.guests[id].name, info: e.ticketInfo || '' } : null,
+    ticket: e.owner !== id && confirmed(e, e.guests[id]) && !e.cancelled ? { name: e.guests[id].name, info: e.ticketInfo || '', participants:participantCount(e,e.guests[id]),checkedInAt:e.checkIns?.[e.guests[id].ticket]?.at || null } : null,
     counts: can(e, id, 'guestList') ? responseCounts(e) : null,
     approval: e.owner !== id && e.guests[id]?.status === 'yes' ? (!requiresApproval(e) || e.guests[id]?.approval === 'approved') ? 'approved' : 'pending' : null,
     status: e.owner === id ? null : e.guests[id]?.status || null
@@ -118,6 +120,26 @@ export async function miniApi(request, env) {
   const respond = (data, status = 200) => Response.json(data, { status, headers });
   const user = authenticate(request.headers.get('Authorization')?.replace(/^tma /, ''), env.TELEGRAM_BOT_TOKEN);
   if (!user) return respond({ error: 'Open the planner inside Telegram. If it was open for a while, close and reopen it.' }, 401);
+  if (!await mayUseTestApp(env, user)) return respond({ error: testAccessMessage }, 403);
+  // The identity comes only from verified Telegram data. A database refresh can
+  // finish between authorization and a later route read or mutation.
+  const invocation = { ...env, snapshotUser: user };
+  try {
+    const response = await miniApiForUser(request, invocation, user);
+    if (!await mayUseTestApp(invocation, user)) {
+      if (response.body) await response.body.cancel().catch(() => {});
+      return respond({ error: testAccessMessage }, 403);
+    }
+    return response;
+  } catch (error) {
+    if (error instanceof TestAccessError || !await mayUseTestApp(invocation, user)) return respond({ error: testAccessMessage }, 403);
+    throw error;
+  }
+}
+
+async function miniApiForUser(request, env, user) {
+  const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+  const respond = (data, status = 200) => Response.json(data, { status, headers });
   const path = new URL(request.url).pathname;
   const profileResponse=await profilePhotoApi(request,env,user);if(profileResponse)return profileResponse;
   const eventMatch=path.match(/^\/api\/events\/([a-f0-9]{16})$/);
@@ -139,13 +161,30 @@ export async function miniApi(request, env) {
   if (mediaResponse) return mediaResponse;
   if (path.startsWith('/api/admin')) {
     if (!isSuperAdmin(user, env)) return respond({ error: 'Super admin access required.' }, 403);
+    if (path === '/api/admin/whitelist') {
+      if (request.method === 'GET') return respond(await whitelistStatus(env));
+      if (request.method === 'POST') {
+        if (env.APP_ENV !== 'development') return respond({ error: 'The test whitelist is available only in development.' }, 403);
+        const raw = await request.text();
+        if (raw.length > 14000) return respond({ error: 'Too much text.' }, 413);
+        try {
+          const input = JSON.parse(raw);
+          const status = await mutateState(env, (_data, _bot, settings) => applyWhitelistChange(env, input, settings));
+          return respond(status);
+        } catch (error) {
+          if (error instanceof TestAccessError) throw error;
+          return respond({ error: error instanceof InputError || error instanceof BusyError ? error.message : 'Could not save test access settings.' }, error instanceof BusyError ? 503 : 400);
+        }
+      }
+      return respond({ error: 'Not found.' }, 404);
+    }
     if(path==='/api/admin/pricing' && request.method==='POST') {
       const raw=await request.text();if(raw.length>12000)return respond({error:'Too much text.'},413);
       try {
         const settings=parsePricing(JSON.parse(raw));
         await mutateState(env,data=>{data.preferences._pricing=settings;});
         return respond({settings});
-      }catch(e){return respond({error:e instanceof InputError ? e.message : 'Could not save pricing settings.'},e instanceof BusyError ? 503 : 400);}
+      }catch(e){if(e instanceof TestAccessError)throw e;return respond({error:e instanceof InputError ? e.message : 'Could not save pricing settings.'},e instanceof BusyError ? 503 : 400);}
     }
     if (path !== '/api/admin/overview' || request.method !== 'GET') return respond({ error: 'Not found.' }, 404);
     await rememberUser(env, user);
@@ -175,6 +214,7 @@ export async function miniApi(request, env) {
       const form = await new Response(bytes, { headers: { 'Content-Type': request.headers.get('Content-Type') || '' } }).formData();
       const photo = form.get('photo');
       if (!(photo instanceof File) || !photo.size || photo.size > 5 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(photo.type)) return respond({ error: 'Choose a JPG, PNG, or WebP photo smaller than 5 MB.' }, 400);
+      if (!await mayUseTestApp(env, user)) throw new TestAccessError();
       const upload = new FormData(); upload.set('chat_id', String(user.id)); upload.set('photo', photo); upload.set('caption', `Banner for ${event.title}`);
       const result = await (await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendPhoto`, { method: 'POST', body: upload, signal: AbortSignal.timeout(20000) })).json();
       const fileId = result.result?.photo?.at(-1)?.file_id;
@@ -186,7 +226,7 @@ export async function miniApi(request, env) {
         return { event: publicEvent(current, user.id, env.BOT_USERNAME) };
       });
       return respond(value);
-    } catch (error) { console.error('banner_failed', error.name); return respond({ error: error instanceof BusyError ? error.message : 'Could not load or save the banner. Please try again.' }, 503); }
+    } catch (error) { if(error instanceof TestAccessError)throw error;console.error('banner_failed', error.name); return respond({ error: error instanceof BusyError ? error.message : 'Could not load or save the banner. Please try again.' }, 503); }
   }
   if (path === '/api/bootstrap' && request.method === 'GET') {
     await rememberUser(env, user);
@@ -210,11 +250,18 @@ export async function miniApi(request, env) {
     if (path === '/api/preview') return respond(schedule(input));
     const value = await mutateState(env, async (data, bot) => {
       const id = user.id;
-      const invitationMatch=path.match(/^\/api\/events\/([a-f0-9]{16})\/invitations\/(add|remove)$/);
+      const invitationMatch=path.match(/^\/api\/events\/([a-f0-9]{16})\/invitations\/(add|remove|edit|response|revoke|delete)$/);
       if(invitationMatch){
-        const e=data.events[invitationMatch[1]];
-        const result=invitationMatch[2]==='add' ? addInvitations(e,id,input) : removeInvitation(e,id,input,data.sessions);
-        for(const uid of result.recipients || [])await bot.send(uid,`Your invitation to ${e.title} has been removed by the organiser.`);
+        const e=data.events[invitationMatch[1]],action=invitationMatch[2];
+        const result=action==='add' ? addInvitations(e,id,input) : action==='remove' ? removeInvitation(e,id,input,data.sessions) : action==='edit' ? editInvitation(e,id,input,data.sessions) : action==='response' ? changeInvitationResponse(e,id,input,data.sessions) : action==='revoke' ? revokeInvitation(e,id,input,data.sessions) : deleteInvitation(e,id,input);
+        const labels={yes:'Accepted',no:'Declined',maybe:'Maybe',later:'Respond later'};
+        for(const uid of result.recipients || []){
+          if(action==='response'){
+            const count=participantCount(e,e.guests[uid]);
+            const attendance=result.status==='yes'?`\n${count} ${count===1?'person':'people'}${paidEvent(e)&&!confirmed(e,e.guests[uid])?' · Payment required to confirm your place.':''}`:'';
+            await bot.send(uid,`${e.title}\nThe organiser recorded your response: ${labels[result.status]}.${attendance}`,{inline_keyboard:[[{text:'Open event',callback_data:`v:${e.id}`}]]});
+          }else await bot.send(uid,`Your invitation to ${e.title} has been ${action==='remove'?'removed':'revoked'} by the organiser.`);
+        }
         const {recipients,...publicResult}=result;
         return {...publicResult,event:publicEvent(e,id,env.BOT_USERNAME)};
       }
@@ -315,7 +362,7 @@ export async function miniApi(request, env) {
         if (!isManager(e,id) || e.cancelled) throw new InputError('Only an organiser can change an active event.');
         if(e.owner!==id)cohostSettings(input,e);
         if(input.guestNames!==undefined && input.invitationsVersion!==undefined && input.invitationsVersion!==invitationsVersion(e))throw new InputError('Invitations or responses have changed. Refresh the event before editing the guest list.');
-        const inviteSettings=invitationSettings(input,e);
+        const inviteSettings=invitationSettings(input,e,Date.now(),id);
         if(input.title!==undefined)e.title=field(input.title,'Event name',100,true);
         if(input.location!==undefined)e.location=field(input.location,'Location',300);
         if(input.description!==undefined)e.description=field(input.description,'Description',1500);
@@ -330,6 +377,7 @@ export async function miniApi(request, env) {
     });
     return respond(value);
   } catch (e) {
+    if (e instanceof TestAccessError) throw e;
     if (e instanceof BusyError) return respond({ error: e.message }, 503);
     // Validation errors are controlled strings; never expose database or fetch errors.
     if (e instanceof InputError) return respond({ error: e.message }, 400);

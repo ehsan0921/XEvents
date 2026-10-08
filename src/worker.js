@@ -1,10 +1,12 @@
 import { mutateState, BusyError } from './worker-store.js';
 import { miniApi } from './mini-api.js';
-import { rememberUser } from './admin.js';
+import { isSuperAdmin, rememberUser } from './admin.js';
 import { sendDueReminders } from './reminders.js';
 import { checkout, refundResult } from './payments.js';
 import {refreshOnlineRates} from './exchange.js';
 import { botCommands, botCommandsVersion } from './telegram-menu.js';
+import { handleWhitelistCommand, mayUseTestApp, testAccessMessage } from './test-access.js';
+import { snapshotActive, snapshotDeliveryAllowed } from './snapshot-mode.js';
 
 export async function authorized(request, secret) {
   if (!secret) return false;
@@ -15,6 +17,7 @@ export async function authorized(request, secret) {
 }
 
 async function telegram(env, method, params) {
+  if (!await snapshotDeliveryAllowed(env, method, params)) return { ok: false, error_code: 403, snapshotBlocked: true };
   let response;
   try {
     response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
@@ -26,14 +29,34 @@ async function telegram(env, method, params) {
 
 export async function processUpdate(env, update) {
   try {
+    const user = update.pre_checkout_query?.from || update.callback_query?.from || (update.message?.chat?.type === 'private' ? update.message.from : null);
+    // Payments already charged must still be recorded or refunded after access changes.
+    if (user && !update.message?.successful_payment && !update.message?.refunded_payment && !await mayUseTestApp(env, user)) {
+      if (update.pre_checkout_query) {
+        const result = await telegram(env, 'answerPreCheckoutQuery', { pre_checkout_query_id: update.pre_checkout_query.id, ok: false, error_message: testAccessMessage });
+        return new Response(result.ok ? 'OK' : 'Retry', { status: result.ok ? 200 : 503 });
+      }
+      await mutateState(env, (_data, bot) => update.callback_query
+        ? bot.api('answerCallbackQuery', { callback_query_id: update.callback_query.id, text: testAccessMessage, show_alert: true })
+        : bot.send(update.message.chat.id, testAccessMessage), update.update_id);
+      return new Response('OK');
+    }
+    const whitelistResponse = await handleWhitelistCommand(env, update);
+    if (whitelistResponse) return whitelistResponse;
     if (update.pre_checkout_query) {
       const decision = await mutateState(env, (data, bot) => checkout(bot, update.pre_checkout_query));
       const result = await telegram(env, 'answerPreCheckoutQuery', decision);
       return new Response(result.ok ? 'OK' : 'Retry', {status: result.ok ? 200 : 503});
     }
-    const user = update.callback_query?.from || (update.message?.chat?.type === 'private' ? update.message.from : null);
     if (user) await rememberUser(env, user);
-    await mutateState(env, (data, bot) => bot.handle(update), update.update_id);
+    await mutateState(env, async (data, bot) => {
+      if (user && !update.message?.successful_payment && !update.message?.refunded_payment && !await mayUseTestApp(env, user)) {
+        return update.callback_query
+          ? bot.api('answerCallbackQuery', { callback_query_id: update.callback_query.id, text: testAccessMessage, show_alert: true })
+          : bot.send(update.message.chat.id, testAccessMessage);
+      }
+      return bot.handle(update);
+    }, update.update_id);
     return new Response('OK');
   } catch (e) {
     if (e instanceof BusyError) return new Response('Busy; retry', { status: 503 });
@@ -53,7 +76,7 @@ export async function drainOutbox(env) {
     const row = await env.DB.prepare('UPDATE outbox SET due=unixepoch()+60, attempts=attempts+1 WHERE id=? AND due<=unixepoch() RETURNING *').bind(id).first();
     if (!row) continue;
     const result = await telegram(env, row.method, JSON.parse(row.params));
-    if (row.method === 'refundStarPayment' && (result.ok || [400,403].includes(result.error_code))) {
+    if (row.method === 'refundStarPayment' && !result.snapshotBlocked && (result.ok || [400,403].includes(result.error_code))) {
       const params=JSON.parse(row.params);
       await mutateState(env, (data,bot) => refundResult(bot,params.user_id,params.telegram_payment_charge_id,result.ok));
     }
@@ -82,16 +105,33 @@ export default {
     }
     if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/errors.js', '/gallery.js', '/event-actions.js', '/style.css'].includes(url.pathname))) {
       const target = new URL(request.url);
-      if (url.pathname === '/app' || url.pathname === '/app/') target.pathname = '/';
-      const asset = await env.ASSETS.fetch(new Request(target, request));
+      const appPage = url.pathname === '/app' || url.pathname === '/app/';
+      if (appPage) target.pathname = '/';
+      const assetRequest = new Request(target, request);
+      if (appPage) {
+        assetRequest.headers.delete('If-None-Match');
+        assetRequest.headers.delete('If-Modified-Since');
+      }
+      const asset = await env.ASSETS.fetch(assetRequest);
       const headers = new Headers(asset.headers);
+      if (appPage) {
+        headers.delete('ETag');
+        headers.delete('Last-Modified');
+      }
       headers.set('Cache-Control', 'no-cache');
       headers.set('X-Content-Type-Options', 'nosniff');
       headers.set('Referrer-Policy', 'no-referrer');
       headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; base-uri 'self'; object-src 'none'");
-      return new Response(asset.body, { status: asset.status, headers });
+      const response = new Response(asset.body, { status: asset.status, headers });
+      if (appPage && asset.ok && typeof env.BOT_USERNAME === 'string' && /^[A-Za-z0-9_]{5,32}$/.test(env.BOT_USERNAME)) {
+        const botUrl = `https://t.me/${env.BOT_USERNAME}`;
+        return new HTMLRewriter().on('#telegram-bot-link', {
+          element(element) { element.setAttribute('href', botUrl); }
+        }).transform(response);
+      }
+      return response;
     }
-    if (request.method === 'GET' && url.pathname === '/') return Response.json({ service: 'XEvents', status: 'running' });
+    if (request.method === 'GET' && url.pathname === '/') return Response.json({ service: 'XEvents', status: 'running', ...(env.APP_ENV === 'development' ? { databaseRefreshProtection: 1 } : {}) });
     if (url.pathname === '/setup' && request.method === 'POST') {
       if (!await authorized(request, env.TELEGRAM_WEBHOOK_SECRET)) return new Response('Unauthorized', { status: 401 });
       const me = await telegram(env, 'getMe', {});
@@ -123,7 +163,10 @@ export default {
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(refreshOnlineRates(env).catch(()=>console.error('online_rates_storage_failed')));
     ctx.waitUntil(configureMiniApp(env));
-    ctx.waitUntil(mutateState(env, (data, bot) => sendDueReminders(data, bot)).then(() => drainOutbox(env)).catch(error => { if (!(error instanceof BusyError)) console.error('reminder_processing_failed'); }));
+    ctx.waitUntil((async () => {
+      if (!await snapshotActive(env)) await mutateState(env, (data, bot) => bot.productionSnapshot ? undefined : sendDueReminders(data, bot));
+      await drainOutbox(env);
+    })().catch(error => { if (!(error instanceof BusyError)) console.error('reminder_processing_failed'); }));
     ctx.waitUntil(env.DB.prepare('DELETE FROM processed WHERE at < unixepoch()-604800').run());
   }
 };
@@ -139,6 +182,20 @@ export async function configureMiniApp(env) {
   if (commands?.value !== botCommandsVersion) {
     const result = await telegram(env, 'setMyCommands', { commands: botCommands });
     if (result.ok) await env.DB.prepare("INSERT INTO app_settings(key,value) VALUES ('bot-commands',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(botCommandsVersion).run();
+  }
+  const adminId = Number(env.SUPER_ADMIN_ID);
+  if (isSuperAdmin({ id: adminId }, env)) {
+    const adminCommands = await env.DB.prepare("SELECT value FROM app_settings WHERE key='test-admin-commands'").first();
+    // The administrator can edit saved tester IDs even while the switch is off.
+    const enabled = env.APP_ENV === 'development';
+    const version = `${botCommandsVersion}:${adminId}:${enabled}`;
+    if ((enabled || adminCommands) && adminCommands?.value !== version) {
+      const result = await telegram(env, 'setMyCommands', {
+        scope: { type: 'chat', chat_id: adminId },
+        commands: enabled ? [...botCommands, { command: 'whitelist', description: 'Manage test access' }] : botCommands
+      });
+      if (result.ok) await env.DB.prepare("INSERT INTO app_settings(key,value) VALUES ('test-admin-commands',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(version).run();
+    }
   }
   const setting = await env.DB.prepare("SELECT value FROM app_settings WHERE key='mini-menu'").first();
   const menuVersion=`App:${env.APP_URL}`;

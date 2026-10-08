@@ -41,7 +41,12 @@ export async function buildConfig(privateConfig, environment) {
   return {
     ...base,
     name: privateConfig.name,
-    vars: { BOT_USERNAME: privateConfig.vars.BOT_USERNAME, APP_URL: privateConfig.vars.APP_URL, APP_ENV: environment },
+    vars: {
+      BOT_USERNAME: privateConfig.vars.BOT_USERNAME,
+      APP_URL: privateConfig.vars.APP_URL,
+      APP_ENV: environment,
+      TEST_WHITELIST_ENABLED: environment === 'development' && String(privateConfig.vars.TEST_WHITELIST_ENABLED).trim() === 'true' ? 'true' : 'false'
+    },
     d1_databases: [{ binding: 'DB', database_name: privateConfig.d1_databases[0].database_name, database_id: privateConfig.d1_databases[0].database_id, migrations_dir: 'migrations' }],
     triggers: { crons: privateConfig.triggers?.crons ?? (environment === 'development' ? [] : base.triggers.crons) }
   };

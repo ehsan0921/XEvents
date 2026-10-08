@@ -2,12 +2,14 @@ import {paymentMethod,paidEvent} from './event-payment.js';
 import {invitationMode,claimInvitation,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
 import {isManager,cohostEntries,cohostIds,cohostGuard,cohostLink,createCohostInvite,revokeCohost,claimCohost} from './cohosts.js';
 import {invitationLinksCard,invitationCopyCard} from './invitation-links.js';
+import {appendInvitationHistory} from './invitation-history.js';
 import {startChatCreation,chatCreationMessage,chatCreationCallback} from './chat-creation.js';
 import {manualInstructions,manualReport,manualConfirm} from './manual-payment.js';
 import { priceText } from './pricing.js';
+import { issueTicket } from './tickets.js';
 import { randomBytes } from 'node:crypto';
 import { invoice, checkout, successful, orderFor, requestRefund, refundResult } from './payments.js';
-import { eventTime } from './time.js';
+import { eventTime, InputError } from './time.js';
 import { uploadLink, shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
 import { upcoming, eventGroup, setReminder, reminderOptions, reminderLabel, applyDefaultReminder } from './reminders.js';
 import { permissions, permissionLabels, can, guests, confirmed, canSeeLocation, responsesClosed, responseCounts, participantCount } from './permissions.js';
@@ -19,6 +21,7 @@ const paired = buttons => Array.from({ length: Math.ceil(buttons.length / 2) }, 
 const name = u => [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || 'Guest';
 const clean = (s, max = 1000) => typeof s === 'string' ? s.trim().slice(0, max) : '';
 const changeCountLabel = count => `${count} ${count===1?'person':'people'} · Change`;
+const hasRecordedResponse = guest => typeof guest?.responseRecorded==='boolean' ? guest.responseRecorded : guest?.responseVersion>0 || ['yes','no','maybe'].includes(guest?.status);
 const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name', app: 'App', picker: '🗓 Pick date & time', pending: '⏳ Pending invitations' };
 const reply = (...rows) => ({ keyboard: rows.map(row => row.map(text => typeof text === 'string' ? { text } : text)), resize_keyboard: true, is_persistent: true });
 // The authenticated App launcher lives in Telegram's built-in chat menu.
@@ -72,7 +75,9 @@ export class Bot {
     if(s.countOnly){
       if(s.response.participants===participantCount(e,e.guests[id])){this.session(id);return this.card(id,e);}
       if(s.response.status==='yes')return this.saveResponse(id,e,s.response);
-      e.guests[id]={...e.guests[id],participants:s.response.participants,responseVersion:(e.guests[id].responseVersion || 0)+1};
+      const previous=e.guests[id];
+      e.guests[id]={...previous,participants:s.response.participants,responseVersion:(previous.responseVersion || 0)+1};
+      appendInvitationHistory(e,previous.invitationToken,hasRecordedResponse(previous)?'changed':'edited',{actorRole:'guest',actorId:id,userId:id,name:previous.name,...(hasRecordedResponse(previous)?{status:previous.status,previousStatus:previous.status}:{}),participants:s.response.participants,previousParticipants:participantCount(e,previous)});
       this.session(id);return this.card(id,e);
     }
     return this.afterIdentity(id,e,s);
@@ -124,11 +129,17 @@ export class Bot {
     await this.home(id, events.length ? '⏳ Invitations you haven’t responded to yet. Tap an event to respond.' : 'You have no unanswered invitations.');
     for (const e of events) await this.send(id, `${e.title}\n${this.time(e, id)}${responsesClosed(e) ? '\nResponses closed — deadline passed' : ''}`, keyboard([button('Open invitation', `v:${e.id}`)]));
   }
-  async ticket(id, e) {
+  async ticket(id, e, requested = false) {
     const g = e.guests[id];
     if (!g || !confirmed(e, g) || e.owner === id || e.cancelled) return this.send(id, 'Your invitation details will be available after your response is approved.');
     g.ticket ||= randomBytes(6).toString('hex').toUpperCase();
-    return this.long(id, `🎟 ${invitationMode(e)==='tickets' ? 'YOUR TICKET' : 'YOUR INVITATION'}\n\n${e.title}\nGuest: ${g.name}\nPeople: ${participantCount(e, g)}\nTicket: ${g.ticket}\n\n🗓 ${this.time(e, id)}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n📍 ${e.location || 'Location to follow'}${e.ticketInfo ? '\n\n' + e.ticketInfo : ''}\n\n✅ Your place is confirmed.`, keyboard(...(this.appUrl && e.qrEnabled!==false?[[this.miniButton('🎟 Ticket QR',`?ticket=${e.id}`)]]:[]),[button('Back to event', `v:${e.id}`)]));
+    let codeText='';
+    if(!this.appUrl && requested){
+      try{codeText=`\nCheck-in code: ${issueTicket(e,id).code}\nValid this minute. Request your ticket again to refresh.`;}
+      catch(error){if(!(error instanceof InputError))throw error;return this.send(id,error.message,keyboard([button('Back to event',`v:${e.id}`)]));}
+    }
+    const codeButton=this.appUrl ? this.miniButton('🎟 Check-in code',`?ticket=${e.id}`) : button('🎟 Check-in code',`ticket:${e.id}`);
+    return this.long(id, `🎟 ${invitationMode(e)==='tickets' ? 'YOUR TICKET' : 'YOUR INVITATION'}\n\n${e.title}\nGuest: ${g.name}\nPeople: ${participantCount(e, g)}${codeText}\n\n🗓 ${this.time(e, id)}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n📍 ${e.location || 'Location to follow'}${e.ticketInfo ? '\n\n' + e.ticketInfo : ''}\n\n✅ Your place is confirmed.`, keyboard([codeButton],[button('Back to event', `v:${e.id}`)]));
   }
   paymentInfo(id,e){return paymentMethod(e)==='stars'?invoice(this,id,e):manualInstructions(this,id,e);}
   async beginAcceptance(id,e,from){
@@ -190,17 +201,19 @@ export class Bot {
     if(e.guests[id]?.payment?.status==='reported')return this.send(id,'The organiser is reviewing your payment. Ask them to resolve or clear the report before changing your response.');
     if (['paid','processing','refund_pending','refund_failed'].includes(e.guests[id]?.payment?.status)) return this.send(id,'Your paid or processing booking cannot be changed. Contact /paysupport to request a refund first.');
     if (responsesClosed(e)) { this.session(id); await this.home(id, 'The response deadline has passed. Your unfinished response was not saved.'); return this.card(id, e); }
-    const previous=e.guests[id];
+    const previous=e.guests[id],hadResponse=hasRecordedResponse(previous);
     if(e.checkIns?.[previous?.ticket]){this.session(id);return this.send(id,'You are already checked in. Contact the organiser to change your invitation.',keyboard([button('Back to event',`v:${e.id}`)]));}
     if(previous?.status===response.status && response.status==='yes' && previous.approval==='approved' && JSON.stringify(previous.answers || [])===JSON.stringify(response.answers || []) && previous.name===response.name && previous.phone===response.phone && previous.comment===response.comment && participantCount(e,previous)===participantCount(e,response)){this.session(id);return this.card(id,e);}
     consumeInvitation(e,id,response,this.db.sessions);
     response.responseVersion=(previous?.responseVersion || 0)+1;
+    response.responseRecorded=true;
     if (response.status === 'yes') {
       response.participants = participantCount(e, response);
       response.approval = requiresApproval(e) ? 'pending' : 'approved';
       if (requiresApproval(e) || paidEvent(e)) delete response.ticket; else response.ticket = randomBytes(6).toString('hex').toUpperCase();
     } else { delete response.approval; delete response.ticket; }
     e.guests[id] = response; this.session(id);
+    appendInvitationHistory(e,response.invitationToken,hadResponse?'changed':'responded',{actorRole:'guest',actorId:id,userId:id,name:response.name,status:response.status,...(hadResponse?{previousStatus:previous.status,previousParticipants:participantCount(e,previous)}:{}),participants:participantCount(e,response)});
     if (response.status === 'yes') applyDefaultReminder(e, id);
     await this.home(id, invitationMode(e)==='tickets' ? requiresApproval(e) ? 'Your ticket request is saved. The organiser will send your ticket after approval and any required payment.' : paidEvent(e) ? 'Booking saved. Complete payment to receive your ticket.' : 'Your ticket is booked.' : response.status === 'yes' && requiresApproval(e) ? '✅ Your acceptance request is saved. The organiser will send your invitation details and ticket after approving your response.' : paidEvent(e) && response.status === 'yes' ? 'Acceptance saved. Complete payment to confirm your ticket.' : '✅ Response saved.');
     await this.notifyManagers(e, `${e.title}\n${response.name}: ${response.approval === 'pending' ? '⏳ Awaiting approval' : labels[response.status]}${response.status === 'yes' ? '\nPeople: ' + participantCount(e, response) : ''}${response.comment ? '\nComment: ' + response.comment : ''}`, response.approval === 'pending' ? keyboard([button('✅ Approve', `approve:${e.id}:${id}:${response.responseVersion || 0}`), button('❌ Reject', `reject:${e.id}:${id}:${response.responseVersion || 0}`)]) : undefined);
@@ -241,7 +254,7 @@ export class Bot {
       if (can(e, id, 'uploadMedia')) extras.push(button('📎 Add media', `u:${e.id}`));
       if (this.appUrl && can(e, id, 'viewMedia')) extras.push(this.miniButton('🗂 Shared media', `?gallery=${e.id}`));
       if(this.appUrl && host)extras.push(this.miniButton(e.qrEnabled!==false?'Scan tickets':'Check tickets',`?checkin=${e.id}`));
-      if(this.appUrl && e.qrEnabled!==false && !host && confirmed(e,e.guests[id]))extras.push(this.miniButton('🎟 Ticket QR',`?ticket=${e.id}`));
+      if(this.appUrl && !host && confirmed(e,e.guests[id]))extras.push(this.miniButton('🎟 Check-in code',`?ticket=${e.id}`));
       if (upcoming(e)) extras.push(button('🔔 Reminder', `reminder:${e.id}`));
       if (canSeeLocation(e, id) && e.location) extras.push(e.location.length <= 256 ? { text: '📋 Copy address', copy_text: { text: e.location } } : button('📋 Copy address', `address:${e.id}`));
       if (host && shareUploadLink(e,this.username)) extras.push(this.appUrl && e.qrEnabled!==false ? this.miniButton('Upload QR code',`?qr=${e.id}`) : {text:'Share upload link',url:`https://t.me/share/url?url=${encodeURIComponent(shareUploadLink(e,this.username))}`});
@@ -619,11 +632,13 @@ export class Bot {
       await this.clearButtons(id,q.message);
       if(version!==undefined && version!==String(e.guests[id]?.responseVersion || 0))return this.send(id,'This RSVP message is out of date. Open the event in My events for your current response.',keyboard([button('Open event',`v:${e.id}`)]));
       if (responsesClosed(e)) return this.card(id, e);
-      if(arg===e.guests[id]?.status && !(this.db.sessions[id]?.step==='responseChoice' && this.db.sessions[id]?.event===eid))return arg==='later' ? this.pendingInvitations(id) : this.card(id,e);
+      if(arg===e.guests[id]?.status && !(this.db.sessions[id]?.step==='responseChoice' && this.db.sessions[id]?.event===eid) && !(arg==='later' && !hasRecordedResponse(e.guests[id])))return arg==='later' ? this.pendingInvitations(id) : this.card(id,e);
       if (arg === 'later') {
         if(e.checkIns?.[e.guests[id]?.ticket]){this.session(id);return this.send(id,'You are already checked in. Contact the organiser to change your invitation.');}
+        const previous=e.guests[id],hadResponse=hasRecordedResponse(previous);
         consumeInvitation(e,id,{...e.guests[id],status:'later'},this.db.sessions);
-        e.guests[id] = { ...e.guests[id], status: 'later',responseVersion:(e.guests[id]?.responseVersion || 0)+1 }; delete e.guests[id].approval; delete e.guests[id].ticket; this.session(id);
+        e.guests[id] = { ...e.guests[id], status: 'later',responseRecorded:true,responseVersion:(e.guests[id]?.responseVersion || 0)+1 }; delete e.guests[id].approval; delete e.guests[id].ticket; this.session(id);
+        appendInvitationHistory(e,previous.invitationToken,hadResponse?'changed':'responded',{actorRole:'guest',actorId:id,userId:id,name:previous.name,status:'later',...(hadResponse?{previousStatus:previous.status}:{}),participants:participantCount(e,e.guests[id])});
         return this.pendingInvitations(id);
       }
       if(arg==='yes' && invitationMode(e)==='named')return this.beginAcceptance(id,e,q.from);
@@ -643,7 +658,7 @@ export class Bot {
     if (action === 'c') {
       return this.send(id, isManager(e,id) ? 'You’re an event host — no RSVP needed.' : 'Choose an RSVP to add or update your comment.');
     }
-    if (action === 'ticket') return this.ticket(id, e);
+    if (action === 'ticket') return this.ticket(id, e, true);
     if (action === 'approve' || action === 'reject') {
       const guestId = Number(arg); const guest = e.guests[guestId];
       await this.clearButtons(id,q.message);

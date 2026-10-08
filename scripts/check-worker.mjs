@@ -4,16 +4,252 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 
 const telegramCalls=[];
+const serveAssets = async request => {
+  const pathname=new URL(request.url).pathname;
+  const file=pathname==='/' ? 'index.html' : pathname.slice(1);
+  if(!['index.html','app.js','errors.js','gallery.js','event-actions.js','style.css'].includes(file))return new Response('Not found',{status:404});
+  const headers={'Content-Type':file.endsWith('.js') ? 'application/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html'};
+  if(file==='index.html') {
+    headers.ETag='"fixture-index"';headers['Last-Modified']='Thu, 01 Oct 2026 00:00:00 GMT';
+    if(request.headers.get('If-None-Match')===headers.ETag || request.headers.get('If-Modified-Since')===headers['Last-Modified'])return new Response(null,{status:304,headers});
+  }
+  return new Response(await readFile('public/'+file),{headers});
+};
+
+async function checkTestAccess() {
+  // Each fixture has its own D1 and mock transport; no live bot or user data is used.
+  const admin=710001,seedUser=710101,blockedUser=710102,otherUser=710103;
+  const authData=uid=>{
+    const params=new URLSearchParams({auth_date:String(Math.floor(Date.now()/1000)),user:JSON.stringify({id:uid,first_name:'Access tester'}),query_id:'access-query'});
+    const data=[...params.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([key,value])=>`${key}=${value}`).join('\n');
+    const key=createHmac('sha256','WebAppData').update('access-test-token').digest();
+    params.set('hash',createHmac('sha256',key).update(data).digest('hex'));return params.toString();
+  };
+  async function fixture(bindings={}) {
+    const calls=[];
+    const worker=new Miniflare(convertV4MiniflareOptions({workers:[{
+      name:'test-access',modules:true,scriptPath:'.wrangler/build/worker.js',compatibilityDate:'2026-10-05',compatibilityFlags:['nodejs_compat'],d1Databases:['DB'],
+      bindings:{APP_ENV:'development',TEST_WHITELIST_ENABLED:'true',SUPER_ADMIN_ID:String(admin),BOT_USERNAME:'fictionalAccessBot',APP_URL:'https://access.test/app',TELEGRAM_BOT_TOKEN:'access-test-token',TELEGRAM_WEBHOOK_SECRET:'access-test-secret',...bindings},
+      serviceBindings:{ASSETS:serveAssets},
+      outboundService:async request=>{
+        const method=new URL(request.url).pathname.split('/').at(-1);
+        const params=request.headers.get('Content-Type')?.includes('application/json')?await request.clone().json():null;
+        calls.push({method,params});
+        if(request.url.includes('/file/bot'))return new Response(new Uint8Array([255,216,255]),{headers:{'Content-Type':'image/jpeg'}});
+        return Response.json({ok:true,result:method==='getFile'?{file_path:'photos/access.jpg'}:{}});
+      }
+    }]}));
+    try {
+      const db=await worker.getD1Database('DB');
+      await db.exec((await readFile('migrations/0001_initial.sql','utf8')).replace(/\n/g,' '));
+      for(const path of ['migrations/0002_delivery_lease.sql','migrations/0003_mini_app.sql'])await db.exec(await readFile(path,'utf8'));
+      const api=(path,uid=blockedUser,method='GET',input)=>worker.dispatchFetch('https://access.test/api/'+path,{method,headers:{Authorization:'tma '+authData(uid),'Content-Type':'application/json'},...(input===undefined?{}:{body:JSON.stringify(input)})});
+      const update=async body=>{
+        for(let attempt=0;attempt<12;attempt++){
+          const response=await worker.dispatchFetch('https://access.test/telegram',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':'access-test-secret'},body:JSON.stringify(body)});
+          const text=await response.text();
+          if(response.status===503 && attempt<11){await new Promise(resolve=>setTimeout(resolve,Math.min(25*(attempt+1),200)));continue;}
+          assert.equal(response.status,200,text);return;
+        }
+      };
+      const message=(update_id,text,uid=admin,extra={})=>update({update_id,message:{from:{id:uid,first_name:'Access tester'},chat:{id:uid,type:'private'},text,...extra}});
+      const setting=async()=>{const row=await db.prepare("SELECT value FROM app_settings WHERE key='test-whitelist'").first();return row?JSON.parse(row.value):null;};
+      const saveSetting=value=>db.prepare("INSERT INTO app_settings(key,value) VALUES ('test-whitelist',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(value).run();
+      const records=async()=>(await db.prepare('SELECT kind,id,data FROM records ORDER BY kind,id').all()).results;
+      return {worker,db,calls,api,update,message,setting,saveSetting,records};
+    }catch(error){await worker.dispose();throw error;}
+  }
+  const access=await fixture({WHITELIST_USER_IDS:String(seedUser)});
+  try {
+    const {worker,db,calls,api,update,message,setting,saveSetting,records}=access;
+    assert.equal((await worker.dispatchFetch('https://access.test/api/bootstrap')).status,401);
+    assert.equal((await api('bootstrap',seedUser)).status,200);
+    assert.equal((await api('bootstrap',admin)).status,200,'The configured admin must remain able to manage testers.');
+    // Hold delivery so command retries can be checked against the exact durable outbox.
+    await db.prepare("INSERT INTO delivery_lease(id,owner,expires) VALUES (1,'access-fixture',unixepoch()+3600)").run();
+    const eventId='7100000000000001',inviteToken='71000000000000000000000000000001',cohostToken='71000000000000000000000000000002',mediaId='710000000001';
+    const event={id:eventId,owner:admin,title:'Private access fixture',when:'Future test event',startsAt:'2099-12-05T18:00:00Z',timezone:'UTC',location:'Fictional venue',description:'',invitationMode:'named',oneTimeInvite:true,guests:{[blockedUser]:{name:'Existing tester',status:'yes',invitationToken:inviteToken}},invitees:{[inviteToken]:{name:'Named tester',participants:1,participantMode:'preset'}},permissions:{guestList:true,uploadMedia:true,viewMedia:true},banner:'access-banner',media:[{id:mediaId,fileId:'access-image',type:'photo',name:'fictional.jpg',user:blockedUser}],cohostLinks:[{id:'7100000000000002',token:cohostToken,label:'Test co-host',status:'pending',cohost:null,createdAt:'2026-01-01T00:00:00Z'}]};
+    await db.prepare("INSERT INTO records(kind,id,data) VALUES ('events',?,?)").bind(eventId,JSON.stringify(event)).run();
+    await db.prepare("INSERT INTO records(kind,id,data) VALUES ('preferences',?,?)").bind(String(blockedUser),JSON.stringify({profilePhoto:'access-profile',timezone:'UTC'})).run();
+    const beforeDenied=await records(),beforeCalls=calls.length;
+    for(const [path,method,input] of [
+      ['bootstrap','GET'],['explore?timezone=UTC','GET'],['profile/photo','GET'],['profile/photo','DELETE'],['profile/photo','POST',{}],['branding/icon','GET'],
+      [`events/${eventId}`,'GET'],[`events/${eventId}/banner`,'GET'],[`events/${eventId}/banner`,'POST',{}],
+      [`events/${eventId}/gallery`,'GET'],[`events/${eventId}/upload-qr`,'GET'],[`events/${eventId}/media/${mediaId}`,'GET'],[`events/${eventId}/media/${mediaId}/thumbnail`,'GET'],[`events/${eventId}/media/${mediaId}/send`,'POST',{}],
+      ['preferences','POST',{timezone:'Europe/London'}],['events','POST',{}],['admin/overview','GET']
+    ]){
+      const response=await api(path,blockedUser,method,input);
+      assert.equal(response.status,403,path+' must enforce test access before its route handler.');
+      assert.equal(response.headers.get('Cache-Control'),'no-store');
+      const body=await response.json();assert.match(body.error,/test|access/i);
+      assert.doesNotMatch(JSON.stringify(body),/710001|710101|Private access fixture|Fictional venue|access-profile/);
+    }
+    assert.equal(calls.length,beforeCalls,'Denied profile, banner and media requests must not call Telegram.');
+    assert.deepEqual(await records(),beforeDenied,'Denied API requests must not change profiles, events or sessions.');
+    for(const [offset,text] of ['/new',`/start e_${eventId}`,`/start i_${eventId}_${inviteToken}`,`/start c_${eventId}_${cohostToken}`].entries())await message(710010+offset,text,blockedUser);
+    await update({update_id:710020,callback_query:{id:'blocked-callback',from:{id:blockedUser,first_name:'Access tester'},data:`r:${eventId}:no:0`}});
+    assert.deepEqual(await records(),beforeDenied,'Old callbacks and deep links must not bypass test access or claim invitations.');
+    const callbackDenial=await db.prepare("SELECT params FROM outbox WHERE method='answerCallbackQuery' AND json_extract(params,'$.callback_query_id')='blocked-callback'").first();
+    assert.ok(callbackDenial);assert.match(JSON.parse(callbackDenial.params).text,/test|access/i);
+    await update({update_id:710021,pre_checkout_query:{id:'blocked-checkout',from:{id:blockedUser},invoice_payload:'fictional-order',currency:'XTR',total_amount:10}});
+    const deniedCheckout=calls.find(call=>call.method==='answerPreCheckoutQuery' && call.params?.pre_checkout_query_id==='blocked-checkout');
+    assert.equal(deniedCheckout?.params.ok,false);assert.deepEqual(await records(),beforeDenied);
+    await message(710030,'/whitelist add '+blockedUser,seedUser);
+    assert.equal(await setting(),null,'A permitted tester must not gain administrator commands.');
+    await message(710031,'/whitelist add '+blockedUser,admin,{chat:{id:-710001,type:'group'}});
+    assert.equal(await setting(),null,'Whitelist identities must never be managed or listed in group chats.');
+    await message(710032,'/whitelist list');
+    assert.equal(await setting(),null,'Listing seeded access must not create an override.');
+    await message(710033,`/whitelist add ${blockedUser} ${otherUser}`);
+    assert.deepEqual((await setting()).sort(),[seedUser,blockedUser,otherUser].map(String).sort());
+    assert.equal((await api('bootstrap',blockedUser)).status,200);
+    const commandRows=async()=>(await db.prepare("SELECT id,method,params FROM outbox WHERE id LIKE '710033:%' ORDER BY id").all()).results;
+    const beforeReplay=await commandRows();assert.ok(beforeReplay.length);
+    await message(710033,`/whitelist add ${blockedUser} ${otherUser}`);
+    assert.deepEqual(await commandRows(),beforeReplay,'Telegram redelivery must not duplicate the command response.');
+    assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM processed WHERE id=710033').first()).n,1);
+    await message(710034,`/whitelist remove ${seedUser} ${blockedUser}`);
+    assert.deepEqual(await setting(),[String(otherUser)]);
+    assert.equal((await api('bootstrap',seedUser)).status,403);assert.equal((await api('bootstrap',blockedUser)).status,403);
+    await message(710035,'/whitelist clear');assert.deepEqual(await setting(),[]);
+    assert.equal((await api('bootstrap',blockedUser)).status,200,'An explicit empty override must open access even with a nonempty seed.');
+    await message(710036,'/whitelist add '+blockedUser);assert.deepEqual(await setting(),[String(blockedUser)]);
+    await message(710037,'/whitelist add invalid 0 9007199254740992');assert.deepEqual(await setting(),[String(blockedUser)],'Invalid input must never silently open or partially alter access.');
+    await Promise.all([message(710038,'/whitelist add '+seedUser),message(710039,'/whitelist add '+otherUser)]);
+    assert.deepEqual((await setting()).sort(),[seedUser,blockedUser,otherUser].map(String).sort(),'Concurrent commands must preserve both changes.');
+    await message(710040,`/whitelist remove ${seedUser} ${blockedUser} ${otherUser}`);assert.deepEqual(await setting(),[]);
+    assert.equal((await api('bootstrap',otherUser)).status,200,'Removing the last tester must restore the documented open mode.');
+    for(const invalid of ['not-json','{}','["710101","invalid"]','["0"]','["9007199254740992"]']){
+      await saveSetting(invalid);assert.equal((await api('bootstrap',seedUser)).status,403,'Malformed stored access settings must fail closed.');
+      assert.equal((await api('bootstrap',admin)).status,200);
+    }
+    await message(710041,'/whitelist clear');assert.deepEqual(await setting(),[],'The admin must be able to recover invalid stored access.');
+    // Incoming successful/refunded payment service messages remain auditable after access is revoked.
+    const orderId='71000000000000000000000000000003',charge='fictional-access-charge';
+    const paidEvent={...event,id:'7100000000000003',invitationMode:'tickets',starPrice:10,starPricing:'group',paymentTerms:'Fictional fixture refund terms.',guests:{[blockedUser]:{name:'Paying tester',status:'yes',participants:1,payment:{order:orderId,status:'processing'}}}};
+    const order={id:orderId,event:paidEvent.id,owner:admin,title:paidEvent.title,amount:10,unitPrice:10,pricing:'group',terms:paidEvent.paymentTerms,participants:1,status:'pending',createdAt:'2026-01-01T00:00:00Z',checkoutId:'earlier-checkout'};
+    await db.prepare("INSERT INTO records(kind,id,data) VALUES ('events',?,?)").bind(paidEvent.id,JSON.stringify(paidEvent)).run();
+    await db.prepare("UPDATE records SET data=? WHERE kind='preferences' AND id=?").bind(JSON.stringify({starOrders:{[orderId]:order}}),String(blockedUser)).run();
+    await saveSetting(JSON.stringify([String(seedUser)]));
+    const payment={currency:'XTR',total_amount:10,invoice_payload:orderId,telegram_payment_charge_id:charge};
+    await message(710050,undefined,blockedUser,{successful_payment:payment});
+    const storedOrder=async()=>JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(blockedUser)).first()).data).starOrders[orderId];
+    assert.equal((await storedOrder()).status,'paid');assert.equal((await storedOrder()).charge,charge);
+    await message(710050,undefined,blockedUser,{successful_payment:payment});assert.equal((await storedOrder()).status,'paid');
+    await message(710051,undefined,blockedUser,{refunded_payment:payment});assert.equal((await storedOrder()).status,'refunded');
+    assert.equal((await api('bootstrap',blockedUser)).status,403,'Payment bookkeeping must not grant normal app access.');
+  }finally{await access.worker.dispose();}
+  for(const scenario of [
+    {name:'empty seed',bindings:{WHITELIST_USER_IDS:''},status:200},
+    {name:'malformed seed',bindings:{WHITELIST_USER_IDS:'710101,invalid'},status:403},
+    {name:'production ignores dev flag',bindings:{APP_ENV:'production',WHITELIST_USER_IDS:String(seedUser)},status:200},
+    {name:'disabled dev gate',bindings:{TEST_WHITELIST_ENABLED:'false',WHITELIST_USER_IDS:String(seedUser)},status:200}
+  ]){
+    const test=await fixture(scenario.bindings);
+    try {
+      assert.equal((await test.api('bootstrap',blockedUser)).status,scenario.status,scenario.name);
+      assert.equal((await test.api('bootstrap',admin)).status,200,scenario.name+' admin access');
+      if(scenario.status===200){
+        await test.message(710060,'/new',blockedUser);
+        assert.ok(await test.db.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(blockedUser)).first(),scenario.name+' bot access');
+      }
+      if(scenario.bindings.APP_ENV==='production'){
+        await test.message(710061,'/whitelist add '+seedUser);
+        assert.equal(await test.setting(),null,scenario.name+' must not enable whitelist administration');
+      }
+    }finally{await test.worker.dispose();}
+  }
+  const controls=await fixture({WHITELIST_USER_IDS:String(seedUser)});
+  try {
+    const {db,api,message,setting,calls}=controls;
+    assert.equal((await api('admin/whitelist',seedUser)).status,403,'Permitted testers cannot read admin access settings.');
+    const initial=await api('admin/whitelist',admin);
+    assert.equal(initial.status,200);
+    assert.deepEqual(await initial.json(),{supported:true,enabled:true,restricted:true,ids:[String(seedUser)],snapshotProtected:false,invalid:false});
+    const change=async input=>{
+      const response=await api('admin/whitelist',admin,'POST',input);
+      assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+      return response.json();
+    };
+    const initialCalls=calls.length;
+    const added=await change({action:'add',ids:`${otherUser}, ${otherUser}`});
+    assert.deepEqual([...added.ids].sort(),[seedUser,otherUser].map(String).sort(),'Panel additions preserve the secret seed and deduplicate IDs.');
+    assert.equal(calls.length,initialCalls,'Panel edits must not send bot messages.');
+    for(const input of [{action:'add',ids:'invalid'},{action:'remove',ids:otherUser},{action:'set-enabled',enabled:'false'},{action:'unknown'}]){
+      assert.equal((await api('admin/whitelist',admin,'POST',input)).status,400,'Invalid access edits must be rejected.');
+      assert.deepEqual((await setting()).sort(),[seedUser,otherUser].map(String).sort());
+    }
+    assert.equal((await change({action:'set-enabled',enabled:false})).restricted,false);
+    assert.equal((await api('bootstrap',blockedUser)).status,200,'Saved off switch opens normal development without discarding its IDs.');
+    await message(710080,'/new',blockedUser);
+    assert.ok(await db.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(blockedUser)).first(),'Bot messages obey the saved switch too.');
+    const disabledAdd=await change({action:'add',ids:String(blockedUser)});
+    assert.equal(disabledAdd.enabled,false);assert.ok(disabledAdd.ids.includes(String(blockedUser)));
+    await change({action:'remove',ids:String(otherUser)});
+    assert.equal((await change({action:'set-enabled',enabled:true})).restricted,true);
+    assert.equal((await api('bootstrap',otherUser)).status,403);
+    assert.equal((await api('bootstrap',seedUser)).status,200);
+    await change({action:'remove',ids:`${seedUser} ${blockedUser}`});
+    assert.equal((await api('bootstrap',otherUser)).status,200,'An empty ordinary list preserves the existing open-access rule.');
+    await change({action:'add',ids:String(seedUser)});
+    await db.prepare("INSERT INTO app_settings(key,value) VALUES ('production-snapshot','{}')").run();
+    const copied=await (await api('admin/whitelist',admin)).json();assert.equal(copied.snapshotProtected,true);assert.equal(copied.restricted,true);
+    assert.equal((await api('admin/whitelist',admin,'POST',{action:'set-enabled',enabled:false})).status,400,'Panel cannot disable production-snapshot protection.');
+    const emptyCopy=await change({action:'remove',ids:String(seedUser)});assert.equal(emptyCopy.restricted,true);assert.deepEqual(emptyCopy.ids,[]);
+    assert.equal((await api('bootstrap',seedUser)).status,403,'Removing the final copied-data tester keeps admin-only access.');
+    assert.equal((await api('bootstrap',admin)).status,200);
+  }finally{await controls.worker.dispose();}
+  const productionControls=await fixture({APP_ENV:'production',WHITELIST_USER_IDS:String(seedUser)});
+  try {
+    assert.equal((await (await productionControls.api('admin/whitelist',admin)).json()).supported,false);
+    assert.equal((await productionControls.api('admin/whitelist',admin,'POST',{action:'set-enabled',enabled:true})).status,403);
+    assert.equal(await productionControls.setting(),null);
+    assert.equal((await productionControls.api('bootstrap',blockedUser)).status,200,'Production access cannot be restricted by the development panel.');
+  }finally{await productionControls.worker.dispose();}
+  const snapshot=await fixture({TEST_WHITELIST_ENABLED:'false',WHITELIST_USER_IDS:''});
+  try {
+    const {worker,db,calls,api,message,setting}=snapshot;
+    await db.prepare("INSERT INTO app_settings(key,value) VALUES ('production-snapshot','not-json')").run();
+    const health=await (await worker.dispatchFetch('https://access.test/')).json();
+    assert.equal(health.databaseRefreshProtection,1);
+    assert.equal((await api('bootstrap',blockedUser)).status,403,'A production copy must stay restricted even with the dev whitelist switch disabled.');
+    assert.equal((await api('bootstrap',admin)).status,200);
+    await message(710070,'/whitelist add '+seedUser);
+    assert.deepEqual(await setting(),[String(seedUser)]);
+    assert.equal((await api('bootstrap',seedUser)).status,200);
+    await message(710071,'/whitelist clear');
+    assert.deepEqual(await setting(),[]);
+    assert.equal((await api('bootstrap',seedUser)).status,403,'Clearing testers must not expose a production copy.');
+    await message(710072,'/whitelist add '+seedUser);
+    const audit={starOrders:{'snapshot-order':{id:'snapshot-order',owner:admin,title:'Copied financial audit',amount:10,status:'paid',charge:'snapshot-charge'}}};
+    await db.prepare("INSERT INTO records(kind,id,data) VALUES ('preferences',?,?)").bind(String(seedUser),JSON.stringify(audit)).run();
+    for(const [id,method,params] of [
+      ['snapshot-foreign','sendMessage',{chat_id:blockedUser,text:'Copied recipient fixture'}],
+      ['snapshot-invoice','sendInvoice',{chat_id:seedUser,title:'Blocked invoice fixture'}],
+      ['snapshot-refund','refundStarPayment',{user_id:seedUser,telegram_payment_charge_id:'snapshot-charge'}],
+      ['snapshot-permitted','sendMessage',{chat_id:seedUser,text:'Allowed tester fixture'}]
+    ])await db.prepare('INSERT INTO outbox(id,method,params) VALUES (?,?,?)').bind(id,method,JSON.stringify(params)).run();
+    await message(710073,'/whitelist list');
+    for(let attempt=0;attempt<100;attempt++){
+      if(!(await db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE id LIKE 'snapshot-%'").first()).n)break;
+      await new Promise(resolve=>setTimeout(resolve,25));
+    }
+    assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE id LIKE 'snapshot-%'").first()).n,0);
+    assert.equal(calls.some(call=>call.params?.text==='Copied recipient fixture'),false);
+    assert.equal(calls.some(call=>['sendInvoice','refundStarPayment'].includes(call.method)),false);
+    assert.ok(calls.some(call=>call.params?.text==='Allowed tester fixture'));
+    const preserved=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(seedUser)).first()).data);
+    assert.deepEqual(preserved,audit,'Suppressing copied refunds must preserve the imported payment audit.');
+    assert.ok(calls.some(call=>/Only the super admin has access/.test(call.params?.text || '')),'The clear command must describe snapshot admin-only access.');
+  }finally{await snapshot.worker.dispose();}
+  console.log('Development access integration passed: environment isolation, empty and seeded lists, private admin commands, concurrent edits, Telegram retries, route privacy, callback and link claims, checkout denial and payment/refund audit preservation. Telegram mocked.');
+}
+
 const mf = new Miniflare(convertV4MiniflareOptions({
   workers: [{ name: 'test',
   modules: true, scriptPath: '.wrangler/build/worker.js', compatibilityDate: '2026-10-05', compatibilityFlags: ['nodejs_compat'],
   d1Databases: ['DB'], bindings: { SUPER_ADMIN_ID: '999001', BOT_USERNAME: 'XEvents_bot', APP_URL: 'https://test/app', TELEGRAM_BOT_TOKEN: 'fake', TELEGRAM_WEBHOOK_SECRET: 'test-secret' },
-  serviceBindings: { ASSETS: async request => {
-    const pathname=new URL(request.url).pathname;
-    const file=pathname==='/' ? 'index.html' : pathname.slice(1);
-    if(!['index.html','app.js','errors.js','gallery.js','event-actions.js','style.css'].includes(file))return new Response('Not found',{status:404});
-    return new Response(await readFile('public/'+file),{headers:{'Content-Type':file.endsWith('.js') ? 'application/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html'}});
-  } },
+  serviceBindings: { ASSETS: serveAssets },
   outboundService: async request => {
     if(request.method==='POST' && request.headers.get('Content-Type')?.includes('application/json'))telegramCalls.push({method:new URL(request.url).pathname.split('/').at(-1),params:await request.clone().json()});
     if (request.url.includes('/file/bot')) return new Response(new Uint8Array([255,216,255]), { headers: { 'Content-Type':'image/jpeg' } });
@@ -30,7 +266,45 @@ try {
   await db.exec(await readFile('migrations/0003_mini_app.sql', 'utf8'));
   assert.equal((await mf.dispatchFetch('https://test/')).status, 200);
   const appPage=await mf.dispatchFetch('https://test/app');
-  assert.equal(appPage.status,200);assert.match(await appPage.text(),/id="event-end-dialog"/);
+  const appHtml=await appPage.text();
+  assert.equal(appPage.status,200);assert.match(appHtml,/id="event-end-dialog"/);
+  assert.match(appHtml,/id="telegram-bot-link"[^>]*href="https:\/\/t\.me\/XEvents_bot"/);
+  // A separate Worker must use its own bot even before Telegram authentication.
+  const development = new Miniflare(convertV4MiniflareOptions({ workers: [{
+    name:'development-links', modules:true, scriptPath:'.wrangler/build/worker.js', compatibilityDate:'2026-10-05', compatibilityFlags:['nodejs_compat'],
+    bindings:{BOT_USERNAME:'fictionalDevelopmentBot',APP_URL:'https://development.test/app'},
+    serviceBindings:{ASSETS:serveAssets},
+    outboundService:async()=>{throw new Error('Development link checks must not make outbound requests.');}
+  }] }));
+  try {
+    const validators={'If-None-Match':'"fixture-index"','If-Modified-Since':'Thu, 01 Oct 2026 00:00:00 GMT'};
+    assert.equal((await serveAssets(new Request('https://assets.test/',{headers:validators}))).status,304);
+    let developmentBotLink;
+    for(const path of ['/app','/app/']) {
+      const page=await development.dispatchFetch('https://development.test'+path,{headers:validators});
+      assert.equal(page.status,200);
+      assert.equal(page.headers.get('ETag'),null);assert.equal(page.headers.get('Last-Modified'),null);
+      for(const name of ['Content-Type','Cache-Control','X-Content-Type-Options','Referrer-Policy','Content-Security-Policy'])assert.equal(page.headers.get(name),appPage.headers.get(name));
+      const html=await page.text();
+      developmentBotLink=html.match(/id="telegram-bot-link"[^>]*href="([^"]+)"/)?.[1];
+      assert.equal(developmentBotLink,'https://t.me/fictionalDevelopmentBot');
+      assert.doesNotMatch(html,/https:\/\/t\.me\/XEvents_bot/);
+    }
+    const module=await development.dispatchFetch('https://development.test/app.js');
+    assert.equal(module.status,200);
+    const source=await module.text();
+    assert.doesNotMatch(source,/https:\/\/t\.me\/XEvents_bot/);
+    const fallback=source.match(/^if \(!initData\) \{\r?\n([\s\S]*?)\r?\n\} else \{/m)?.[1];
+    assert.ok(fallback,'The unauthenticated launcher must remain available.');
+    const launched=[],buttons=[],nodes=new Map();
+    const node=id=>{if(!nodes.has(id))nodes.set(id,{replaceChildren(){},getAttribute:()=>developmentBotLink});return nodes.get(id);};
+    const runFallback=new Function('$','notice','element','action','tg','window','options','deviceZone',fallback);
+    const launch=()=>runFallback(node,()=>{},()=>({append:button=>buttons.push(button)}),(label,onclick)=>({label,onclick}),{openTelegramLink:url=>launched.push(url)},{},()=>{},'UTC');
+    launch();assert.equal(buttons.length,1);assert.equal(buttons[0].label,'App');buttons[0].onclick();
+    assert.deepEqual(launched,['https://t.me/fictionalDevelopmentBot?start=app']);
+    developmentBotLink='https://t.me/';buttons.length=0;
+    launch();assert.equal(buttons.length,0,'The unconfigured static page must not send guests to another bot.');
+  } finally { await development.dispose(); }
   const appModule=await mf.dispatchFetch('https://test/app.js');
   assert.equal(appModule.status,200);
   const imports=[...(await appModule.text()).matchAll(/import\s+.*?from\s+['"]\.\/([^'"]+)['"]/g)].map(match=>match[1]);
@@ -123,7 +397,7 @@ try {
   await db.prepare("UPDATE records SET data=json_set(data,'$.responseDeadline','2020-01-01T00:00:00Z') WHERE kind='events' AND id=?").bind(privateId).run();
   await callback(26, `r:${privateId}:no`, 456); assert.equal((await api('bootstrap', null, 456)).data.events[0].status, 'yes');
   await callback(27, `approve:${privateId}:456`);
-  guestView = (await api('bootstrap', null, 456)).data.events[0]; assert.equal(guestView.approval, 'approved'); assert.equal(guestView.location, 'SECRET LOCATION'); assert.equal(guestView.ticket.info, 'SECRET TICKET'); assert.ok(guestView.ticket.code);
+  guestView = (await api('bootstrap', null, 456)).data.events[0]; assert.equal(guestView.approval, 'approved'); assert.equal(guestView.location, 'SECRET LOCATION'); assert.equal(guestView.ticket.info, 'SECRET TICKET'); assert.equal(guestView.ticket.code,undefined);
   assert.equal((await api('bootstrap')).data.events.find(e => e.id === privateId).counts.yes, 1);
   assert.equal((await api('bootstrap', null, 789)).data.events.length, 0);
   assert.equal((await api(`events/${privateId}/reminder`, {minutes:60},456)).status,200);
@@ -263,13 +537,48 @@ try {
   assert.equal((await api(`events/${ticketId}`,null,456)).data.event.approval,'pending');
   assert.equal((await api(`events/${ticketId}/ticket`,{},456)).status,400);
   await callback(5005,`approve:${ticketId}:456`);
-  const qrTicket=await api(`events/${ticketId}/ticket`,{},456);assert.equal(qrTicket.status,200);assert.match(qrTicket.data.ticket.image,/^data:image\/gif;base64,/);
-  const ticketCode=qrTicket.data.ticket.code;
-  assert.equal((await api(`events/${ticketId}/ticket-check`,{code:ticketCode},456)).status,400);
+  const ticketStored=async()=>JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(ticketId).first()).data);
+  assert.equal((await ticketStored()).guests[456].ticketCode,undefined,'Approval must not generate a short check-in code.');
+  const unopenedTicketState=await ticketStored();
+  unopenedTicketState.guests[457]={name:'Unopened legacy booking',status:'yes',approval:'approved'};
+  await db.prepare("UPDATE records SET data=? WHERE kind='events' AND id=?").bind(JSON.stringify(unopenedTicketState),ticketId).run();
+  // Request near a minute boundary only after the next minute starts, keeping the
+  // integration independent of wall-clock timing. No live event or bot is used.
+  const currentTicket=async()=>{
+    let result=await api(`events/${ticketId}/ticket`,{},456);
+    assert.equal(result.status,200,JSON.stringify(result.data));
+    const left=Date.parse(result.data.ticket.codeExpiresAt)-Date.now();
+    if(left<2500){await new Promise(resolve=>setTimeout(resolve,Math.max(0,left)+50));result=await api(`events/${ticketId}/ticket`,{},456);assert.equal(result.status,200);}
+    return result;
+  };
+  const qrTicket=await currentTicket();assert.match(qrTicket.data.ticket.image,/^data:image\/gif;base64,/);assert.match(qrTicket.data.ticket.code,/^\d{6}$/);
+  const ticketState=await ticketStored(),ticketCode=ticketState.guests[456].ticket;
+  assert.equal(ticketState.guests[457].ticket,undefined);assert.equal(ticketState.guests[457].ticketCode,undefined,'Opening one ticket must tolerate and preserve unopened legacy bookings.');
+  assert.match(ticketCode,/^[A-F0-9]{12}$/);assert.match(ticketState.guests[456].ticketCode.secret,/^[a-f0-9]{64}$/);
+  assert.equal(ticketState.guests[456].ticketCode.ticket,ticketCode);
+  const issuedAt=Date.parse(qrTicket.data.ticket.serverTime),expiresAt=Date.parse(qrTicket.data.ticket.codeExpiresAt);
+  assert.equal(expiresAt,(Math.floor(issuedAt/60000)+1)*60000);assert.equal(ticketState.guests[456].ticketCode.issuedMinute,Math.floor(issuedAt/60000));
+  assert.equal((await api(`events/${ticketId}/ticket-check`,{code:qrTicket.data.ticket.code},456)).status,400);
+  assert.equal((await ticketStored()).ticketCheckAttempts,undefined,'Guests cannot mutate organiser rate limits.');
+  const otpValidated=await api(`events/${ticketId}/ticket-check`,{code:qrTicket.data.ticket.code});
+  assert.equal(otpValidated.status,200);assert.equal(otpValidated.data.ticket.valid,true);assert.equal(otpValidated.data.ticket.code,ticketCode);
+  const guestTicketProjection=(await api(`events/${ticketId}`,null,456)).data.event;
+  assert.equal(guestTicketProjection.ticket.code,undefined);assert.equal(guestTicketProjection.ticketCode,undefined);
+  const managerTicketProjection=(await api(`events/${ticketId}`)).data.event;
+  const ticketSeed=ticketState.guests[456].ticketCode.secret;
+  for(const projection of [guestTicketProjection,managerTicketProjection,(await api('bootstrap',null,456)).data,(await api('admin/overview',null,999001)).data]){
+    const projected=JSON.stringify(projection);assert.ok(!projected.includes(ticketSeed));assert.ok(!projected.includes('"ticketCode":'));assert.ok(!projected.includes('"code":"'+qrTicket.data.ticket.code+'"'));
+  }
+  assert.deepEqual((await ticketStored()).guests[456].ticketCode,ticketState.guests[456].ticketCode,'Reading app pages must not rotate or issue a code.');
+  const expiredTicketState=await ticketStored();expiredTicketState.guests[456].ticketCode.issuedMinute--;
+  await db.prepare("UPDATE records SET data=? WHERE kind='events' AND id=?").bind(JSON.stringify(expiredTicketState),ticketId).run();
+  assert.equal((await api(`events/${ticketId}/ticket-check`,{code:qrTicket.data.ticket.code})).data.ticket.valid,false,'Only codes requested in the current minute may validate.');
+  const refreshedTicket=await currentTicket();assert.match(refreshedTicket.data.ticket.code,/^\d{6}$/);
+  assert.equal((await ticketStored()).guests[456].ticket,ticketCode,'Refreshing a short code preserves legacy QR and check-in identity.');
   const checkinMessages=()=>telegramCalls.filter(c=>c.method==='sendMessage' && c.params.chat_id===456 && c.params.text?.startsWith('✅ Checked in\n'+ticketInput.title));
   const validated=await api(`events/${ticketId}/ticket-check`,{code:`XE1:${ticketId}:${ticketCode}`});assert.equal(validated.data.ticket.valid,true);assert.equal(validated.data.ticket.checkedInAt,null);
   assert.equal(checkinMessages().length,0);
-  const admitted=await api(`events/${ticketId}/ticket-check`,{code:ticketCode,checkIn:true});assert.equal(admitted.data.ticket.valid,true);assert.equal(admitted.data.ticket.alreadyCheckedIn,false);
+  const admitted=await api(`events/${ticketId}/ticket-check`,{code:refreshedTicket.data.ticket.code,checkIn:true});assert.equal(admitted.data.ticket.valid,true);assert.equal(admitted.data.ticket.alreadyCheckedIn,false);assert.equal(admitted.data.ticket.code,ticketCode);
   // The notification commits with attendance; background delivery may still be draining older messages.
   const queuedCheckins=async()=> (await db.prepare("SELECT params FROM outbox WHERE method='sendMessage' AND json_extract(params,'$.chat_id')=456 AND json_extract(params,'$.text')=?").bind('✅ Checked in\n'+ticketInput.title+'\n1 person').all()).results;
   const queued=await queuedCheckins();assert.ok(checkinMessages().length===1 || queued.length===1);
@@ -278,6 +587,16 @@ try {
   const stillQueued=await queuedCheckins();assert.ok(stillQueued.length<=1);assert.ok(checkinMessages().length<=1);
   assert.ok(checkinMessages().length===1 || stillQueued.length===1);
   const checkedEvent=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(ticketId).first()).data);assert.equal(checkedEvent.checkIns[ticketCode].userId,456);
+  const rateTicket=await currentTicket(),rateState=await ticketStored();
+  rateState.ticketCheckAttempts={123:{minute:Math.floor(Date.parse(rateTicket.data.ticket.serverTime)/60000),failed:9}};
+  await db.prepare("UPDATE records SET data=? WHERE kind='events' AND id=?").bind(JSON.stringify(rateState),ticketId).run();
+  const wrongCode=rateTicket.data.ticket.code==='000000'?'999999':'000000';
+  assert.equal((await api(`events/${ticketId}/ticket-check`,{code:wrongCode})).data.ticket.valid,false);
+  assert.equal((await ticketStored()).ticketCheckAttempts[123].failed,10,'Failed short-code attempts must persist in D1.');
+  const throttledTicket=await api(`events/${ticketId}/ticket-check`,{code:rateTicket.data.ticket.code});
+  assert.equal(throttledTicket.data.ticket.valid,false);assert.match(throttledTicket.data.ticket.reason,/Too many incorrect codes/);
+  assert.equal((await api(`events/${ticketId}/ticket-check`,{code:ticketCode})).data.ticket.valid,true,'Rate limiting must leave legacy QR/manual recovery usable.');
+  assert.deepEqual((await ticketStored()).checkIns,checkedEvent.checkIns,'Expired and throttled OTP attempts cannot change attendance.');
   await api(`events/${ticketId}/cancel`,{confirm:true});assert.equal((await api(`events/${ticketId}/ticket-check`,{code:ticketCode})).data.ticket.valid,false);
   const namedInput={...ticketInput,title:'Named workflow',invitationMode:'named',askParticipantCount:true,inviteMessage:'Join our club celebration!',guestNames:'Alex Smith = 3\nSam Jones',requestId:'77777777-7777-7777-7777-777777777777'};
   const namedEvent=await api('events',namedInput);assert.equal(namedEvent.status,200);assert.equal(namedEvent.data.event.invitees.length,2);assert.equal(namedEvent.data.event.oneTimeInvite,true);assert.equal(namedEvent.data.event.requireApproval,false);assert.equal(namedEvent.data.event.askParticipantCount,false);
@@ -533,13 +852,13 @@ try {
   const guestCohostInvite=await api(`events/${cohostId}/cohost/invite`,{version:cohostRevoked.data.event.cohostVersion,label:'Guest helper'});assert.equal(guestCohostInvite.status,200);
   await message(8007,'/start '+new URL(guestCohostInvite.data.event.cohostInviteUrl).searchParams.get('start'),902);
   const retainedGuest=(await cohostStored()).guests[902];assert.equal(retainedGuest.ticket,cohostGuest.ticket);assert.equal(retainedGuest.participants,2);assert.equal(retainedGuest.status,'yes');
-  assert.equal((await api(`events/${cohostId}/ticket`,{},902)).data.ticket.code,cohostGuest.ticket);
+  assert.match((await api(`events/${cohostId}/ticket`,{},902)).data.ticket.code,/^\d{6}$/);assert.equal((await cohostStored()).guests[902].ticket,cohostGuest.ticket);
   assert.equal((await api(`events/${cohostId}`)).data.event.counts.participants,2);
   const guestCohostOwner=(await api(`events/${cohostId}`)).data.event;
   const guestCohostLinkId=guestCohostOwner.cohostLinks.find(entry=>entry.status==='active' && entry.cohost.id===902).id;
   assert.equal((await api(`events/${cohostId}/cohost/revoke`,{version:guestCohostOwner.cohostVersion,linkId:guestCohostLinkId})).status,200);
   const restoredGuest=(await api(`events/${cohostId}`,null,902)).data.event;
-  assert.equal(restoredGuest.isManager,false);assert.equal(restoredGuest.isOwner,false);assert.equal(restoredGuest.ticket.code,cohostGuest.ticket);assert.equal(restoredGuest.participants,2);
+  assert.equal(restoredGuest.isManager,false);assert.equal(restoredGuest.isOwner,false);assert.equal(restoredGuest.ticket.code,undefined);assert.equal((await cohostStored()).guests[902].ticket,cohostGuest.ticket);assert.equal(restoredGuest.participants,2);
   assert.equal((await api(`events/${cohostId}/gallery`,null,902)).status,403);
   const paidCohostInput={...cohostInput,title:'Paid co-host editing',invitationMode:'tickets',paymentMethod:'bank',displayPrice:'AUD $25',paymentInstructions:'Pay with your booking name as reference.',paymentTerms:'Contact the event owner about refunds.',requestId:'abababab-abab-abab-abab-abababababab'};
   const paidCohostCreated=await api('events',paidCohostInput);assert.equal(paidCohostCreated.status,200);
@@ -581,7 +900,7 @@ try {
   assert.deepEqual(legacyClaimed.cohosts.map(host=>host.id),[1001,1002]);assert.ok((await api('bootstrap',null,1002)).data.events.some(e=>e.id===legacyCohostId && e.isManager));
   const legacyRevoked=await api(`events/${legacyCohostId}/cohost/revoke`,{version:legacyClaimed.cohostVersion,linkId:legacyOwner.cohostLinks[0].id});assert.equal(legacyRevoked.status,200);
   const legacyRestored=(await api(`events/${legacyCohostId}`,null,1001)).data.event;
-  assert.equal(legacyRestored.isManager,false);assert.equal(legacyRestored.ticket.code,'ABCDEF987654');assert.equal((await api(`events/${legacyCohostId}`,null,1002)).data.event.isManager,true);
+  assert.equal(legacyRestored.isManager,false);assert.equal(legacyRestored.ticket.code,undefined);assert.equal((await api(`events/${legacyCohostId}`,null,1002)).data.event.isManager,true);
   const canonicalLegacy=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(legacyCohostId).first()).data);
   assert.deepEqual(canonicalLegacy.guests,legacyStored.guests);
   // A stale compatibility alias cannot resurrect access or leak a reusable event via bootstrap.
@@ -785,6 +1104,130 @@ try {
   managedView=await invitationView();
   assert.equal((await api(invitationPath+'/add',{...addition,requestId:'88812300-0000-4000-8000-000000000005',version:managedView.invitationsVersion},invitationOwner)).status,400);
   assert.equal((await api(invitationPath+'/remove',{token:managedView.invitees[0].token,notify:false,confirm:true,version:managedView.invitationsVersion},invitationOwner)).status,400);
+  // The compact invitation tools enforce permissions, optimistic concurrency and
+  // idempotency in the Worker, including the notification outbox and private audit.
+  const toolsOwner=898123,toolsGuest=898201,toolsOtherGuest=898202,toolsObserver=898203;
+  const toolsRequest=n=>'89812300-0000-4000-8000-'+String(n).padStart(12,'0');
+  const toolsCreated=await api('events',{...managementInput,title:'Invitation tool integration',guestNames:'Editable = 2\nObserver\nUnopened = ?',requestId:toolsRequest(1)},toolsOwner);
+  assert.equal(toolsCreated.status,200,JSON.stringify(toolsCreated.data));
+  const toolsId=toolsCreated.data.event.id,toolsPath=`events/${toolsId}/invitations`;
+  const toolsStored=async()=>JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(toolsId).first()).data);
+  const toolsView=async uid=>(await api(`events/${toolsId}`,null,uid??toolsOwner)).data.event;
+  const toolsInvite=toolsCreated.data.event.invitees.find(invite=>invite.name==='Editable');
+  const toolsObserverInvite=toolsCreated.data.event.invitees.find(invite=>invite.name==='Observer');
+  const toolsUnopenedInvite=toolsCreated.data.event.invitees.find(invite=>invite.name==='Unopened');
+  let toolsUpdate=98000;
+  const toolsOpen=async(invite,uid)=>message(toolsUpdate++,'/start '+new URL(invite.url).searchParams.get('start'),uid);
+  await toolsOpen(toolsInvite,toolsGuest);await toolsOpen(toolsInvite,toolsOtherGuest);await toolsOpen(toolsObserverInvite,toolsObserver);
+  await callback(toolsUpdate++,`r:${toolsId}:yes:0`,toolsGuest);
+  let toolsCurrent=await toolsView();
+  assert.equal(toolsCurrent.invitees.find(invite=>invite.token===toolsInvite.token).responses.length,2);
+  const trackedHistory=toolsCurrent.invitees.find(invite=>invite.token===toolsInvite.token).history;
+  assert.ok(trackedHistory.some(entry=>entry.type==='created'));
+  assert.equal(trackedHistory.filter(entry=>entry.type==='opened').length,2);
+  assert.ok(trackedHistory.some(entry=>entry.type==='responded' && entry.userId===toolsGuest && entry.status==='yes'));
+  const editTool={token:toolsInvite.token,version:toolsCurrent.invitationsVersion,requestId:toolsRequest(2),name:'Edited household',participants:3,participantMode:'preset'};
+  const responseTool={token:toolsInvite.token,version:toolsCurrent.invitationsVersion,requestId:toolsRequest(3),userId:toolsGuest,status:'maybe',notify:false};
+  const revokeTool={token:toolsInvite.token,version:toolsCurrent.invitationsVersion,requestId:toolsRequest(4),confirm:true,notify:false};
+  const deleteTool={token:toolsInvite.token,version:toolsCurrent.invitationsVersion,requestId:toolsRequest(5),confirm:true};
+  const beforeDeniedTools=await toolsStored(),beforeDeniedToolIds=new Set((await invitationOutbox()).map(row=>row.id));
+  for(const [action,input] of [['edit',editTool],['response',responseTool],['revoke',revokeTool],['delete',deleteTool]])assert.equal((await api(toolsPath+'/'+action,input,toolsObserver)).status,400);
+  assert.deepEqual(await toolsStored(),beforeDeniedTools,'A guest cannot mutate invitation settings, responses or the private audit.');
+  assert.equal((await invitationOutbox()).filter(row=>!beforeDeniedToolIds.has(row.id)).length,0);
+  const observerBefore=await toolsView(toolsObserver);
+  assert.equal(observerBefore.invitees,undefined);assert.equal(observerBefore.revokedInvitees,undefined);assert.equal(observerBefore.invitationHistory,undefined);
+  assert.equal((await api(toolsPath+'/delete',deleteTool,toolsOwner)).status,400,'Deleting an active invitation must require revocation first.');
+  assert.equal((await api(toolsPath+'/edit',{...editTool,version:'0'.repeat(16)},toolsOwner)).status,400);
+  await db.prepare("INSERT INTO records(kind,id,data) VALUES ('sessions',?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data").bind(String(toolsGuest),JSON.stringify({event:toolsId,step:'comment',response:{...(await toolsStored()).guests[toolsGuest]}})).run();
+  const editedTool=await api(toolsPath+'/edit',editTool,toolsOwner);
+  assert.equal(editedTool.status,200,JSON.stringify(editedTool.data));assert.equal(editedTool.data.edited,true);
+  const editedInvite=editedTool.data.event.invitees.find(invite=>invite.token===toolsInvite.token);
+  assert.equal(editedInvite.url,toolsInvite.url);assert.equal(editedInvite.name,'Edited household');assert.equal(editedInvite.participants,3);
+  assert.equal(editedInvite.participantMode,null);assert.ok(editedInvite.history.some(entry=>entry.type==='edited'));
+  for(const uid of [toolsGuest,toolsOtherGuest])assert.equal((await toolsStored()).guests[uid].name,'Edited household');
+  assert.equal((await toolsStored()).guests[toolsGuest].participants,3);assert.equal(await invitationSession(toolsGuest),null);
+  assert.equal((await api(toolsPath+'/edit',editTool,toolsOwner)).data.alreadyApplied,true);
+  toolsCurrent=await toolsView();
+  assert.equal((await api(toolsPath+'/response',{...responseTool,version:toolsCurrent.invitationsVersion,userId:undefined},toolsOwner)).status,400,'Reusable links need an explicit guest response.');
+  assert.equal((await api(toolsPath+'/response',{...responseTool,token:toolsUnopenedInvite.token,version:toolsCurrent.invitationsVersion,userId:899999},toolsOwner)).status,400,'Unopened links must not invent Telegram guests.');
+  const silentResponse={...responseTool,version:toolsCurrent.invitationsVersion};
+  const beforeSilentToolIds=new Set((await invitationOutbox()).map(row=>row.id));
+  const silentlyChanged=await api(toolsPath+'/response',silentResponse,toolsOwner);
+  assert.equal(silentlyChanged.status,200,JSON.stringify(silentlyChanged.data));assert.equal(silentlyChanged.data.changed,true);assert.equal(silentlyChanged.data.notifyCount,0);
+  assert.equal((await toolsStored()).guests[toolsGuest].status,'maybe');assert.equal((await toolsStored()).guests[toolsOtherGuest].status,'later');
+  assert.equal((await invitationOutbox()).filter(row=>!beforeSilentToolIds.has(row.id)).length,0,'Silent response changes must not enqueue any Telegram messages.');
+  const silentToolReplay=await api(toolsPath+'/response',silentResponse,toolsOwner);
+  assert.equal(silentToolReplay.status,200);assert.equal(silentToolReplay.data.alreadyApplied,true);assert.equal(silentToolReplay.data.notifyCount,0);
+  toolsCurrent=await toolsView();
+  const notifiedResponse={...responseTool,status:'no',notify:true,version:toolsCurrent.invitationsVersion,requestId:toolsRequest(6)};
+  const beforeNotifiedToolIds=new Set((await invitationOutbox()).map(row=>row.id));
+  const notifiedTool=await api(toolsPath+'/response',notifiedResponse,toolsOwner);
+  assert.equal(notifiedTool.status,200,JSON.stringify(notifiedTool.data));assert.equal(notifiedTool.data.notifyCount,1);
+  const notifiedToolRows=async()=>(await invitationOutbox()).filter(row=>!beforeNotifiedToolIds.has(row.id));
+  assert.equal((await notifiedToolRows()).length,1);assert.equal((await notifiedToolRows())[0].params.chat_id,toolsGuest);
+  assert.match((await notifiedToolRows())[0].params.text,/organiser recorded.*Declined/);
+  const notifiedToolReplay=await api(toolsPath+'/response',notifiedResponse,toolsOwner);
+  assert.equal(notifiedToolReplay.status,200);assert.equal(notifiedToolReplay.data.alreadyApplied,true);assert.equal(notifiedToolReplay.data.notifyCount,0);
+  assert.equal((await notifiedToolRows()).length,1,'A repeated request must never enqueue the notification twice.');
+  assert.equal((await api(toolsPath+'/response',{...notifiedResponse,requestId:toolsRequest(7)},toolsOwner)).status,400,'Fresh requests cannot reuse a stale version.');
+  toolsCurrent=await toolsView();
+  const acceptedTool=await api(toolsPath+'/response',{...responseTool,status:'yes',participants:3,version:toolsCurrent.invitationsVersion,requestId:toolsRequest(8)},toolsOwner);
+  assert.equal(acceptedTool.status,200,JSON.stringify(acceptedTool.data));assert.equal(acceptedTool.data.notifyCount,0);
+  const toolsTicket=(await toolsStored()).guests[toolsGuest].ticket;
+  assert.equal((await api(`events/${toolsId}/ticket-check`,{code:toolsTicket},toolsOwner)).data.ticket.valid,true);
+  // Private phone/payment fields remain in the archive without entering its public timeline.
+  const privateToolState=await toolsStored();
+  Object.assign(privateToolState.guests[toolsGuest],{phone:'fictional-private-phone',payment:{status:'refunded',order:'fictional-refunded-order',amount:17}});
+  await db.prepare("UPDATE records SET data=? WHERE kind='events' AND id=?").bind(JSON.stringify(privateToolState),toolsId).run();
+  const toolsCheckedIn=await api(`events/${toolsId}/ticket-check`,{code:toolsTicket,checkIn:true},toolsOwner);
+  assert.equal(toolsCheckedIn.status,200);assert.equal(toolsCheckedIn.data.ticket.valid,true);
+  toolsCurrent=await toolsView();
+  const beforeCheckedInChange=await toolsStored(),beforeCheckedInIds=new Set((await invitationOutbox()).map(row=>row.id));
+  assert.equal((await api(toolsPath+'/response',{...responseTool,status:'no',notify:true,version:toolsCurrent.invitationsVersion,requestId:toolsRequest(10)},toolsOwner)).status,400);
+  assert.equal((await api(toolsPath+'/edit',{...editTool,participants:4,version:toolsCurrent.invitationsVersion,requestId:toolsRequest(11)},toolsOwner)).status,400);
+  assert.deepEqual(await toolsStored(),beforeCheckedInChange,'Check-in prevents RSVP or attendance changes.');
+  assert.equal((await invitationOutbox()).filter(row=>!beforeCheckedInIds.has(row.id)).length,0);
+  toolsCurrent=await toolsView();
+  const currentRevoke={...revokeTool,version:toolsCurrent.invitationsVersion};
+  const beforeRevokeToolIds=new Set((await invitationOutbox()).map(row=>row.id));
+  const revokedTool=await api(toolsPath+'/revoke',currentRevoke,toolsOwner);
+  assert.equal(revokedTool.status,200,JSON.stringify(revokedTool.data));assert.equal(revokedTool.data.revoked,true);assert.equal(revokedTool.data.notifyCount,0);
+  assert.equal(revokedTool.data.event.invitees.some(invite=>invite.token===toolsInvite.token),false);
+  const revokedToolDto=revokedTool.data.event.revokedInvitees.find(invite=>invite.token===toolsInvite.token);
+  assert.equal(revokedToolDto.url,null);assert.equal(revokedToolDto.canNotify,false);assert.equal(revokedToolDto.canChangeResponse,false);
+  assert.ok(revokedToolDto.history.some(entry=>entry.type==='revoked'));assert.doesNotMatch(JSON.stringify(revokedToolDto.history),/fictional-private-phone|fictional-refunded-order/);
+  assert.equal((await invitationOutbox()).filter(row=>!beforeRevokeToolIds.has(row.id)).length,0);
+  for(const uid of [toolsGuest,toolsOtherGuest]){
+    assert.equal((await toolsStored()).guests[uid],undefined);assert.equal((await toolsStored()).reminders?.[uid],undefined);
+    assert.equal((await api(`events/${toolsId}`,null,uid)).status,403);
+  }
+  assert.equal((await api(`events/${toolsId}/ticket-check`,{code:toolsTicket},toolsOwner)).data.ticket.valid,false);
+  assert.equal((await api(`events/${toolsId}/ticket`,{},toolsGuest)).status,400);
+  await toolsOpen(toolsInvite,toolsGuest);assert.equal((await toolsStored()).guests[toolsGuest],undefined);
+  const observerAfter=await toolsView(toolsObserver);assert.equal(observerAfter.revokedInvitees,undefined);assert.equal(observerAfter.invitees,undefined);
+  assert.equal((await api(toolsPath+'/revoke',currentRevoke,toolsOwner)).data.alreadyApplied,true);
+  toolsCurrent=await toolsView();
+  const currentDelete={...deleteTool,version:toolsCurrent.invitationsVersion};
+  const deletedTool=await api(toolsPath+'/delete',currentDelete,toolsOwner);
+  assert.equal(deletedTool.status,200,JSON.stringify(deletedTool.data));assert.equal(deletedTool.data.deleted,true);
+  assert.equal(deletedTool.data.event.revokedInvitees.some(invite=>invite.token===toolsInvite.token),false);
+  const deletedToolState=await toolsStored();
+  assert.ok(deletedToolState.removedInvitations[toolsInvite.token].deletedAt);
+  assert.equal(deletedToolState.removedInvitations[toolsInvite.token].responses[toolsGuest].phone,'fictional-private-phone');
+  assert.equal(deletedToolState.removedInvitations[toolsInvite.token].responses[toolsGuest].payment.order,'fictional-refunded-order');
+  assert.equal(deletedToolState.removedInvitations[toolsInvite.token].responses[toolsGuest].ticket,toolsTicket);
+  assert.equal(deletedToolState.checkIns[toolsTicket].userId,toolsGuest);assert.equal(deletedToolState.checkIns[toolsTicket].participants,3);
+  assert.equal(deletedToolState.invitationHistory[toolsInvite.token].filter(entry=>entry.type==='deleted').length,1);
+  assert.equal((await api(toolsPath+'/delete',currentDelete,toolsOwner)).data.alreadyApplied,true);
+  assert.equal((await toolsStored()).invitationHistory[toolsInvite.token].filter(entry=>entry.type==='deleted').length,1);
+  toolsCurrent=await toolsView();
+  const notifiedRevoke={...revokeTool,token:toolsObserverInvite.token,notify:true,version:toolsCurrent.invitationsVersion,requestId:toolsRequest(9)};
+  const beforeNotifyRevokeIds=new Set((await invitationOutbox()).map(row=>row.id));
+  const notifiedRevocation=await api(toolsPath+'/revoke',notifiedRevoke,toolsOwner);
+  assert.equal(notifiedRevocation.status,200);assert.equal(notifiedRevocation.data.notifyCount,1);
+  assert.equal((await api(toolsPath+'/revoke',notifiedRevoke,toolsOwner)).data.alreadyApplied,true);
+  const notifyRevokeRows=(await invitationOutbox()).filter(row=>!beforeNotifyRevokeIds.has(row.id));
+  assert.equal(notifyRevokeRows.length,1);assert.equal(notifyRevokeRows[0].params.chat_id,toolsObserver);assert.match(notifyRevokeRows[0].params.text,/revoked/);
   // Fixed named counts survive create/edit/add; guests cannot use stale or forged count controls.
   const fixedOwner=890123,fixedGuestId=890201,flexibleGuestId=890202;
   const fixedInput={...managementInput,title:'Fixed attendee invitations',guestNames:'Fixed Guest = 2*\nFlexible Guest = 2',requestId:'89012300-0000-4000-8000-000000000001'};
@@ -838,5 +1281,6 @@ try {
   assert.equal((await api(fixedPath,null,flexibleGuestId)).data.event.participants,3);
   assert.equal((await api(fixedPath,null,fixedOwner)).data.event.counts.participants,5);
   await db.prepare('DELETE FROM delivery_lease WHERE owner=?').bind(invitationDeliveryOwner).run();
-  console.log('Worker integration passed: fixed personal attendee counts and live count button captions, invitation response summaries, add/revoke with notify or silent removal, exact durable notifications, native button event creation, profiles, private photos, ticket bookings, personal RSVP links, multiple tagged co-host links and isolated revocation, legacy co-host migration, approvals, payments, durable refunds and media. Telegram mocked.');
+  console.log('Worker integration passed: compact invitation tools, private history and archives, edits, response changes, revocation/deletion and idempotent notifications; fixed personal attendee counts and live count button captions, invitation response summaries, add/revoke with notify or silent removal, exact durable notifications, native button event creation, profiles, private photos, ticket bookings, private expiring check-in codes and legacy QR compatibility, personal RSVP links, multiple tagged co-host links and isolated revocation, legacy co-host migration, approvals, payments, durable refunds and media. Telegram mocked.');
 } finally { await mf.dispose(); }
+await checkTestAccess();

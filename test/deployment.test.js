@@ -35,14 +35,28 @@ test('invalid configuration reports no private input or parser excerpts', () => 
 });
 
 test('generated config takes application and assets from source and never includes credentials', async () => {
-  const dev = development(); dev.main = 'untrusted.js'; dev.assets = { directory: '../private' }; dev.vars.TELEGRAM_BOT_TOKEN = 'fictional-secret'; dev.triggers = { crons: [] }; dev.env = { production: production() };
+  const dev = development(); dev.main = 'untrusted.js'; dev.assets = { directory: '../private' }; dev.vars.TELEGRAM_BOT_TOKEN = 'fictional-secret'; dev.vars.WHITELIST_USER_IDS = '900000001,900000002'; dev.triggers = { crons: [] }; dev.env = { production: production() };
   const config = await buildConfig(dev, 'development');
   assert.equal(config.main, 'src/worker.js'); assert.equal(config.assets.directory, './public');
   assert.equal(config.assets.binding, 'ASSETS'); assert.equal(config.d1_databases[0].binding, 'DB');
   assert.equal(config.d1_databases[0].migrations_dir, 'migrations');
   assert.equal(config.vars.APP_ENV, 'development'); assert.deepEqual(config.triggers.crons, []);
-  assert.equal(config.vars.TELEGRAM_BOT_TOKEN, undefined); assert.equal(config.env, undefined);
-  assert.doesNotMatch(JSON.stringify(config), /fictional-secret|untrusted|private/);
+  assert.equal(config.vars.TELEGRAM_BOT_TOKEN, undefined); assert.equal(config.vars.WHITELIST_USER_IDS, undefined); assert.equal(config.env, undefined);
+  assert.doesNotMatch(JSON.stringify(config), /fictional-secret|900000001|900000002|untrusted|private/);
+});
+
+test('test whitelist enablement is explicit and limited to development', async () => {
+  assert.equal((await buildConfig(development(), 'development')).vars.TEST_WHITELIST_ENABLED, 'false');
+  for (const value of ['true', ' true ', true]) {
+    const dev = development(); dev.vars.TEST_WHITELIST_ENABLED = value;
+    assert.equal((await buildConfig(dev, 'development')).vars.TEST_WHITELIST_ENABLED, 'true');
+    const prod = production(); prod.vars.TEST_WHITELIST_ENABLED = value;
+    assert.equal((await buildConfig(prod, 'production')).vars.TEST_WHITELIST_ENABLED, 'false');
+  }
+  for (const value of ['false', 'TRUE', '1', '', false, null]) {
+    const dev = development(); dev.vars.TEST_WHITELIST_ENABLED = value;
+    assert.equal((await buildConfig(dev, 'development')).vars.TEST_WHITELIST_ENABLED, 'false');
+  }
 });
 
 test('development cron stays disabled until explicitly configured', async () => {

@@ -131,6 +131,10 @@ Keep real IDs in private Worker secrets or bot commands. `WHITELIST_USER_IDS` su
 
 Removing the final tester also opens access to everyone; every change confirms whether access is restricted or open. Invalid configuration restricts access until the superadmin resets it. Payment and refund confirmations already issued by Telegram are still recorded after a tester is removed. Existing queued notifications are preserved.
 
+In the development Mini App, open **Profile → Super admin → Dev access** to turn the whitelist on or off and add or remove numeric Telegram user IDs. The panel warns before enabling restrictions or removing the last allowed user. The superadmin always retains access. Turning it off keeps the saved IDs and permits everyone; turning it on restricts access when the list contains IDs. An empty ordinary whitelist still permits everyone. These changes apply immediately to the development bot and Mini App and survive redeployment. The `TEST_WHITELIST_ENABLED` variable is the initial default; the saved panel setting takes precedence. Production does not expose these controls or honor the development setting.
+
+When development contains a production snapshot, its protection takes priority: the panel cannot turn access off, and removing the last tester leaves admin-only access. Database refresh retains the saved switch and whitelist together with the other development settings.
+
 This restriction applies to the Cloudflare Worker, including its webhook and Mini App APIs. Use `wrangler dev` for local access-control testing; the standalone `npm start` polling process does not enforce this hosted feature. The whitelist command is advertised only in the configured superadmin's private chat.
 
 ## Copy production data to dev

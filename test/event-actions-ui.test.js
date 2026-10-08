@@ -68,11 +68,15 @@ test('direct delete has a separate permanent removal confirmation', async () => 
   assert.equal(f.calls[0].path, 'events/' + event.id + '/delete');
 });
 
-test('keep event and Escape dismiss without posting', async () => {
+test('keep event, top close and Escape dismiss without posting', async () => {
   const f = harness();
   let result = f.cancelEvent(fixture());
   f.$('event-end-back').onclick();
   assert.equal(await result, false);
+  result = f.deleteEvent(fixture());
+  f.$('event-end-close').onclick();
+  assert.equal(await result, false);
+  assert.equal(f.$('event-end-dialog').open, false);
   result = f.deleteEvent(fixture());
   let prevented = false;
   f.$('event-end-dialog').oncancel({ preventDefault() { prevented = true; } });
@@ -114,10 +118,12 @@ test('busy confirmation blocks double posts, dismissal and changing action', asy
   const posting = f.$('event-end-confirm').onclick();
   assert.equal(f.$('event-end-confirm').disabled, true);
   assert.equal(f.$('event-end-back').disabled, true);
+  assert.equal(f.$('event-end-close').disabled, true);
   assert.equal(f.$('event-end-delete').disabled, true);
   assert.equal(f.$('event-end-dialog').attributes['aria-busy'], 'true');
   await f.$('event-end-confirm').onclick();
   f.$('event-end-back').onclick();
+  f.$('event-end-close').onclick();
   f.$('event-end-dialog').oncancel({ preventDefault() {} });
   assert.equal(f.$('event-end-dialog').open, true);
   assert.equal(await f.deleteEvent(fixture()), false);

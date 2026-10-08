@@ -1,5 +1,7 @@
 import { Bot } from './bot.js';
 import {readOnlinePricing} from './exchange.js';
+import { snapshotActive } from './snapshot-mode.js';
+import { mayUseTestApp, TestAccessError } from './test-access.js';
 
 export class BusyError extends Error {}
 
@@ -8,6 +10,7 @@ export async function mutateState(env, action, updateId) {
   const lock = await env.DB.prepare('INSERT INTO lease (id, owner, expires) VALUES (1, ?, unixepoch()+60) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner, expires=excluded.expires WHERE lease.expires < unixepoch() RETURNING owner').bind(owner).first();
   if (!lock) throw new BusyError('Please try again in a moment.');
   try {
+    if (env.snapshotUser && !await mayUseTestApp(env, env.snapshotUser)) throw new TestAccessError();
     if (updateId !== undefined && await env.DB.prepare('SELECT id FROM processed WHERE id=?').bind(updateId).first()) return;
     const { results } = await env.DB.prepare("SELECT kind,id,data FROM records WHERE kind IN ('events','sessions','preferences')").all();
     const data = { events: {}, sessions: {}, preferences: {} };
@@ -15,9 +18,15 @@ export async function mutateState(env, action, updateId) {
     const before = new Map(results.map(r => [`${r.kind}:${r.id}`, r.data]));
     const messages = [];
     const bot = new Bot({ data }, async (method, params) => { messages.push({ method, params }); return {}; }, env.BOT_USERNAME, env.APP_URL);
+    bot.productionSnapshot = await snapshotActive(env);
     bot.pricing=await readOnlinePricing(env,data.preferences._pricing);
-    const value = await action(data, bot);
-    const batch = [env.DB.prepare('INSERT INTO commits(owner) VALUES (?)').bind(owner)];
+    const settings = [];
+    const value = await action(data, bot, {
+      setAppSetting(key, value) {
+        settings.push(env.DB.prepare('INSERT INTO app_settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(key, value));
+      }
+    });
+    const batch = [env.DB.prepare('INSERT INTO commits(owner) VALUES (?)').bind(owner), ...settings];
     for (const kind of ['events', 'sessions', 'preferences']) {
       for (const [id, record] of Object.entries(data[kind])) {
         const serialized = JSON.stringify(record);

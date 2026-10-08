@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {addInvitations,removeInvitation,invitationsVersion,managedInvitations} from '../src/invitation-management.js';
+import {addInvitations,removeInvitation,invitationsVersion,managedInvitations,revokedInvitations,editInvitation,changeInvitationResponse,revokeInvitation,deleteInvitation} from '../src/invitation-management.js';
+import {appendInvitationHistory,invitationHistory} from '../src/invitation-history.js';
 import {invitationSettings,claimInvitation,invitationAvailable} from '../src/invitations.js';
 import {publicEvent} from '../src/mini-api.js';
 import {Bot} from '../src/bot.js';
@@ -167,4 +168,229 @@ test('removed unpaid invoice can no longer pass checkout',()=>{
   Object.assign(claimInvitation(f.e,f.token,2),{status:'yes',approval:'approved',participants:2,payment:{order:'order',status:'pending'}});
   f.data.preferences[2]={starOrders:{order:{id:'order',event:f.e.id,owner:1,unitPrice:10,pricing:'group',terms:'Terms',amount:10,participants:2,status:'pending'}}};
   f.remove();assert.equal(checkout(f.bot,{id:'checkout',from:{id:2},currency:'XTR',total_amount:10,invoice_payload:'order'}).ok,false);
+});
+
+const mutationInput=(f,fields={})=>({token:f.token,version:invitationsVersion(f.e),requestId,...fields});
+const editInput=(f,fields={})=>mutationInput(f,{name:'Alex Smith',participants:3,participantMode:'preset',...fields});
+const responseInput=(f,fields={})=>mutationInput(f,{userId:2,status:'yes',participants:2,notify:false,...fields});
+const revokeInput=(f,fields={})=>mutationInput(f,{confirm:true,notify:false,...fields});
+
+test('editing keeps the invitation token and history, updates linked guests, and clears partial responses',()=>{
+  const f=fixture();f.e.oneTimeInvite=false;
+  const guest=claimInvitation(f.e,f.token,2);Object.assign(guest,{status:'yes',participants:2,approval:'approved'});
+  issueTicket(f.e,2);const ticket=guest.ticket;claimInvitation(f.e,f.token,3);
+  f.data.sessions={2:{event:f.e.id,step:'comment',response:{...guest}},3:{event:f.e.id,step:'phone'},8:{event:'other',step:'upload'}};
+  const before=invitationHistory(f.e,f.token).length;
+  const input=editInput(f),result=editInvitation(f.e,1,input,f.data.sessions,Date.parse('2090-01-01T00:00:00Z'));
+  assert.equal(result.edited,true);assert.equal(f.e.invitees[f.token].name,'Alex Smith');
+  assert.equal(f.e.guests[2].name,'Alex Smith');assert.equal(f.e.guests[3].name,'Alex Smith');
+  assert.equal(f.e.guests[2].participants,3);assert.equal(f.e.guests[2].ticket,ticket);
+  assert.deepEqual(f.data.sessions,{8:{event:'other',step:'upload'}});
+  assert.equal(invitationHistory(f.e,f.token).length,before+1);
+  assert.deepEqual(invitationHistory(f.e,f.token).at(-1),{type:'edited',at:'2090-01-01T00:00:00.000Z',actorId:1,actorRole:'organiser',name:'Alex Smith',previousName:'Alex',participants:3,previousParticipants:2,participantMode:'preset',previousParticipantMode:'preset'});
+  assert.equal(editInvitation(f.e,1,input,f.data.sessions).alreadyApplied,true);
+  assert.equal(invitationHistory(f.e,f.token).length,before+1);
+  assert.throws(()=>editInvitation(f.e,1,{...input,name:'Different name'},f.data.sessions));
+});
+
+test('invite edit rejects malformed and duplicate names, invalid settings, and stale lists without changes',()=>{
+  for(const fields of [{name:''},{name:'A\nB'},{name:'A = 2'},{name:'Sam'},{participants:11},{participantMode:'invalid'},{participantMode:'ask',participants:2},{participantMode:'default',participants:1},{version:'stale'},{requestId:undefined}]){
+    const f=fixture(),before=structuredClone(f.e);
+    assert.throws(()=>editInvitation(f.e,1,editInput(f,fields),f.data.sessions));assert.deepEqual(f.e,before);
+  }
+  for(const mode of ['default','ask','confirm','fixed']){
+    const f=fixture();editInvitation(f.e,1,editInput(f,{participantMode:mode,participants:['default','ask'].includes(mode)?null:4}));
+    assert.equal(f.e.invitees[f.token].participantMode,['default'].includes(mode)?undefined:mode);
+  }
+});
+
+test('active payment and checked-in attendees can be renamed but their attendance settings stay protected',()=>{
+  for(const status of ['reported','paid','processing','refund_pending','refund_failed','checked-in']){
+    const f=fixture(),guest=claimInvitation(f.e,f.token,2);
+    Object.assign(guest,{status:'yes',participants:2,approval:'approved',ticket:'ABCDEF123456'});
+    if(status==='checked-in')f.e.checkIns={ABCDEF123456:{userId:2,at:'2090-01-01T00:00:00Z',participants:2}};
+    else guest.payment={status,order:'private-order'};
+    const before=structuredClone(f.e);
+    assert.throws(()=>editInvitation(f.e,1,editInput(f),f.data.sessions),/payment|check-in/);assert.deepEqual(f.e,before);
+    editInvitation(f.e,1,editInput(f,{participants:2}),f.data.sessions);
+    assert.equal(f.e.guests[2].name,'Alex Smith');assert.equal(f.e.guests[2].ticket,'ABCDEF123456');assert.deepEqual(f.e.guests[2].payment,before.guests[2].payment);assert.deepEqual(f.e.checkIns,before.checkIns);
+  }
+});
+
+test('organiser RSVP requires an opened real guest and explicitly selects one reusable response',()=>{
+  const f=fixture(),before=structuredClone(f.e);
+  assert.throws(()=>changeInvitationResponse(f.e,1,responseInput(f)),/open their invitation/);assert.deepEqual(f.e,before);
+  f.e.oneTimeInvite=false;claimInvitation(f.e,f.token,2);claimInvitation(f.e,f.token,3);
+  for(const userId of [undefined,null,'2',4])assert.throws(()=>changeInvitationResponse(f.e,1,responseInput(f,{userId})));
+  f.data.sessions={2:{event:f.e.id,step:'phone'},3:{event:f.e.id,step:'phone'}};
+  changeInvitationResponse(f.e,1,responseInput(f),f.data.sessions);
+  assert.equal(f.e.guests[2].status,'yes');assert.equal(f.e.guests[3].status,'later');assert.equal(f.data.sessions[2],undefined);assert.ok(f.data.sessions[3]);
+  assert.equal(invitationHistory(f.e,f.token).at(-1).actorRole,'organiser');assert.equal(invitationHistory(f.e,f.token).at(-1).userId,2);
+});
+
+test('organiser RSVP consumes the single-use link for its actual guest, keeps deadlines, and sends no retry notification',()=>{
+  const f=fixture();claimInvitation(f.e,f.token,2);claimInvitation(f.e,f.token,3);
+  f.e.responseDeadline='2000-01-01T00:00:00Z';f.e.defaultReminder=120;
+  const input=responseInput(f,{notify:true});
+  assert.deepEqual(changeInvitationResponse(f.e,1,input,f.data.sessions),{changed:true,status:'yes',notifyCount:1,recipients:[2]});
+  assert.equal(f.e.invitees[f.token].respondedBy,2);assert.equal(f.e.guests[3],undefined);assert.equal(f.e.responseDeadline,'2000-01-01T00:00:00Z');
+  assert.equal(invitationAvailable(f.e,3,f.token),false);assert.equal(verifyTicket(f.e,1,f.e.guests[2].ticket).valid,true);assert.equal(f.e.reminders[2].minutes,120);
+  assert.equal(f.e.guests[2].ticketCode,undefined,'organiser acceptance does not issue a rotating code before the guest requests it');
+  const history=structuredClone(f.e.invitationHistory);
+  assert.deepEqual(changeInvitationResponse(f.e,1,input,f.data.sessions),{changed:true,status:'yes',notifyCount:0,alreadyApplied:true,recipients:[]});assert.deepEqual(f.e.invitationHistory,history);
+  const reordered=Object.fromEntries(Object.entries(input).reverse());assert.equal(changeInvitationResponse(f.e,1,reordered,f.data.sessions).alreadyApplied,true);
+  assert.throws(()=>changeInvitationResponse(f.e,1,{...input,status:'no'},f.data.sessions));
+});
+
+test('organiser RSVP rejects invalid counts, fixed count changes and protected attendance atomically',()=>{
+  for(const fields of [{status:'invalid'},{notify:undefined},{notify:'false'},{participants:0},{participants:11},{participants:'2'},{version:'stale'},{requestId:undefined}]){
+    const f=fixture();claimInvitation(f.e,f.token,2);const before=structuredClone(f.e);
+    assert.throws(()=>changeInvitationResponse(f.e,1,responseInput(f,fields),f.data.sessions));assert.deepEqual(f.e,before);
+  }
+  for(const names of ['Alex = 2*','Alex']){
+    const f=fixture(names);claimInvitation(f.e,f.token,2);
+    assert.throws(()=>changeInvitationResponse(f.e,1,responseInput(f,{participants:3})),/fixed attendee|one person/);
+  }
+  for(const status of ['reported','paid','processing','refund_pending','refund_failed','checked-in']){
+    const f=fixture(),guest=claimInvitation(f.e,f.token,2);Object.assign(guest,{status:'yes',approval:'approved',ticket:'ABCDEF123456'});
+    if(status==='checked-in')f.e.checkIns={ABCDEF123456:{userId:2,at:'2090-01-01'}};else guest.payment={status};
+    const before=structuredClone(f.e);
+    assert.throws(()=>changeInvitationResponse(f.e,1,responseInput(f,{status:'no'})));assert.deepEqual(f.e,before);
+    assert.throws(()=>changeInvitationResponse(f.e,1,responseInput(f,{participants:3})));assert.deepEqual(f.e,before);
+  }
+});
+
+test('leaving acceptance revokes ticket and reminders while later remains linked to the same holder',()=>{
+  for(const status of ['no','maybe','later']){
+    const f=fixture(),guest=claimInvitation(f.e,f.token,2);Object.assign(guest,{status:'yes',approval:'approved'});issueTicket(f.e,2);
+    f.e.invitees[f.token].respondedBy=2;f.e.reminders={2:{minutes:120}};const ticket=guest.ticket;
+    changeInvitationResponse(f.e,1,responseInput(f,{status}));
+    assert.equal(f.e.guests[2].status,status);assert.equal(f.e.guests[2].ticket,undefined);assert.equal(f.e.reminders[2],undefined);assert.equal(verifyTicket(f.e,1,ticket).valid,false);assert.equal(f.e.invitees[f.token].respondedBy,2);
+  }
+});
+
+test('organiser acceptance preserves payment requirements and never creates an unpaid ticket',()=>{
+  const f=fixture();Object.assign(f.e,{paymentMethod:'stars',starPrice:10,starPricing:'person'});claimInvitation(f.e,f.token,2);
+  changeInvitationResponse(f.e,1,responseInput(f));
+  assert.equal(f.e.guests[2].status,'yes');assert.equal(f.e.guests[2].approval,'approved');assert.equal(f.e.guests[2].ticket,undefined);assert.equal(f.e.guests[2].payment,undefined);assert.equal(responseCounts(f.e).awaitingPayment,1);
+});
+
+test('organiser records explicit Respond later once instead of treating an opened placeholder as an RSVP',()=>{
+  const f=fixture();claimInvitation(f.e,f.token,2);
+  const input=responseInput(f,{status:'later',notify:true});
+  assert.equal(changeInvitationResponse(f.e,1,input).changed,true);
+  assert.equal(invitationHistory(f.e,f.token).at(-1).type,'responded');
+  assert.equal(invitationHistory(f.e,f.token).at(-1).status,'later');
+  const before=structuredClone(f.e.invitationHistory);
+  assert.equal(changeInvitationResponse(f.e,1,input).alreadyApplied,true);
+  const next=responseInput(f,{status:'later',notify:true,requestId:'22222222-2222-4222-8222-222222222222'});
+  assert.equal(changeInvitationResponse(f.e,1,next).changed,false);assert.deepEqual(f.e.invitationHistory,before);
+});
+
+test('revocation retains a manager-only timeline and archived RSVP, invalidates access, and deletion retains audit records',()=>{
+  const f=fixture(),guest=claimInvitation(f.e,f.token,2);Object.assign(guest,{status:'yes',participants:2,approval:'approved',ticket:'ABCDEF123456',phone:'private phone',comment:'private comment',payment:{status:'paid',order:'private-order'}});
+  f.e.checkIns={ABCDEF123456:{userId:2,at:'2090-01-01T00:00:00Z',participants:2}};f.e.reminders={2:{minutes:120}};
+  f.data.preferences[2]={starOrders:{'private-order':{status:'paid',charge:'private-charge'}}};
+  f.data.sessions[2]={event:f.e.id,step:'upload'};const input=revokeInput(f,{notify:true});
+  assert.deepEqual(revokeInvitation(f.e,1,input,f.data.sessions,Date.parse('2090-01-01T01:00:00Z')),{revoked:true,notifyCount:1,recipients:[2]});
+  assert.equal(f.e.guests[2],undefined);assert.equal(f.e.invitees[f.token],undefined);assert.equal(f.e.reminders[2],undefined);assert.equal(f.data.sessions[2],undefined);
+  assert.ok(f.e.checkIns.ABCDEF123456);assert.equal(f.data.preferences[2].starOrders['private-order'].charge,'private-charge');assert.equal(verifyTicket(f.e,1,'ABCDEF123456').valid,false);
+  const dto=publicEvent(f.e,1,'ExampleBot'),revoked=dto.revokedInvitees[0];
+  assert.equal(revoked.token,f.token);assert.equal(revoked.url,null);assert.equal(revoked.revoked,true);assert.equal(revoked.responses[0].participants,2);assert.equal(revoked.responses[0].confirmed,false);assert.equal(revoked.history.at(-1).type,'revoked');
+  assert.doesNotMatch(JSON.stringify(dto),/private phone|private-order|private-charge|ABCDEF123456/);assert.equal(publicEvent(f.e,9,'ExampleBot').revokedInvitees,undefined);
+  assert.equal(revokeInvitation(f.e,1,input,f.data.sessions).alreadyApplied,true);
+  const deletion=mutationInput(f,{confirm:true,requestId:'22222222-2222-4222-8222-222222222222'});
+  assert.equal(deleteInvitation(f.e,1,deletion).deleted,true);assert.deepEqual(revokedInvitations(f.e,'ExampleBot'),[]);assert.equal(f.e.removedInvitations[f.token].responses[2].payment.order,'private-order');assert.equal(invitationHistory(f.e,f.token).at(-1).type,'deleted');
+  assert.equal(deleteInvitation(f.e,1,deletion).alreadyApplied,true);
+});
+
+test('revoke and delete require manager permission, current versions, and explicit confirmations',()=>{
+  for(const operation of [editInvitation,changeInvitationResponse,revokeInvitation,deleteInvitation]){
+    const f=fixture();claimInvitation(f.e,f.token,2);
+    assert.throws(()=>operation(f.e,2,mutationInput(f),f.data.sessions),/Only an organiser/);
+  }
+  const f=fixture(),before=structuredClone(f.e);
+  assert.throws(()=>deleteInvitation(f.e,1,mutationInput(f,{confirm:true})),/Revoke/);assert.deepEqual(f.e,before);
+  for(const fields of [{confirm:false},{notify:undefined},{requestId:undefined},{version:'stale'}]){
+    assert.throws(()=>revokeInvitation(f.e,1,revokeInput(f,fields),f.data.sessions));assert.deepEqual(f.e,before);
+  }
+  f.e.cohost={id:6,name:'Assistant host'};revokeInvitation(f.e,6,revokeInput(f),f.data.sessions);
+  assert.equal(revokedInvitations(f.e,'ExampleBot').length,1);
+});
+
+test('history sanitizes manager DTOs without inventing timestamps or leaking arbitrary stored fields',()=>{
+  const f=fixture();delete f.e.invitationHistory;
+  assert.deepEqual(managedInvitations(f.e,'ExampleBot')[0].history,[]);assert.equal(managedInvitations(f.e,'ExampleBot')[0].historyIncomplete,true);
+  appendInvitationHistory(f.e,undefined,'responded',{phone:'private'},0);assert.equal(f.e.invitationHistory,undefined);
+  appendInvitationHistory(f.e,f.token,'opened',{userId:2,name:'Alex',phone:'private',payment:{charge:'private'}},Date.parse('2090-01-01T00:00:00Z'));
+  f.e.invitationHistory[f.token].push({type:'responded',at:'2090-01-01T01:00:00Z',status:'yes',phone:'private',ticket:'private',actorId:1,actorRole:'organiser',userId:2});
+  const dto=managedInvitations(f.e,'ExampleBot')[0];assert.equal(dto.history.length,2);assert.doesNotMatch(JSON.stringify(dto.history),/private|phone|ticket|charge/);
+  const version=invitationsVersion(f.e);appendInvitationHistory(f.e,f.token,'edited',{name:'Alex'},Date.parse('2090-01-01T02:00:00Z'));assert.notEqual(invitationsVersion(f.e),version);
+});
+
+test('manager response DTO distinguishes opened placeholders, explicit Later responses, and unknown legacy response times',()=>{
+  const f=fixture();f.e.oneTimeInvite=false;
+  claimInvitation(f.e,f.token,2);claimInvitation(f.e,f.token,3);claimInvitation(f.e,f.token,4);claimInvitation(f.e,f.token,5);
+  Object.assign(f.e.guests[3],{status:'yes',responseVersion:0});
+  Object.assign(f.e.guests[4],{status:'later',responseVersion:1});
+  for(const uid of [3,4,5])delete f.e.guests[uid].responseRecorded;
+  const older='2090-01-01T01:00:00Z',latest='2090-01-01T03:00:00Z';
+  appendInvitationHistory(f.e,f.token,'responded',{userId:5,status:'yes'},Date.parse(older));
+  appendInvitationHistory(f.e,f.token,'changed',{userId:5,status:'later'},Date.parse(latest));
+  appendInvitationHistory(f.e,f.token,'changed',{userId:5,status:'maybe'},Date.parse('2090-01-01T02:00:00Z'));
+  appendInvitationHistory(f.e,f.token,'changed',{userId:3,status:'no'},Date.parse('2090-01-01T04:00:00Z'));
+  const byId=Object.fromEntries(managedInvitations(f.e,'ExampleBot')[0].responses.map(response=>[response.id,response]));
+  assert.equal(byId[2].responded,false);assert.equal(byId[2].respondedAt,null);
+  assert.equal(byId[3].responded,true);assert.equal(byId[3].respondedAt,'2090-01-01T04:00:00.000Z');
+  assert.equal(byId[4].responded,true);assert.equal(byId[4].respondedAt,null);
+  assert.equal(byId[5].responded,true);assert.equal(byId[5].respondedAt,'2090-01-01T03:00:00.000Z');
+  delete f.e.invitationHistory;
+  const legacy=managedInvitations(f.e,'ExampleBot')[0].responses.find(response=>response.id===3);
+  assert.equal(legacy.responded,true);assert.equal(legacy.respondedAt,null);
+  assert.equal(publicEvent(f.e,2,'ExampleBot').invitees,undefined);
+});
+
+test('editing a placeholder attendee count keeps it awaiting its first actual response',()=>{
+  const f=fixture();claimInvitation(f.e,f.token,2);
+  editInvitation(f.e,1,editInput(f));
+  const response=managedInvitations(f.e,'ExampleBot')[0].responses[0];
+  assert.equal(response.responded,false);assert.equal(response.respondedAt,null);assert.equal(f.e.guests[2].responseVersion,undefined);
+  changeInvitationResponse(f.e,1,responseInput(f,{status:'later',requestId:'22222222-2222-4222-8222-222222222222'}));
+  assert.equal(managedInvitations(f.e,'ExampleBot')[0].responses[0].responded,true);
+});
+
+test('count-only response versions do not replace an explicit unanswered marker',()=>{
+  const f=fixture();claimInvitation(f.e,f.token,2);
+  Object.assign(f.e.guests[2],{responseRecorded:false,responseVersion:3,participants:4});
+  appendInvitationHistory(f.e,f.token,'edited',{actorRole:'guest',actorId:2,userId:2,participants:4,previousParticipants:2},Date.parse('2090-01-01T00:00:00Z'));
+  let response=managedInvitations(f.e,'ExampleBot')[0].responses[0];
+  assert.equal(response.responded,false);assert.equal(response.respondedAt,null);
+  editInvitation(f.e,1,editInput(f));
+  assert.equal(f.e.guests[2].responseVersion,3);assert.equal(managedInvitations(f.e,'ExampleBot')[0].responses[0].responded,false);
+  changeInvitationResponse(f.e,1,responseInput(f,{status:'later',requestId:'22222222-2222-4222-8222-222222222222'}),{},Date.parse('2090-01-01T01:00:00Z'));
+  response=managedInvitations(f.e,'ExampleBot')[0].responses[0];
+  assert.equal(f.e.guests[2].responseRecorded,true);assert.equal(f.e.guests[2].responseVersion,4);
+  assert.equal(response.responded,true);assert.equal(response.respondedAt,'2090-01-01T01:00:00.000Z');assert.equal(invitationHistory(f.e,f.token).at(-1).type,'responded');
+});
+
+test('manager guest roster distinguishes awaiting replies from explicit Later and legacy responses',()=>{
+  const f=fixture();f.e.oneTimeInvite=false;
+  for(const uid of [2,3,4,5,6,7,8])claimInvitation(f.e,f.token,uid);
+  Object.assign(f.e.guests[3],{responseRecorded:false,responseVersion:4,participants:3,phone:'private phone',comment:'private comment'});
+  Object.assign(f.e.guests[4],{responseRecorded:true,responseVersion:1});
+  for(const uid of [5,6,7])delete f.e.guests[uid].responseRecorded;
+  f.e.guests[5].status='yes';f.e.guests[6].responseVersion=1;
+  appendInvitationHistory(f.e,f.token,'responded',{userId:7,status:'later'},Date.parse('2090-01-01T01:00:00Z'));
+  Object.assign(f.e.guests[8],{responseRecorded:false,responseVersion:10,status:'yes'});
+  f.e.guests[1]={name:'Owner',status:'yes'};
+  const roster=publicEvent(f.e,1,'ExampleBot').guestRoster;
+  const byId=Object.fromEntries(roster.filter(g=>g.id!==null).map(g=>[g.id,g]));
+  assert.equal(byId[1],undefined);assert.equal(byId[2].responded,false);assert.equal(byId[3].responded,false);
+  for(const uid of [4,5,6,7])assert.equal(byId[uid].responded,true);
+  assert.equal(byId[8].responded,false);
+  for(const guest of roster.filter(g=>g.id===null)){assert.equal(guest.status,'unopened');assert.equal(guest.responded,false);}
+  assert.doesNotMatch(JSON.stringify(roster),/private phone|private comment|invitationToken|responseRecorded|responseVersion/);
+  assert.equal(publicEvent(f.e,2,'ExampleBot').guestRoster,undefined);
+  f.e.invitationMode='legacy';f.e.guests[9]={name:'Legacy guest',status:'maybe'};
+  assert.equal(publicEvent(f.e,1,'ExampleBot').guestRoster.find(g=>g.id===9).responded,true);
 });

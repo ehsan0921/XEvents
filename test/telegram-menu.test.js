@@ -59,3 +59,26 @@ test('new bot configuration keeps the authenticated built-in App button alongsid
   assert.equal(f.settings.get('stars-webhook'), f.env.APP_URL);
   assert.equal(f.settings.get('bot-commands'), botCommandsVersion);
 });
+
+test('the test whitelist command appears only in the configured admin private chat', async t => {
+  const f = fixture(t, { commandVersion: botCommandsVersion });
+  Object.assign(f.env, { APP_ENV: 'development', TEST_WHITELIST_ENABLED: 'true', SUPER_ADMIN_ID: '900000001' });
+  await configureMiniApp(f.env);
+  assert.equal(f.calls.length, 1);
+  assert.deepEqual(f.calls[0].scope, { type: 'chat', chat_id: 900000001 });
+  assert.deepEqual(f.calls[0].commands.map(item => item.command), ['help', 'cancel', 'paysupport', 'whitelist']);
+  await configureMiniApp(f.env);
+  assert.equal(f.calls.length, 1);
+  f.env.TEST_WHITELIST_ENABLED = 'false';
+  await configureMiniApp(f.env);
+  assert.equal(f.calls.length, 1, 'The admin can manage saved dev IDs while the access switch is off.');
+  assert.ok(f.calls.at(-1).commands.some(item => item.command === 'whitelist'));
+  assert.deepEqual(f.calls.at(-1).scope, { type: 'chat', chat_id: 900000001 });
+});
+
+test('production never registers the test command even when its flag is enabled', async t => {
+  const f = fixture(t, { commandVersion: botCommandsVersion });
+  Object.assign(f.env, { APP_ENV: 'production', TEST_WHITELIST_ENABLED: 'true', SUPER_ADMIN_ID: '900000001' });
+  await configureMiniApp(f.env);
+  assert.deepEqual(f.calls, []);
+});

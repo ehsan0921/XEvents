@@ -102,7 +102,7 @@ for(const role of ['owner','cohost'])test('Home '+role+' actions open event tool
     const button=f.button(card,label);assert.ok(button,label+' must be available to '+role);await button.onclick();
     assert.deepEqual(f.calls.at(-1),{kind,args:[arg]});
   }
-  assert.equal(f.button(card,'🎟 My ticket'),undefined);
+  assert.equal(f.button(card,'🎟 Check-in code'),undefined);
   assert.equal(f.button(card,'🛑 Cancel event'),undefined,'Cancellation belongs in event management.');
 });
 
@@ -115,14 +115,14 @@ test('Home attendee shortcuts respect media permission and ticket confirmation',
   ]){
     const f=harness([event(fields)]);f.ui.renderHome();const card=f.cards('home-upcoming')[0];
     assert.equal(!!f.button(card,'🗂 Shared media'),fields.status==='yes' && fields.permissions.viewMedia);
-    assert.equal(!!f.button(card,'🎟 My ticket'),!!fields.ticket);
+    assert.equal(!!f.button(card,'🎟 Check-in code'),!!fields.ticket);
     for(const label of ['✏️ Edit event','👥 Guest list','✉️ Invitations','🛑 Cancel event'])assert.equal(f.button(card,label),undefined,label+' must remain a management action.');
   }
 });
 
 test('Confirmed Home tickets open in app even when QR codes are disabled',async()=>{
   const e=event({ticket:{name:'Guest',code:'TICKET'},qrEnabled:false}),f=harness([e]);f.ui.renderHome();
-  await f.button(f.cards('home-upcoming')[0],'🎟 My ticket').onclick();
+  await f.button(f.cards('home-upcoming')[0],'🎟 Check-in code').onclick();
   assert.deepEqual(f.calls,[{kind:'ticket',args:[e.id]}]);
 });
 

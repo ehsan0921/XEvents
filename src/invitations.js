@@ -1,6 +1,7 @@
 import {randomBytes} from 'node:crypto';
 import {InputError} from './time.js';
 import {responsesClosed,invitationParticipants,invitationParticipantMode} from './permissions.js';
+import {appendInvitationHistory} from './invitation-history.js';
 export {invitationParticipants,invitationParticipantMode} from './permissions.js';
 
 export const invitationMode=e=>e.invitationMode || 'legacy';
@@ -59,7 +60,7 @@ export function reconcileInvitationClaims(e,sessions={}) {
   if(oneTimeInvites(e))for(const [uid,guest] of Object.entries(e.guests || {}))if(Number(uid)!==e.owner && finalResponse(guest) && (invitationMode(e)!=='named' || e.invitees?.[guest.invitationToken]))consumeInvitation(e,Number(uid),guest,sessions);
 }
 export const namedLink=(e,token,username)=>`https://t.me/${username}?start=i_${e.id}_${token}`;
-export function invitationSettings(input,e={}) {
+export function invitationSettings(input,e={},now=Date.now(),actorId=e.owner) {
   const mode=input.invitationMode ?? invitationMode(e);
   if(!['tickets','named','legacy'].includes(mode))throw new InputError('Choose ticket booking or named invitations.');
   if(e.id && mode!==invitationMode(e) && (Object.keys(e.guests || {}).length || Object.keys(e.invitees || {}).length))throw new InputError('Create a new event to change the invitation mode after links or responses exist.');
@@ -80,8 +81,15 @@ export function invitationSettings(input,e={}) {
   const emptyExisting=!!e.id && invitationMode(e)==='named' && !Object.keys(e.invitees || {}).length;
   if(!names.length && !emptyExisting || names.length>100 || names.some(n=>n.length>100) || new Set(names).size!==names.length)throw new InputError('Use 1–100 unique guest names, up to 100 characters each. Add a label to distinguish guests with the same name.');
   const previous=Object.entries(e.invitees || {}),invitees={};
+  const historyEvent={invitationHistory:structuredClone(e.invitationHistory || {})};
+  const removedInvitations=structuredClone(e.removedInvitations || {});
   const opened=token=>Object.values(e.guests || {}).some(g=>g.invitationToken===token);
   for(const [token,g] of previous)if(!names.includes(g.name) && (g.claimedBy || opened(token)))throw new InputError('A claimed invitation cannot be removed from the guest list.');
+  for(const [token,invite] of previous)if(!names.includes(invite.name)){
+    const at=new Date(now).toISOString();
+    removedInvitations[token]={invite:structuredClone(invite),responses:{},removedBy:actorId,removedAt:at,revokedBy:actorId,revokedAt:at,notify:false};
+    appendInvitationHistory(historyEvent,token,'revoked',{actorRole:'organiser',actorId,name:invite.name,notify:false},now);
+  }
   for(const entry of entries){
     const existing=previous.find(([,g])=>g.name===entry.name),token=existing?.[0] || randomBytes(16).toString('hex');
     const unchanged=existing && existing[1].participants===entry.participants && existing[1].participantMode===entry.participantMode;
@@ -94,8 +102,10 @@ export function invitationSettings(input,e={}) {
       if(entry.participantMode===undefined)delete invitees[token].participantMode;
       else invitees[token].participantMode=entry.participantMode;
     }
+    if(!existing)appendInvitationHistory(historyEvent,token,'created',{actorRole:'organiser',actorId,name:entry.name,participants:entry.participants,participantMode:entry.participantMode || (entry.participants?'preset':'default')},now);
+    else if(!unchanged)appendInvitationHistory(historyEvent,token,'edited',{actorRole:'organiser',actorId,name:entry.name,previousName:existing[1].name,participants:entry.participants,previousParticipants:existing[1].participants,participantMode:entry.participantMode || (entry.participants?'preset':'default'),previousParticipantMode:existing[1].participantMode || (existing[1].participants?'preset':'default')},now);
   }
-  return {...result,invitees,...singleUseSettings(input,e,mode,invitees)};
+  return {...result,invitees,invitationHistory:historyEvent.invitationHistory,...(Object.keys(removedInvitations).length?{removedInvitations}:{}),...singleUseSettings(input,e,mode,invitees)};
 }
 export function claimInvitation(e,token,id) {
   const invite=e?.invitees?.[token];
@@ -103,10 +113,12 @@ export function claimInvitation(e,token,id) {
   if(e.guests[id]?.invitationToken && e.guests[id].invitationToken!==token)throw new InputError('You already have a personal invitation for this event.');
   if(!e.guests[id] && responsesClosed(e))throw new InputError('The response deadline has passed.');
   if(e.guests[id] && !e.guests[id].invitationToken)throw new InputError('You already have a booking for this event.');
-  e.guests[id] ||= {name:invite.name,invitationToken:token,status:'later',phone:'',answers:[],comment:''};
+  const firstOpen=!e.guests[id];
+  e.guests[id] ||= {name:invite.name,invitationToken:token,status:'later',responseRecorded:false,phone:'',answers:[],comment:''};
   e.guests[id].name=invite.name;
   const participants=invitationParticipants(e,e.guests[id]);
   const selected=e.guests[id].participants;
   if(participants!==null && (invitationParticipantMode(e,e.guests[id])==='fixed' || !Number.isSafeInteger(selected) || selected<1 || selected>10))e.guests[id].participants=participants;
+  if(firstOpen)appendInvitationHistory(e,token,'opened',{actorRole:'guest',actorId:id,userId:id,name:invite.name});
   return e.guests[id];
 }

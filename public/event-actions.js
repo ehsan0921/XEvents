@@ -2,6 +2,7 @@ export function setupEventActions({ $, api, refresh, onEnded = () => {}, notice 
   const dialog = $('event-end-dialog');
   const proceed = $('event-end-confirm');
   const back = $('event-end-back');
+  const close = $('event-end-close');
   const remove = $('event-end-delete');
   const status = $('event-end-status');
   let active = null;
@@ -9,6 +10,7 @@ export function setupEventActions({ $, api, refresh, onEnded = () => {}, notice 
   function setBusy(busy) {
     proceed.disabled = busy;
     back.disabled = busy;
+    if (close) close.disabled = busy;
     remove.disabled = busy;
     dialog.setAttribute('aria-busy', String(busy));
   }
@@ -39,6 +41,7 @@ export function setupEventActions({ $, api, refresh, onEnded = () => {}, notice 
         resolve(result);
       };
       back.onclick = () => { if (!session.busy) finish(false); };
+      if (close) close.onclick = back.onclick;
       dialog.oncancel = event => {
         event.preventDefault();
         if (!session.busy) finish(false);

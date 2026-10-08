@@ -9,7 +9,7 @@ const eventFixture=fields=>({id:'0123456789abcdef',title:'Club evening',location
 const pendingLink=(id,label)=>({id,label,status:'pending',createdAt:'2026-10-07T00:00:00Z',cohost:null,url:'https://t.me/test?start=cohost_'+id});
 const activeLink=(id,label,person)=>({...pendingLink(id,label),status:'active',url:null,cohost:{id:2,name:'Alex',username:'alex',joinedAt:'2026-10-07T00:00:00Z',...person}});
 
-async function harness(initial,{scheduleError,clipboardMode='ok',search='',invitationError,telegramErrors={}}={}){
+async function harness(initial,{scheduleError,clipboardMode='ok',search='',invitationError,telegramErrors={},telegramClose=true,clock=null,ticketResponses=[],ticketCheckResponses=[]}={}){
   class El{
     constructor(tag=''){this.tag=tag;this.children=[];this.dataset={};this.value='';this.files=[];this.attributes={};this.listeners={};this.open=false;this.classList={toggle(){},add(){},remove(){}};}
     append(...children){this.children.push(...children);this.firstChild=this.children[0];}
@@ -24,10 +24,12 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
   const ids=new Map([...html.matchAll(/id="([^"]+)"/g)].map(match=>[match[1],new El()]));
   const tabs=[...html.matchAll(/data-tab="([^"]+)"/g)].map(match=>{const el=match[1]==='admin'?ids.get('admin-tab'):new El();el.dataset.tab=match[1];return el;});
   const document={body:new El(),getElementById:id=>ids.get(id),createElement:tag=>new El(tag),addEventListener(){},querySelector:selector=>selector==='.bottom-nav'?new El():tabs.find(el=>selector.includes('"'+el.dataset.tab+'"')),querySelectorAll:selector=>selector==='[data-tab]'?tabs:[]};
-  const telegramLinks=[],telegramStartupCalls=[],copied=[],calls=[],errors=[],errorContexts=[];
+  const telegramLinks=[],telegramStartupCalls=[],scanCallbacks=[],copied=[],calls=[],errors=[],errorContexts=[];
   const telegramCall=method=>{telegramStartupCalls.push(method);if(telegramErrors[method])throw new Error(telegramErrors[method]);};
-  const window={Telegram:{WebApp:{initData:'test-session',ready(){telegramCall('ready');},expand(){telegramCall('expand');},onEvent(){telegramCall('onEvent');},openTelegramLink:url=>telegramLinks.push(url)}},scrollTo(){},reportAppError:(error,context)=>{errors.push(error.message);errorContexts.push(context);}};
-  let event=initial,token=0,revision=0,invitationHold;
+  const window={Telegram:{WebApp:{initData:'test-session',ready(){telegramCall('ready');},expand(){telegramCall('expand');},onEvent(){telegramCall('onEvent');},close(){telegramCall('close');},showScanQrPopup:(options,callback)=>scanCallbacks.push(callback),closeScanQrPopup(){},openTelegramLink:url=>telegramLinks.push(url)}},scrollTo(){},reportAppError:(error,context)=>{errors.push(error.message);errorContexts.push(context);}};
+  if(!telegramClose)delete window.Telegram.WebApp.close;
+  let event=initial,token=0,revision=0,invitationHold,eventReadHold,eventSaveHold,ticketHold,ticketCheckHold;
+  const ticketQueue=[...ticketResponses],ticketCheckQueue=[...ticketCheckResponses],timers=new Map();let timerSequence=0;
   const project=value=>({...value,cohosts:(value.cohostLinks || []).filter(link=>link.status==='active').map(link=>link.cohost),cohost:(value.cohostLinks || []).find(link=>link.status==='active')?.cohost || null,cohostInviteUrl:[...(value.cohostLinks || [])].reverse().find(link=>link.status==='pending')?.url || null});
   const response=(data,status=200)=>({ok:status<400,status,json:async()=>data,blob:async()=>new Blob(['image'],{type:'image/jpeg'})});
   const fetcher=async(path,options={})=>{
@@ -36,18 +38,31 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
     if(path==='/api/bootstrap')return response({user:{id:initial.isOwner?1:2,firstName:'User',isSuperAdmin:false},preference:{timezone:'Australia/Sydney'},pricing:{rates:{}},currencyCodes:['AUD'],events:[event]});
     if(path.startsWith('/api/explore?'))return response({events:[]});
     if(path==='/api/branding/icon')return response({error:'Not found'},404);
-    if(path==='/api/events/'+event.id)return response({event});
-    if(path.endsWith('/invitations/add') || path.endsWith('/invitations/remove')){
+    if(path==='/api/events/'+event.id){if(eventReadHold){const hold=eventReadHold;eventReadHold=null;await hold;}return response({event});}
+    if(path==='/api/events/'+event.id+'/ticket'){if(ticketHold){const hold=ticketHold;ticketHold=null;await hold;}const now=clock?.now ?? Date.now(),item=ticketQueue.shift();if(item?.error)return response({error:item.error},item.status || 400);return response({ticket:{title:event.title,name:'Alex',participants:2,code:'004281',codeExpiresAt:new Date(now+30000).toISOString(),serverTime:new Date(now).toISOString(),image:null,...item}});}
+    if(path.endsWith('/ticket-check')){if(ticketCheckHold){const hold=ticketCheckHold;ticketCheckHold=null;await hold;}const item=ticketCheckQueue.shift();if(item?.error)return response({error:item.error},item.status || 400);return response({ticket:item || {valid:false,reason:'Fictional ticket not found.'}});}
+    if(/\/invitations\/(add|edit|response|revoke|delete|remove)$/.test(path)){
       if(invitationHold){const hold=invitationHold;invitationHold=null;await hold;}
       if(body.version!==event.invitationsVersion)return response({error:'Invitations changed. Review the current list.'},409);
       if(invitationError)return response({error:invitationError.message},invitationError.status || 400);
-      let invitees=[...event.invitees];
+      let invitees=[...event.invitees],revokedInvitees=[...(event.revokedInvitees || [])];
       if(path.endsWith('/add'))for(const line of body.guestNames.split('\n').filter(line=>line.trim())){
         const match=line.match(/^\s*(.*?)\s*(?:=\s*(\?|\d+[!*]?))?\s*$/),rule=match[2],guestToken=(++token).toString(16).padStart(32,'0');
         invitees.push({name:match[1],token:guestToken,url:'https://t.me/test?start=i_'+event.id+'_'+guestToken,participants:rule && rule!=='?' ? parseInt(rule,10) : null,participantMode:rule==='?' ? 'ask' : rule?.endsWith('!') ? 'confirm' : rule?.endsWith('*') ? 'fixed' : null,claimed:false,status:null,responses:[],responseCounts:{yes:0,no:0,maybe:0,later:0}});
       }
+      else if(path.endsWith('/edit'))invitees=invitees.map(guest=>guest.token===body.token?{...guest,name:body.name,participants:body.participants,participantMode:body.participantMode,history:[...(guest.history || []),{type:'edited',at:'2026-10-08T02:00:00Z',name:body.name,previousName:guest.name,participants:body.participants,actorRole:'organiser'}]}:guest);
+      else if(path.endsWith('/response'))invitees=invitees.map(guest=>{
+        if(guest.token!==body.token)return guest;
+        const replies=guest.responses.map(reply=>reply.id===body.userId?{...reply,status:body.status,participants:body.status==='yes'?body.participants || 1:0,responded:true,respondedAt:'2026-10-08T02:00:00Z'}:reply),previous=guest.responses.find(reply=>reply.id===body.userId),statuses=[...new Set(replies.map(reply=>reply.status))];
+        return {...guest,responses:replies,status:statuses.length>1?'mixed':statuses[0],history:[...(guest.history || []),{type:'changed',at:'2026-10-08T02:00:00Z',status:body.status,previousStatus:previous?.status,participants:body.participants,actorRole:'organiser',notify:body.notify}]};
+      });
+      else if(path.endsWith('/revoke')){
+        const guest=invitees.find(guest=>guest.token===body.token);
+        if(guest)revokedInvitees.push({...guest,revoked:true,revokedAt:'2026-10-08T02:00:00Z',canNotify:false,history:[...(guest.history || []),{type:'revoked',at:'2026-10-08T02:00:00Z',name:guest.name,notify:body.notify,actorRole:'organiser'}]});
+        invitees=invitees.filter(guest=>guest.token!==body.token);
+      }else if(path.endsWith('/delete'))revokedInvitees=revokedInvitees.filter(guest=>guest.token!==body.token);
       else invitees=invitees.filter(guest=>guest.token!==body.token);
-      event={...event,invitees,invitationsVersion:(++revision).toString(16).padStart(16,'0')};
+      event={...event,invitees,revokedInvitees,invitationsVersion:(++revision).toString(16).padStart(16,'0')};
       return response({event,notifyCount:body.notify ? 1 : 0});
     }
     if(path.endsWith('/cohost/invite') || path.endsWith('/cohost/revoke')){
@@ -58,8 +73,8 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
       event=project({...event,cohostLinks:links,cohostVersion:(++revision).toString(16).padStart(16,'0')});
       return response({event});
     }
-    if(path==='/api/events'){event={...event,...body};return response({event});}
-    if(path.endsWith('/schedule')){if(scheduleError)return response({error:scheduleError},400);event={...event,...body};return response({event});}
+    if(path==='/api/events'){if(eventSaveHold){const hold=eventSaveHold;eventSaveHold=null;await hold;}event={...event,...body};return response({event});}
+    if(path.endsWith('/schedule')){if(eventSaveHold){const hold=eventSaveHold;eventSaveHold=null;await hold;}if(scheduleError)return response({error:scheduleError},400);event={...event,...body};return response({event});}
     if(path==='/api/preview')return response({startsAt:event.startsAt,timezone:event.timezone});
     return response({});
   };
@@ -67,12 +82,15 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
   const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
   const navigator={};
   if(clipboardMode!=='absent')navigator.clipboard={writeText:async text=>{if(clipboardMode==='denied')throw Error('Clipboard denied.');copied.push(text);}};
-  await new AsyncFunction('window','document','location','fetch','crypto','navigator','setupGallery','setupEventActions',source)(window,document,{search},fetcher,webcrypto,navigator,setupGallery,setupEventActions);
+  const TestDate=clock?class extends Date{constructor(...args){super(...(args.length?args:[clock.now]));}static now(){return clock.now;}}:Date;
+  const schedule=clock?(callback,delay=0)=>{const id=++timerSequence;timers.set(id,{callback,at:clock.now+delay});return id;}:setTimeout;
+  const unschedule=clock?id=>timers.delete(id):clearTimeout;
+  await new AsyncFunction('window','document','location','fetch','crypto','navigator','setupGallery','setupEventActions','Date','setTimeout','clearTimeout',source)(window,document,{search},fetcher,webcrypto,navigator,setupGallery,setupEventActions,TestDate,schedule,unschedule);
   await new Promise(resolve=>setImmediate(resolve));
   const descendants=node=>node.children.flatMap(child=>[child,...descendants(child)]);
   const findButton=(id,label)=>descendants(ids.get(id)).find(node=>node.tag==='button' && node.textContent===label);
   const findEntry=id=>ids.get('cohost-list').children.find(node=>node.dataset.linkId===id);
-  return {ids,calls,errors,errorContexts,copied,telegramLinks,telegramStartupCalls,findButton,findEntry,descendants,setClipboardMode:value=>{clipboardMode=value;},setEvent:value=>{event=value;},getEvent:()=>event,setInvitationError:value=>{invitationError=value;},holdNextInvitationMutation:()=>{let release;invitationHold=new Promise(resolve=>{release=resolve;});return release;}};
+  return {ids,tabs,calls,errors,errorContexts,copied,telegramLinks,telegramStartupCalls,scanCallbacks,findButton,findEntry,descendants,setClipboardMode:value=>{clipboardMode=value;},setEvent:value=>{event=value;},getEvent:()=>event,setInvitationError:value=>{invitationError=value;},holdNextInvitationMutation:()=>{let release;invitationHold=new Promise(resolve=>{release=resolve;});return release;},holdNextEventRead:()=>{let release;eventReadHold=new Promise(resolve=>{release=resolve;});return release;},holdNextEventSave:()=>{let release;eventSaveHold=new Promise(resolve=>{release=resolve;});return release;},holdNextTicket:()=>{let release;ticketHold=new Promise(resolve=>{release=resolve;});return release;},holdNextTicketCheck:()=>{let release;ticketCheckHold=new Promise(resolve=>{release=resolve;});return release;},pendingTimers:()=>timers.size,advanceTime:milliseconds=>{clock.now+=milliseconds;for(const [id,timer] of [...timers])if(timer.at<=clock.now){timers.delete(id);timer.callback();}}};
 }
 
 for(const method of ['ready','expand','onEvent'])test('a Telegram '+method+' bridge failure keeps Home, My events and Create usable',async()=>{
@@ -94,9 +112,108 @@ for(const method of ['ready','expand','onEvent'])test('a Telegram '+method+' bri
   assert.strictEqual(f.getEvent(),initial);
 });
 
+test('the page close button returns every secondary view Home and preserves an unfinished event draft',async()=>{
+  const f=await harness(eventFixture());
+  f.ids.get('hero-create').onclick();f.ids.get('title').value='Unfinished picnic';f.ids.get('guest-names').value='Alex = 2*';
+  assert.equal(f.ids.get('app-close').attributes['aria-label'],'Close this page and return Home');f.ids.get('app-close').onclick();assert.equal(f.ids.get('home-view').hidden,false);assert.equal(f.ids.get('title').value,'Unfinished picnic');assert.equal(f.ids.get('guest-names').value,'Alex = 2*');
+  f.tabs.find(tab=>tab.dataset.tab==='create').onclick();assert.equal(f.ids.get('create-view').hidden,false);assert.equal(f.ids.get('title').value,'Unfinished picnic');
+  for(const tab of ['events','settings','explore']){f.tabs.find(button=>button.dataset.tab===tab).onclick();assert.equal(f.ids.get(tab+'-view').hidden,false);f.ids.get('app-close').onclick();assert.equal(f.ids.get('home-view').hidden,false);}
+  assert.equal(f.calls.filter(call=>call.body && !call.path.startsWith('/api/preview')).length,0);assert.equal(f.telegramStartupCalls.filter(method=>method==='close').length,0);
+  assert.equal(f.ids.get('app-close').attributes['aria-label'],'Close App');f.ids.get('app-close').onclick();assert.equal(f.telegramStartupCalls.filter(method=>method==='close').length,1);
+});
+
+test('standalone Home close remains usable and both compact pickers close back to Telegram',async()=>{
+  const standalone=await harness(eventFixture(),{telegramClose:false});standalone.ids.get('app-close').onclick();assert.equal(standalone.ids.get('home-view').hidden,false);assert.deepEqual(standalone.errors,[]);assert.equal(standalone.telegramStartupCalls.includes('close'),false);
+  for(const mode of ['picker','deadline']){const f=await harness(eventFixture(),{search:'?mode='+mode+'&session=fictional'});assert.equal(f.ids.get('create-view').hidden,false);assert.equal(f.ids.get('app-close').attributes['aria-label'],'Close App');f.ids.get('app-close').onclick();assert.equal(f.telegramStartupCalls.filter(method=>method==='close').length,1);assert.equal(f.calls.some(call=>call.path==='/api/picker' || call.path==='/api/draft-deadline'),false);}
+});
+
+test('saving an event disables close and competing form navigation until the save settles',async()=>{
+  for(const editing of [false,true]){
+    const f=await harness(eventFixture({paymentMethod:'free',starPrice:0}));if(editing)await f.findButton('event-list','✏️ Edit event').onclick();else f.ids.get('hero-create').onclick();f.ids.get('title').value='Picnic draft';const release=f.holdNextEventSave(),saving=f.ids.get('event-form').onsubmit({preventDefault(){}});
+    assert.equal(f.ids.get('app-close').disabled,true);for(const id of ['cancel-edit','edit-cancel-event','edit-delete-event']){assert.equal(f.ids.get(id).disabled,true);f.ids.get(id).onclick();}assert.equal(f.ids.get('event-end-dialog').open,false);
+    f.ids.get('app-close').onclick();f.ids.get('hero-create').onclick();f.tabs.find(tab=>tab.dataset.tab==='events').onclick();assert.equal(f.ids.get('create-view').hidden,false);assert.equal(f.ids.get('title').value,'Picnic draft');assert.match(f.ids.get('notice').textContent,/saving/);assert.equal(f.calls.filter(call=>call.path==='/api/events' || call.path.endsWith('/schedule')).length,1);
+    release();await saving;assert.equal(f.ids.get('app-close').disabled,false);assert.equal(f.ids.get('edit-delete-event').disabled,false);assert.equal(f.getEvent().title,'Picnic draft');f.ids.get('app-close').onclick();assert.equal(f.ids.get('home-view').hidden,false);
+  }
+});
+
+test('closing a page while manager details load prevents a late dialog or editor from reopening',async()=>{
+  for(const [label,dialog] of [['👥 Guest list','guest-list-dialog'],['🎟 Check in guests','checkin-dialog'],['🤝 Co-hosts','cohost-dialog'],['✉️ Guest invitations','invitation-links-dialog'],['✏️ Edit event',null]]){
+    const f=await harness(eventFixture());f.tabs.find(tab=>tab.dataset.tab==='events').onclick();const release=f.holdNextEventRead(),opening=f.findButton('event-list',label).onclick();f.ids.get('app-close').onclick();release();await opening;assert.equal(f.ids.get('home-view').hidden,false,label);assert.equal(f.ids.get('create-view').hidden,true,label);if(dialog)assert.equal(f.ids.get(dialog).open,false,label);
+  }
+  const f=await harness(eventFixture({ticket:{name:'Alex',code:'FICTIONAL1234'}}));f.tabs.find(tab=>tab.dataset.tab==='events').onclick();const release=f.holdNextTicket(),opening=f.findButton('event-list','🎟 Check-in code').onclick();f.ids.get('app-close').onclick();release();await opening;assert.equal(f.ids.get('ticket-dialog').open,false);assert.equal(f.ids.get('home-view').hidden,false);
+});
+
+test('the ticket-check close button shuts the dialog and a delayed native scan cannot overwrite a newer session',async()=>{
+  const f=await harness(eventFixture());await f.findButton('event-list','🎟 Check in guests').onclick();f.ids.get('checkin-scan').onclick();assert.equal(f.scanCallbacks.length,1);f.ids.get('checkin-close').onclick();assert.equal(f.ids.get('checkin-dialog').open,false);await f.findButton('event-list','🎟 Check in guests').onclick();f.ids.get('checkin-code').value='CURRENT';assert.equal(f.scanCallbacks[0]('STALE'),true);assert.equal(f.ids.get('checkin-code').value,'CURRENT');assert.equal(f.calls.filter(call=>call.path.endsWith('/ticket-check')).length,0);
+});
+
+test('check-in codes are generated on demand, preserve leading zeroes and expire without automatic requests',async()=>{
+  const clock={now:Date.parse('2026-10-08T00:00:30Z')},f=await harness(eventFixture({qrEnabled:false,ticket:{name:'Alex',participants:2}}),{clock,ticketResponses:[{code:'004281'},{code:'005729'}]});
+  const requests=()=>f.calls.filter(call=>call.path.endsWith('/ticket'));assert.equal(requests().length,0);assert.equal(f.pendingTimers(),0);await f.findButton('event-list','🎟 Check-in code').onclick();assert.equal(requests().length,1);assert.equal(f.ids.get('ticket-code').textContent,'004281');assert.equal(f.ids.get('ticket-image').hidden,true);assert.equal(f.ids.get('ticket-countdown').textContent,'Expires in 0:30');assert.equal(f.pendingTimers(),1);await f.ids.get('ticket-copy').onclick();assert.equal(f.copied.at(-1),'004281');
+  f.advanceTime(30000);assert.equal(f.ids.get('ticket-copy').disabled,true);assert.match(f.ids.get('ticket-countdown').textContent,/Code expired/);assert.equal(f.pendingTimers(),0);await f.ids.get('ticket-copy').onclick();assert.equal(f.copied.length,1);assert.equal(requests().length,1);
+  await f.ids.get('ticket-refresh').onclick();assert.equal(requests().length,2);assert.equal(f.ids.get('ticket-code').textContent,'005729');assert.equal(f.ids.get('ticket-copy').disabled,false);assert.equal(f.pendingTimers(),1);f.ids.get('ticket-close').onclick();assert.equal(f.pendingTimers(),0);assert.equal(f.ids.get('ticket-code').textContent,'');f.advanceTime(60000);assert.equal(requests().length,2);
+});
+
+test('Home opens confirmed check-in codes with QR disabled and server time controls expiry despite a wrong device clock',async()=>{
+  const clock={now:Date.parse('2026-10-08T00:00:00Z')},f=await harness(eventFixture({isOwner:false,isManager:false,status:'yes',qrEnabled:false,ticket:{name:'Alex',participants:2}}),{clock,ticketResponses:[{serverTime:'2035-10-08T12:34:40Z',codeExpiresAt:'2035-10-08T12:35:00Z'}]});assert.equal(f.calls.some(call=>call.path.endsWith('/ticket')),false);await f.findButton('home-upcoming','🎟 Check-in code').onclick();assert.equal(f.ids.get('ticket-dialog').open,true);assert.equal(f.ids.get('ticket-countdown').textContent,'Expires in 0:20');f.advanceTime(20000);assert.equal(f.ids.get('ticket-copy').disabled,true);f.ids.get('ticket-close').onclick();
+});
+
+test('closing or navigating during a code refresh clears its timer and ignores the late response',async()=>{
+  const clock={now:Date.parse('2026-10-08T00:00:00Z')},f=await harness(eventFixture({ticket:{name:'Alex',participants:2}}),{clock});await f.findButton('event-list','🎟 Check-in code').onclick();const release=f.holdNextTicket(),refreshing=f.ids.get('ticket-refresh').onclick();assert.equal(f.ids.get('ticket-copy').disabled,true);assert.equal(f.pendingTimers(),0);f.ids.get('ticket-close').onclick();release();await refreshing;assert.equal(f.ids.get('ticket-dialog').open,false);assert.equal(f.pendingTimers(),0);assert.equal(f.ids.get('ticket-code').textContent,'');
+  await f.findButton('event-list','🎟 Check-in code').onclick();assert.equal(f.pendingTimers(),1);f.tabs.find(tab=>tab.dataset.tab==='settings').onclick();assert.equal(f.ids.get('ticket-dialog').open,false);assert.equal(f.pendingTimers(),0);
+});
+
+test('an expired code refresh error remains visible and only an explicit retry generates another code',async()=>{
+  const clock={now:Date.parse('2026-10-08T00:00:00Z')},f=await harness(eventFixture({ticket:{name:'Alex',participants:2}}),{clock,ticketResponses:[{code:'004281'},{error:'Please try again.'},{code:'009123'}]});await f.findButton('event-list','🎟 Check-in code').onclick();f.advanceTime(30000);await f.ids.get('ticket-refresh').onclick();assert.match(f.ids.get('ticket-message').textContent,/Please try again/);assert.equal(f.ids.get('ticket-copy').disabled,true);assert.equal(f.pendingTimers(),0);f.advanceTime(60000);assert.equal(f.calls.filter(call=>call.path.endsWith('/ticket')).length,2);await f.ids.get('ticket-refresh').onclick();assert.equal(f.ids.get('ticket-code').textContent,'009123');assert.equal(f.ids.get('ticket-copy').disabled,false);f.ids.get('ticket-close').onclick();
+});
+
+test('the six-digit number pad keeps leading zeroes and checks in directly with one request',async()=>{
+  const f=await harness(eventFixture(),{ticketCheckResponses:[{valid:true,name:'Alex and Sam',participants:2,checkedInAt:'2026-10-08T00:00:00Z'}]});await f.findButton('event-list','🎟 Check in guests').onclick();assert.equal(f.ids.get('checkin-check').disabled,true);assert.deepEqual(f.ids.get('checkin-keypad').children.map(button=>button.textContent),['1','2','3','4','5','6','7','8','9','Clear','0','⌫']);
+  for(const digit of '004281')await f.findButton('checkin-keypad',digit).onclick();assert.equal(f.ids.get('checkin-code').value,'004281');assert.deepEqual(Array.from({length:6},(_,i)=>f.ids.get('checkin-digit-'+i).textContent),[...'004281']);await f.findButton('checkin-keypad','9').onclick();assert.equal(f.ids.get('checkin-code').value,'004281');assert.equal(f.ids.get('checkin-check').disabled,false);
+  const release=f.holdNextTicketCheck(),checking=f.ids.get('checkin-check').onclick();assert.equal(f.ids.get('checkin-check').disabled,true);assert.ok(f.ids.get('checkin-keypad').children.every(button=>button.disabled));await f.ids.get('checkin-check').onclick();assert.equal(f.calls.filter(call=>call.path.endsWith('/ticket-check')).length,1);release();await checking;assert.deepEqual(f.calls.find(call=>call.path.endsWith('/ticket-check')).body,{code:'004281',checkIn:true});assert.match(f.ids.get('checkin-result').textContent,/✓ Checked in/);assert.match(f.ids.get('checkin-result').textContent,/Alex and Sam · 2 people/);assert.equal(f.ids.get('checkin-check').disabled,true);
+  await f.findButton('checkin-keypad','⌫').onclick();assert.equal(f.ids.get('checkin-code').value,'00428');assert.equal(f.ids.get('checkin-check').disabled,true);await f.findButton('checkin-keypad','Clear').onclick();assert.equal(f.ids.get('checkin-code').value,'');assert.ok(Array.from({length:6},(_,i)=>f.ids.get('checkin-digit-'+i).textContent).every(value=>value==='·'));f.ids.get('checkin-close').onclick();
+});
+
+test('typed codes remain six-digit strings and an already checked-in ticket displays a useful result',async()=>{
+  const f=await harness(eventFixture(),{ticketCheckResponses:[{valid:true,alreadyCheckedIn:true,name:'Alex',participants:1,checkedInAt:'2026-10-08T00:00:00Z'}]});await f.findButton('event-list','🎟 Check in guests').onclick();f.ids.get('checkin-code').value='00a428199';f.ids.get('checkin-code').oninput();assert.equal(f.ids.get('checkin-code').value,'004281');let prevented=false;f.ids.get('checkin-code').onkeydown({key:'Enter',preventDefault(){prevented=true;}});await new Promise(resolve=>setImmediate(resolve));assert.equal(prevented,true);assert.deepEqual(f.calls.find(call=>call.path.endsWith('/ticket-check')).body,{code:'004281',checkIn:true});assert.match(f.ids.get('checkin-result').textContent,/Already checked in/);assert.match(f.ids.get('checkin-result').textContent,/Alex · 1 person/);assert.equal(f.ids.get('checkin-result').className,'checkin-warning');f.ids.get('checkin-close').onclick();
+});
+
+test('legacy QR tickets are verified before their direct check-in action and never converted to a numeric code',async()=>{
+  const code='XE1:fictional-legacy-ticket',f=await harness(eventFixture(),{ticketCheckResponses:[{valid:true,name:'Alex',participants:2},{valid:true,name:'Alex',participants:2,checkedInAt:'2026-10-08T00:00:00Z'}]});await f.findButton('event-list','🎟 Check in guests').onclick();f.ids.get('checkin-scan').onclick();f.scanCallbacks[0](code);await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(f.calls.find(call=>call.path.endsWith('/ticket-check')).body,{code,checkIn:false});assert.equal(f.ids.get('checkin-code').value,'');assert.match(f.ids.get('checkin-result').textContent,/Valid ticket/);assert.equal(f.ids.get('checkin-check').disabled,false);await f.ids.get('checkin-check').onclick();assert.deepEqual(f.calls.filter(call=>call.path.endsWith('/ticket-check'))[1].body,{code,checkIn:true});f.ids.get('checkin-close').onclick();
+});
+
+test('a late check-in result cannot overwrite a newly opened check-in session',async()=>{
+  const f=await harness(eventFixture(),{ticketCheckResponses:[{valid:true,name:'First guest',participants:2,checkedInAt:'2026-10-08T00:00:00Z'}]});await f.findButton('event-list','🎟 Check in guests').onclick();f.ids.get('checkin-code').value='004281';f.ids.get('checkin-code').oninput();const release=f.holdNextTicketCheck(),checking=f.ids.get('checkin-check').onclick();f.ids.get('checkin-close').onclick();await f.findButton('event-list','🎟 Check in guests').onclick();f.ids.get('checkin-code').value='009123';f.ids.get('checkin-code').oninput();release();await checking;assert.equal(f.ids.get('checkin-code').value,'009123');assert.equal(f.ids.get('checkin-result').textContent,'');assert.equal(f.ids.get('checkin-check').disabled,false);f.ids.get('checkin-close').onclick();
+});
+
+test('owners and co-hosts can check in guests from Edit and new events omit that entry',async()=>{
+  for(const isOwner of [true,false]){const f=await harness(eventFixture({isOwner,isCoHost:!isOwner}));await f.findButton('event-list','✏️ Edit event').onclick();assert.equal(f.ids.get('edit-checkin-panel').hidden,false);await f.ids.get('edit-checkin').onclick();assert.equal(f.ids.get('checkin-dialog').open,true);f.ids.get('checkin-close').onclick();f.ids.get('hero-create').onclick();assert.equal(f.ids.get('edit-checkin-panel').hidden,true);}
+});
+
+test('closing or dismissing a confirmation cancels the operation and permits the next confirmation',async()=>{
+  for(const close of [f=>f.ids.get('confirm-close').onclick(),f=>f.ids.get('confirm-dialog').close()]){
+    const f=await harness(eventFixture({cohostLinks:[pendingLink('aaaaaaaaaaaaaaaa','Door')]}));await f.findButton('event-list','🤝 Co-hosts').onclick();const cancelling=f.findButton('cohost-list','Cancel invite').onclick();assert.equal(f.ids.get('confirm-dialog').open,true);close(f);await cancelling;assert.equal(f.ids.get('confirm-dialog').open,false);assert.equal(f.calls.filter(call=>call.path.endsWith('/cohost/revoke')).length,0);
+    const next=f.findButton('cohost-list','Cancel invite').onclick();assert.equal(f.ids.get('confirm-dialog').open,true);f.ids.get('confirm-close').onclick();await next;assert.equal(f.calls.filter(call=>call.path.endsWith('/cohost/revoke')).length,0);
+  }
+});
+
+test('a queued native confirmation close cannot dismiss or mutate a different confirmation',async()=>{
+  const f=await harness(eventFixture({cohostLinks:[pendingLink('aaaaaaaaaaaaaaaa','Door'),pendingLink('bbbbbbbbbbbbbbbb','Registration')]}));await f.findButton('event-list','🤝 Co-hosts').onclick();const dialog=f.ids.get('confirm-dialog');let queuedClose;dialog.close=()=>{dialog.open=false;queuedClose=dialog.onclose;};
+  const first=f.findButton('cohost-list','Cancel invite').onclick();f.ids.get('confirm-proceed').onclick();await first;assert.equal(f.calls.filter(call=>call.path.endsWith('/cohost/revoke')).length,1);
+  await f.findButton('cohost-list','Cancel invite').onclick();assert.equal(dialog.open,false,'a new prompt must wait until the old native close is delivered');assert.equal(f.calls.filter(call=>call.path.endsWith('/cohost/revoke')).length,1);queuedClose();
+  const next=f.findButton('cohost-list','Cancel invite').onclick();assert.equal(dialog.open,true);f.ids.get('confirm-close').onclick();queuedClose();await next;assert.equal(f.calls.filter(call=>call.path.endsWith('/cohost/revoke')).length,1);
+});
+
+test('compact guest list status badges distinguish approval, payment, actual Later and opened invitations',async()=>{
+  const guests=[{id:11,name:'Alex',status:'yes',participants:2,confirmed:true,responded:true},{id:12,name:'Morgan',status:'yes',participants:1,confirmed:false,approval:'pending',responded:true},{id:13,name:'Sam',status:'yes',participants:3,confirmed:false,approval:'approved',responded:true},{id:14,name:'Taylor',status:'no',participants:0,responded:true},{id:15,name:'Casey',status:'maybe',participants:0,responded:true},{id:16,name:'Jordan',status:'later',participants:0,responded:true},{id:17,name:'Drew',status:'later',participants:0,responded:false},{id:null,name:'Jess',status:'unopened',participants:0,responded:false}];
+  const f=await harness(eventFixture({guestRoster:guests,invitees:guests.map((guest,index)=>managedInvite(guest.name,index+50,guest.id?[guest]:[]))}));await f.findButton('event-list','👥 Guest list').onclick();assert.equal(f.ids.get('guest-list-title').textContent,'Guest list');assert.equal(f.ids.get('guest-list-event').textContent,'Club evening');assert.match(f.ids.get('guest-list-summary').textContent,/6 people accepted/);
+  const rows=f.ids.get('guest-list-rows').children;assert.deepEqual(rows.map(row=>row.dataset.status),['yes','pending','payment','no','maybe','later','unanswered','unopened']);assert.deepEqual(rows.map(row=>f.descendants(row).find(node=>node.className==='invitation-status').textContent),['Accepted','Awaiting approval','Awaiting payment','Declined','Maybe','Respond later','Awaiting response','Not opened']);assert.match(textOf(f,rows[0]),/Alex/);assert.match(textOf(f,rows[0]),/2 people/);assert.equal(rows[0].children.some(node=>node.tag==='details' && node.className==='event-more guest-roster-more'),true);
+  await f.findButton('guest-list-filters','Later').onclick();assert.equal(f.ids.get('guest-list-rows').children.length,1);assert.match(textOf(f,f.ids.get('guest-list-rows').children[0]),/Jordan/);f.ids.get('guest-list-close').onclick();assert.equal(f.ids.get('guest-list-dialog').open,false);
+});
+
 test('co-host events expose management actions and keep payment fields read-only',async()=>{
   const f=await harness(eventFixture({isOwner:false,isCoHost:true}));
-  for(const label of ['✏️ Edit event','👥 Guest list','📷 Scan tickets','✉️ Guest invitations','🗂 Shared media'])assert.ok(f.findButton('event-list',label),label+' should be available');
+  for(const label of ['✏️ Edit event','👥 Guest list','🎟 Check in guests','✉️ Guest invitations','🗂 Shared media'])assert.ok(f.findButton('event-list',label),label+' should be available');
   for(const label of ['🤝 Co-hosts','🛑 Cancel event','🗑 Delete event','💳 Payments & refunds'])assert.equal(f.findButton('event-list',label),undefined,label+' should remain owner-only');
   assert.ok(f.descendants(f.ids.get('home-upcoming')).some(node=>node.textContent==='Co-hosting'));
   assert.ok(f.descendants(f.ids.get('event-list')).some(node=>node.textContent==='CO-HOSTING'));
@@ -308,11 +425,11 @@ test('collapsed settings expand for invalid required fields and payment errors',
 test('personal invitation rows distinguish an unanswered open link from a locked RSVP and a reusable link',async()=>{
   const f=await harness(eventFixture({oneTimeInvite:true,invitees:[{name:'Alex',status:'later',claimed:false,url:'https://t.me/test?start=alex'},{name:'Sam',status:'yes',claimed:true,url:'https://t.me/test?start=sam'}]}));
   await f.findButton('event-list','✉️ Guest invitations').onclick();
-  let rows=f.descendants(f.ids.get('invitation-links-list')).filter(node=>['p','span'].includes(node.tag)).map(node=>node.textContent).join('\n');
-  assert.match(rows,/Awaiting RSVP · One-time link/);assert.match(rows,/Accepted · Locked to one guest/);assert.doesNotMatch(rows,/Not opened/);
+  let rows=f.descendants(f.ids.get('invitation-links-list')).map(node=>node.textContent).join('\n');
+  assert.match(rows,/Respond later/);assert.match(rows,/One-time link/);assert.match(rows,/Accepted/);assert.match(rows,/Locked to one guest/);assert.doesNotMatch(rows,/Not opened/);
   f.setEvent({...f.getEvent(),oneTimeInvite:false});await f.findButton('event-list','✉️ Guest invitations').onclick();
-  rows=f.descendants(f.ids.get('invitation-links-list')).filter(node=>['p','span'].includes(node.tag)).map(node=>node.textContent).join('\n');
-  assert.match(rows,/Accepted · Reusable link/);assert.match(f.ids.get('invitation-links-note').textContent,/more than one guest/);
+  rows=f.descendants(f.ids.get('invitation-links-list')).map(node=>node.textContent).join('\n');
+  assert.match(rows,/Accepted/);assert.match(rows,/Reusable link/);assert.match(f.ids.get('invitation-links-note').textContent,/more than one guest/);
 });
 
 test('guest invitation actions copy the full invitation or only that guest link and preserve sharing',async()=>{
@@ -329,13 +446,15 @@ test('guest invitation actions copy the full invitation or only that guest link 
   const rows=f.ids.get('invitation-links-list').children;
   const rowButton=(row,label)=>f.descendants(row).find(node=>node.tag==='button' && node.textContent===label);
   for(const [row,name,url] of [[rows[0],'Alex','https://t.me/test?start=alex'],[rows[1],'Sam','https://t.me/test?start=sam']]){
-    for(const label of ['Share invite','Copy invite','Copy link'])assert.ok(rowButton(row,label),name+' should have '+label);
+    for(const label of ['📤 Share invite','Copy invite','Copy link'])assert.ok(rowButton(row,label),name+' should have '+label);
+    const mainActions=row.children.find(node=>node.className==='event-actions invitation-actions');assert.deepEqual(mainActions.children.map(button=>button.textContent),['Copy invite','Copy link']);
+    const more=row.children.find(node=>node.tag==='details' && node.className==='event-more invitation-more');assert.equal(more.open,false);assert.ok(f.descendants(more).includes(rowButton(row,'📤 Share invite')));
     await rowButton(row,name).onclick();const personal=f.copied.at(-1);
     await rowButton(row,'Copy invite').onclick();assert.equal(f.copied.at(-1),personal);
     await rowButton(row,'Copy link').onclick();assert.equal(f.copied.at(-1),url);
   }
   await f.findButton('invitation-links-list','Sam').onclick();assert.match(f.copied.at(-1),/^Dear Sam,/);assert.match(f.copied.at(-1),/Please choose how many people/);assert.match(f.copied.at(-1),/start=sam$/);
-  await f.findButton('invitation-links-list','Share invite').onclick();
+  await f.findButton('invitation-links-list','📤 Share invite').onclick();
   const shared=new URL(f.telegramLinks.at(-1));assert.equal(shared.searchParams.get('url'),'https://t.me/test?start=alex');assert.equal(shared.searchParams.get('text')+'\n\n'+shared.searchParams.get('url'),alex);
   assert.equal(f.ids.get('invitation-links-status').textContent,'Invitation copied for Sam.');
 });
@@ -370,7 +489,7 @@ test('denied or unavailable clipboard exposes selectable full text and a denied 
     await f.findButton('event-list','✉️ Guest invitations').onclick();
     const copy=f.findButton('invitation-links-list','Copy invite');await copy.onclick();
     const nodes=f.descendants(f.ids.get('invitation-links-list')),fullText=nodes.find(node=>node.tag==='textarea');
-    assert.equal(nodes.find(node=>node.tag==='details').open,true);assert.equal(fullText.readOnly,true);assert.equal(fullText.focused,true);assert.equal(fullText.selected,true);
+    assert.equal(nodes.find(node=>node.className==='invitation-preview').open,true);assert.equal(fullText.readOnly,true);assert.equal(fullText.focused,true);assert.equal(fullText.selected,true);
     assert.match(fullText.value,/^Dear Alex,/);assert.match(fullText.value,/Bring a scarf\./);assert.match(fullText.value,/start=guest$/);assert.doesNotMatch(fullText.value,/Club house/);
     assert.equal(f.copied.length,0);assert.match(f.ids.get('invitation-links-status').textContent,/Could not copy/);assert.doesNotMatch(f.ids.get('invitation-links-status').textContent,/Invitation copied/);assert.equal(copy.disabled,false);
     if(clipboardMode==='denied'){f.setClipboardMode('ok');await copy.onclick();assert.equal(f.copied.at(-1),fullText.value);assert.equal(f.ids.get('invitation-links-status').textContent,'Invitation copied for Alex.');}
@@ -385,7 +504,7 @@ test('link-only copy failures expose a selectable personal URL and can recover w
     const copy=f.findButton('invitation-links-list','Copy link');await copy.onclick();
     const nodes=f.descendants(f.ids.get('invitation-links-list')),link=nodes.find(node=>node.tag==='input' && node.attributes['aria-label']==='Personal link for Alex');
     assert.ok(link);assert.equal(link.value,url);assert.equal(link.readOnly,true);assert.equal(link.focused,true);assert.equal(link.selected,true);
-    assert.equal(nodes.find(node=>node.tag==='details').open,true);assert.equal(f.copied.length,0);assert.equal(copy.disabled,false);
+    assert.equal(nodes.find(node=>node.className==='invitation-preview').open,true);assert.equal(f.copied.length,0);assert.equal(copy.disabled,false);
     assert.match(f.ids.get('invitation-links-status').textContent,/Could not copy/);assert.doesNotMatch(f.ids.get('invitation-links-status').textContent,/Link copied/);
     if(clipboardMode==='denied'){f.setClipboardMode('ok');await copy.onclick();assert.equal(f.copied.at(-1),url);assert.match(f.ids.get('invitation-links-status').textContent,/Link copied/);}
   }
@@ -424,6 +543,8 @@ const managedEvent=fields=>eventFixture({paymentMethod:'free',starPrice:0,invita
 const invitationRows=f=>f.ids.get('invitation-links-list').children;
 const invitationRow=(f,name)=>invitationRows(f).find(row=>f.descendants(row).some(node=>node.tag==='button' && node.textContent===name));
 const rowAction=(f,row,label)=>f.descendants(row).find(node=>node.tag==='button' && node.textContent===label);
+const rowField=(f,row,key)=>f.descendants(row).find(node=>node.dataset?.field===key);
+const rowPanel=(f,row)=>f.descendants(row).find(node=>node.className==='invitation-management');
 const visibleInvitations=f=>invitationRows(f).filter(row=>!row.hidden).map(row=>f.descendants(row).find(node=>node.tag==='button').textContent);
 const textOf=(f,node)=>[node.textContent,...f.descendants(node).map(child=>child.textContent)].filter(Boolean).join('\n');
 
@@ -437,7 +558,7 @@ test('invitation manager shows all response outcomes and filters reusable links 
   await f.findButton('event-list','✉️ Guest invitations').onclick();
   const summary=textOf(f,f.ids.get('invitation-links-summary'));
   assert.match(summary,/5 invitations/);assert.match(summary,/4 responses/);assert.match(summary,/5 people accepted/);
-  assert.deepEqual(f.ids.get('invitation-links-filter').children.map(option=>option.textContent),['All (5)','Accepted (2)','Declined (1)','Maybe (1)','Later (1)','Unanswered (2)']);
+  assert.deepEqual(f.ids.get('invitation-links-filter').children.map(option=>option.textContent),['All (5)','Accepted (2)','Declined (1)','Maybe (1)','Later (1)','Unanswered (2)','Revoked (0)']);
   const alex=textOf(f,invitationRow(f,'Alex'));
   assert.match(alex,/Taylor/);assert.match(alex,/Accepted/);assert.match(alex,/Declined/);assert.match(alex,/See you there\./);
   for(const [filter,names] of [['all',['Alex','Sam','Morgan','Drew','Jess']],['yes',['Alex','Sam']],['no',['Alex']],['maybe',['Morgan']],['later',['Drew']],['unanswered',['Drew','Jess']]]){
@@ -479,34 +600,33 @@ test('owner and co-host can append named guests with count rules without resetti
   }
 });
 
-test('removing one invitation asks whether to notify and sends the exact chosen action',async()=>{
-  for(const [label,notify] of [['Notify guest',true],['Remove silently',false]]){
+test('revoking one invitation explicitly chooses notification and preserves its history separately',async()=>{
+  for(const notify of [true,false]){
     const alex=managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}]),sam=managedInvite('Sam',12);
     const f=await harness(managedEvent({invitees:[alex,sam]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
-    const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();
-    assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).length,0);
-    for(const choice of ['Notify guest','Remove silently','Keep invite'])assert.ok(rowAction(f,row,choice));
+    await rowAction(f,invitationRow(f,'Alex'),'🚫 Revoke invite').onclick();const row=invitationRow(f,'Alex');
+    assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/revoke')).length,0);
+    assert.equal(rowField(f,row,'notify').checked,false);assert.equal(rowField(f,row,'deleteAfter').checked,false);
     const question=textOf(f,row);assert.match(question,/Alex/);assert.match(question,/notif|notify/i);
-    await rowAction(f,row,label).onclick();
-    assert.deepEqual(f.calls.find(call=>call.path.endsWith('/invitations/remove')).body,{token:alex.token,notify,confirm:true,version:'0000000000000000'});
-    assert.equal(invitationRow(f,'Alex'),undefined);assert.ok(invitationRow(f,'Sam'));assert.deepEqual(f.getEvent().invitees,[sam]);assert.deepEqual(f.errors,[]);
+    rowField(f,row,'notify').checked=notify;await rowAction(f,row,'Revoke invite').onclick();
+    const request=f.calls.find(call=>call.path.endsWith('/invitations/revoke'));assert.deepEqual({...request.body,requestId:undefined},{token:alex.token,notify,confirm:true,version:'0000000000000000',requestId:undefined});assert.match(request.body.requestId,/^[a-f0-9-]{36}$/i);
+    assert.ok(invitationRow(f,'Alex'));assert.ok(invitationRow(f,'Sam'));assert.deepEqual(f.getEvent().invitees,[sam]);assert.equal(f.getEvent().revokedInvitees[0].history.at(-1).type,'revoked');assert.equal(f.getEvent().revokedInvitees[0].token,alex.token);assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/delete')).length,0);assert.deepEqual(f.errors,[]);
   }
 });
 
-test('keeping an invitation cancels removal without any mutation',async()=>{
+test('Back cancels invitation revocation without any mutation',async()=>{
   const alex=managedInvite('Alex',11,[{name:'Alex',status:'no',participants:0}]);
   const f=await harness(managedEvent({invitees:[alex]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
-  const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();await rowAction(f,row,'Keep invite').onclick();
-  assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).length,0);assert.deepEqual(f.getEvent().invitees,[alex]);assert.ok(invitationRow(f,'Alex'));
+  await rowAction(f,invitationRow(f,'Alex'),'🚫 Revoke invite').onclick();await rowAction(f,invitationRow(f,'Alex'),'Back').onclick();
+  assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/revoke')).length,0);assert.deepEqual(f.getEvent().invitees,[alex]);assert.ok(invitationRow(f,'Alex'));assert.equal(rowPanel(f,invitationRow(f,'Alex')).hidden,true);
 });
 
-test('an unopened invitation offers silent removal and explains why there is no guest to notify',async()=>{
+test('an unopened invitation disables response and notification while allowing revocation',async()=>{
   const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
-  const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();
-  assert.equal(rowAction(f,row,'Notify guest').disabled,true);assert.equal(!!rowAction(f,row,'Remove silently').disabled,false);
-  assert.match(textOf(f,row),/not opened|no guest|not yet|cannot notify|can't notify/i);
-  await rowAction(f,row,'Notify guest').onclick();assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).length,0);
-  await rowAction(f,row,'Remove silently').onclick();assert.equal(f.getEvent().invitees.length,0);
+  assert.equal(rowAction(f,invitationRow(f,'Alex'),'↻ Change response').disabled,true);assert.match(textOf(f,invitationRow(f,'Alex')),/guest must open/);
+  await rowAction(f,invitationRow(f,'Alex'),'↻ Change response').onclick();assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/response')).length,0);
+  await rowAction(f,invitationRow(f,'Alex'),'🚫 Revoke invite').onclick();const row=invitationRow(f,'Alex');assert.equal(rowField(f,row,'notify').disabled,true);assert.match(textOf(f,row),/No Telegram account is available/);
+  await rowAction(f,row,'Revoke invite').onclick();assert.equal(f.getEvent().invitees.length,0);assert.equal(f.calls.find(call=>call.path.endsWith('/invitations/revoke')).body.notify,false);
 });
 
 test('an add validation error keeps guest input and existing links visible for correction',async()=>{
@@ -516,20 +636,20 @@ test('an add validation error keeps guest input and existing links visible for c
   f.setInvitationError(null);f.ids.get('invitation-add-names').value='Casey = 2';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});assert.equal(f.getEvent().invitees.length,2);
 });
 
-test('a remove failure keeps the invitation and displays the server error instead of reporting success',async()=>{
+test('a revoke failure keeps the invitation and displays the server error instead of reporting success',async()=>{
   const alex=managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}]),f=await harness(managedEvent({invitees:[alex]}),{invitationError:{status:400,message:'Refund this ticket before removing its invitation.'}});
-  await f.findButton('event-list','✉️ Guest invitations').onclick();const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();await rowAction(f,row,'Notify guest').onclick();
+  await f.findButton('event-list','✉️ Guest invitations').onclick();await rowAction(f,invitationRow(f,'Alex'),'🚫 Revoke invite').onclick();await rowAction(f,invitationRow(f,'Alex'),'Revoke invite').onclick();
   assert.deepEqual(f.getEvent().invitees,[alex]);assert.ok(invitationRow(f,'Alex'));assert.match(f.ids.get('invitation-links-status').textContent,/Refund this ticket/);assert.doesNotMatch(f.ids.get('invitation-links-status').textContent,/removed|notified/i);
 });
 
-test('a response arriving before removal refreshes the list and requires a new explicit choice',async()=>{
+test('a response arriving before revocation refreshes the list and requires another explicit confirmation',async()=>{
   const alex=managedInvite('Alex',11),f=await harness(managedEvent({invitees:[alex]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
-  f.ids.get('invitation-links-search').value='alex';f.ids.get('invitation-links-search').oninput();const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();
+  f.ids.get('invitation-links-search').value='alex';f.ids.get('invitation-links-search').oninput();await rowAction(f,invitationRow(f,'Alex'),'🚫 Revoke invite').onclick();const row=invitationRow(f,'Alex');
   const responded=managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}]);f.setEvent({...f.getEvent(),invitationsVersion:'1111111111111111',invitees:[responded]});
-  await rowAction(f,row,'Remove silently').onclick();
-  assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).length,1);assert.deepEqual(f.getEvent().invitees,[responded]);assert.match(f.ids.get('invitation-links-status').textContent,/Invitations changed/);assert.match(textOf(f,invitationRow(f,'Alex')),/Accepted/);assert.equal(f.ids.get('invitation-links-search').value,'alex');
-  const freshRow=invitationRow(f,'Alex');await rowAction(f,freshRow,'Remove invite').onclick();await rowAction(f,freshRow,'Remove silently').onclick();
-  assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).at(-1).body.version,'1111111111111111');assert.equal(f.getEvent().invitees.length,0);
+  await rowAction(f,row,'Revoke invite').onclick();
+  assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/revoke')).length,1);assert.deepEqual(f.getEvent().invitees,[responded]);assert.match(f.ids.get('invitation-links-status').textContent,/Invitations changed/);assert.match(textOf(f,invitationRow(f,'Alex')),/Accepted/);assert.equal(f.ids.get('invitation-links-search').value,'alex');
+  await rowAction(f,invitationRow(f,'Alex'),'Revoke invite').onclick();
+  assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/revoke')).at(-1).body.version,'1111111111111111');assert.equal(f.getEvent().invitees.length,0);
 });
 
 test('closing invitation management ignores a late add response and a later opening fetches current invitations',async()=>{
@@ -540,19 +660,21 @@ test('closing invitation management ignores a late add response and a later open
   await f.findButton('event-list','✉️ Guest invitations').onclick();assert.ok(invitationRow(f,'Casey'));
 });
 
-test('a pending invitation mutation blocks competing add and remove actions',async()=>{
+test('a pending revocation blocks competing mutations and disables notification controls',async()=>{
   const f=await harness(managedEvent({invitees:[managedInvite('Alex',11,[{name:'Alex',status:'yes',participants:2}])]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
-  const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();const notify=rowAction(f,row,'Notify guest'),silent=rowAction(f,row,'Remove silently');
-  const release=f.holdNextInvitationMutation();const removing=notify.onclick();
-  assert.equal(silent.disabled,true);assert.equal(f.ids.get('invitation-add-submit').disabled,true);assert.equal(f.ids.get('invitation-add-names').disabled,true);
-  await silent.onclick();f.ids.get('invitation-add-names').value='Casey';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});
-  assert.equal(f.calls.filter(call=>/\/invitations\/(?:add|remove)$/.test(call.path)).length,1);
+  await rowAction(f,invitationRow(f,'Alex'),'🚫 Revoke invite').onclick();const row=invitationRow(f,'Alex'),revoke=rowAction(f,row,'Revoke invite'),edit=rowAction(f,row,'✏️ Edit invite');
+  const release=f.holdNextInvitationMutation();const removing=revoke.onclick();
+  assert.equal(edit.disabled,true);assert.equal(rowField(f,row,'notify').disabled,true);assert.equal(f.ids.get('invitation-add-submit').disabled,true);assert.equal(f.ids.get('invitation-add-names').disabled,true);
+  await edit.onclick();f.ids.get('invitation-add-names').value='Casey';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});
+  assert.equal(f.calls.filter(call=>/\/invitations\/(?:add|revoke)$/.test(call.path)).length,1);
   release();await removing;assert.equal(f.getEvent().invitees.length,0);assert.equal(f.ids.get('invitation-add-submit').disabled,false);
 });
 
-test('removing the last invitation keeps management available and new guests can be added later',async()=>{
+test('revoking then deleting the last invitation requires a separate deletion confirmation and keeps additions available',async()=>{
   const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
-  const row=invitationRow(f,'Alex');await rowAction(f,row,'Remove invite').onclick();await rowAction(f,row,'Remove silently').onclick();
+  await rowAction(f,invitationRow(f,'Alex'),'🚫 Revoke invite').onclick();const row=invitationRow(f,'Alex');rowField(f,row,'deleteAfter').checked=true;await rowAction(f,row,'Revoke invite').onclick();
+  assert.equal(f.getEvent().invitees.length,0);assert.equal(f.getEvent().revokedInvitees.length,1);assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/delete')).length,0);assert.match(textOf(f,invitationRow(f,'Alex')),/cannot be undone/);
+  await rowAction(f,invitationRow(f,'Alex'),'Delete permanently').onclick();assert.equal(f.getEvent().revokedInvitees.length,0);assert.equal(f.calls.find(call=>call.path.endsWith('/invitations/delete')).body.confirm,true);
   assert.equal(invitationRows(f).length,0);assert.match(f.ids.get('invitation-links-summary').textContent,/0 invitations/);
   f.ids.get('invitation-links-close').onclick();assert.ok(f.findButton('event-list','✉️ Guest invitations'));await f.findButton('event-list','✉️ Guest invitations').onclick();
   f.ids.get('invitation-add-names').value='Sam';await f.ids.get('invitation-add-form').onsubmit({preventDefault(){}});assert.ok(invitationRow(f,'Sam'));
@@ -565,6 +687,115 @@ test('refresh gets current responses without clearing a search, response filter 
   await f.ids.get('invitation-links-refresh').onclick();
   assert.deepEqual(visibleInvitations(f),['Alex']);assert.match(textOf(f,invitationRow(f,'Alex')),/3 people/);assert.match(textOf(f,invitationRow(f,'Alex')),/Bringing my family/);
   assert.equal(f.ids.get('invitation-links-search').value,'alex');assert.equal(f.ids.get('invitation-links-filter').value,'yes');assert.equal(f.ids.get('invitation-add-names').value,'Casey = ?');assert.match(f.ids.get('invitation-links-status').textContent,/refreshed/i);
+});
+
+test('editing one invitation preserves its token, claim, responses and other invites for every attendee setting',async()=>{
+  for(const [mode,count,participantMode,participants] of [['one','1','default',null],['editable','4','preset',4],['ask','1','ask',null],['confirm','3','confirm',3],['fixed','10','fixed',10]]){
+    const reply={id:18,name:'Alex',status:'maybe',participants:0},alex=managedInvite('Alex',11,[reply]),sam=managedInvite('Sam',12);
+    const f=await harness(managedEvent({invitees:[alex,sam]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
+    await rowAction(f,invitationRow(f,'Alex'),'✏️ Edit invite').onclick();const row=invitationRow(f,'Alex');
+    rowField(f,row,'name').value='Alex Smith';rowField(f,row,'mode').value=mode;rowField(f,row,'mode').onchange();rowField(f,row,'count').value=count;
+    await rowAction(f,row,'Save invite').onclick();const request=f.calls.find(call=>call.path.endsWith('/invitations/edit'));
+    assert.deepEqual({...request.body,requestId:undefined},{token:alex.token,name:'Alex Smith',participants,participantMode,version:'0000000000000000',requestId:undefined});assert.match(request.body.requestId,/^[a-f0-9-]{36}$/i);
+    const edited=f.getEvent().invitees[0];assert.equal(edited.token,alex.token);assert.equal(edited.claimed,alex.claimed);assert.deepEqual(edited.responses,[reply]);assert.deepEqual(f.getEvent().invitees[1],sam);assert.equal(edited.history.at(-1).type,'edited');assert.equal(rowPanel(f,invitationRow(f,'Alex Smith')).hidden,true);
+    await rowAction(f,invitationRow(f,'Alex Smith'),'Copy invite').onclick();assert.match(f.copied.at(-1),/^Dear Alex Smith,/);assert.ok(f.copied.at(-1).endsWith(alex.url));
+  }
+});
+
+test('invitation edits reject duplicate names, malformed names and counts over ten without mutating',async()=>{
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11),managedInvite('Sam',12)]}));await f.findButton('event-list','✉️ Guest invitations').onclick();await rowAction(f,invitationRow(f,'Alex'),'✏️ Edit invite').onclick();const row=invitationRow(f,'Alex');
+  for(const name of ['','Bad = 2','Sam']){rowField(f,row,'name').value=name;await rowAction(f,row,'Save invite').onclick();assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/edit')).length,0);assert.ok(f.ids.get('invitation-links-status').textContent);}
+  rowField(f,row,'name').value='Alex';rowField(f,row,'mode').value='fixed';rowField(f,row,'mode').onchange();rowField(f,row,'count').value='11';await rowAction(f,row,'Save invite').onclick();assert.match(f.ids.get('invitation-links-status').textContent,/1 to 10/);assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/edit')).length,0);
+});
+
+test('failed invitation edits retain the draft and reuse the request ID when retried',async()=>{
+  const original=managedInvite('Alex',11,[{id:18,name:'Alex',status:'yes',participants:2}]),f=await harness(managedEvent({invitees:[original]}),{invitationError:{message:'This paid ticket needs a refund first.'}});await f.findButton('event-list','✉️ Guest invitations').onclick();await rowAction(f,invitationRow(f,'Alex'),'✏️ Edit invite').onclick();let row=invitationRow(f,'Alex');
+  rowField(f,row,'name').value='Alex Smith';rowField(f,row,'mode').value='confirm';rowField(f,row,'mode').onchange();rowField(f,row,'count').value='3';rowField(f,row,'count').onchange();await rowAction(f,row,'Save invite').onclick();
+  row=invitationRow(f,'Alex');assert.equal(rowField(f,row,'name').value,'Alex Smith');assert.equal(rowField(f,row,'mode').value,'confirm');assert.equal(rowField(f,row,'count').value,'3');assert.match(f.ids.get('invitation-links-status').textContent,/needs a refund/);assert.deepEqual(f.getEvent().invitees,[original]);
+  f.setInvitationError(null);await rowAction(f,row,'Save invite').onclick();const requests=f.calls.filter(call=>call.path.endsWith('/invitations/edit'));assert.equal(requests[0].body.requestId,requests[1].body.requestId);assert.ok(invitationRow(f,'Alex Smith'));
+});
+
+test('reusable invitation response changes require choosing the exact guest and preserve other responses',async()=>{
+  for(const [status,notify] of [['yes',true],['no',false],['maybe',true],['later',false]]){
+    const alex={id:18,name:'Alex',status:'yes',participants:2,selectedParticipants:2},sam={id:19,name:'Sam',status:'no',participants:0,selectedParticipants:4},invite=managedInvite('Team',11,[alex,sam]);
+    const f=await harness(managedEvent({oneTimeInvite:false,invitees:[invite]}));await f.findButton('event-list','✉️ Guest invitations').onclick();await rowAction(f,invitationRow(f,'Team'),'↻ Change response').onclick();const row=invitationRow(f,'Team');
+    assert.equal(rowField(f,row,'userId').value,'');assert.equal(rowField(f,row,'notify').checked,false);await rowAction(f,row,'Save response').onclick();assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/response')).length,0);assert.match(f.ids.get('invitation-links-status').textContent,/Choose the guest/);
+    rowField(f,row,'userId').value='19';rowField(f,row,'userId').onchange();assert.equal(rowField(f,row,'status').value,'no');assert.equal(rowField(f,row,'count').value,'4');
+    rowField(f,row,'status').value=status;rowField(f,row,'status').onchange();rowField(f,row,'notify').checked=notify;await rowAction(f,row,'Save response').onclick();
+    const request=f.calls.find(call=>call.path.endsWith('/invitations/response'));assert.deepEqual({...request.body,requestId:undefined},{token:invite.token,userId:19,status,...(status==='yes'?{participants:4}:{}),notify,version:'0000000000000000',requestId:undefined});assert.match(request.body.requestId,/^[a-f0-9-]{36}$/i);assert.deepEqual(f.getEvent().invitees[0].responses[0],alex);assert.equal(f.getEvent().invitees[0].responses[1].status,status);
+  }
+});
+
+test('fixed and one-person invitations disable attendee changes in the response form',async()=>{
+  for(const fields of [{participants:3,participantMode:'fixed'},{participants:null,participantMode:null}]){
+    const invite={...managedInvite('Alex',11,[{id:18,name:'Alex',status:'yes',participants:fields.participants || 1}]),...fields};
+    const f=await harness(managedEvent({invitees:[invite]}));await f.findButton('event-list','✉️ Guest invitations').onclick();await rowAction(f,invitationRow(f,'Alex'),'↻ Change response').onclick();const row=invitationRow(f,'Alex');assert.equal(rowField(f,row,'count').disabled,true);assert.equal(rowField(f,row,'count').value,String(fields.participants || 1));assert.match(textOf(f,row),fields.participantMode==='fixed'?/count is fixed/:/for one person/);
+  }
+});
+
+test('response errors keep the selected guest and notification choice and reuse the request on retry',async()=>{
+  const invite=managedInvite('Alex',11,[{id:18,name:'Alex',status:'yes',participants:2}]),f=await harness(managedEvent({invitees:[invite]}),{invitationError:{message:'This guest is already checked in.'}});await f.findButton('event-list','✉️ Guest invitations').onclick();await rowAction(f,invitationRow(f,'Alex'),'↻ Change response').onclick();let row=invitationRow(f,'Alex');rowField(f,row,'status').value='no';rowField(f,row,'status').onchange();rowField(f,row,'notify').checked=true;rowField(f,row,'notify').onchange();await rowAction(f,row,'Save response').onclick();
+  row=invitationRow(f,'Alex');assert.equal(rowField(f,row,'userId').value,'18');assert.equal(rowField(f,row,'status').value,'no');assert.equal(rowField(f,row,'notify').checked,true);assert.match(f.ids.get('invitation-links-status').textContent,/already checked in/);assert.equal(f.getEvent().invitees[0].responses[0].status,'yes');
+  f.setInvitationError(null);await rowAction(f,row,'Save response').onclick();const requests=f.calls.filter(call=>call.path.endsWith('/invitations/response'));assert.equal(requests[0].body.requestId,requests[1].body.requestId);assert.equal(f.getEvent().invitees[0].responses[0].status,'no');
+});
+
+test('revoked invitations are filterable, retain history and cannot be copied, shared or edited',async()=>{
+  const active=managedInvite('Alex',11,[{id:18,name:'Alex',status:'yes',participants:2}]),archived={...managedInvite('Sam',12,[{id:19,name:'Sam',status:'yes',participants:4}]),revoked:true,history:[{type:'created',at:'2026-10-07T00:00:00Z'},{type:'revoked',at:'2026-10-08T00:00:00Z'}]};
+  const f=await harness(managedEvent({invitees:[active],revokedInvitees:[archived]}));await f.findButton('event-list','✉️ Guest invitations').onclick();assert.match(f.ids.get('invitation-links-summary').textContent,/1 invitations · 1 responses · 2 people accepted · 1 revoked/);
+  const row=invitationRow(f,'Sam');assert.equal(rowAction(f,row,'Sam').disabled,true);for(const label of ['Copy invite','Copy link','📤 Share invite','✏️ Edit invite','↻ Change response','🚫 Revoke invite'])assert.equal(rowAction(f,row,label),undefined);await rowAction(f,row,'Sam').onclick();assert.equal(f.copied.length,0);
+  f.ids.get('invitation-links-filter').value='yes';f.ids.get('invitation-links-filter').onchange();assert.deepEqual(visibleInvitations(f),['Alex']);f.ids.get('invitation-links-filter').value='revoked';f.ids.get('invitation-links-filter').onchange();assert.deepEqual(visibleInvitations(f),['Sam']);await rowAction(f,row,'🕘 See history').onclick();assert.match(textOf(f,invitationRow(f,'Sam')),/Invitation revoked/);
+});
+
+test('deleting an archived invitation can be cancelled and only deletes the selected revoked row',async()=>{
+  const archived={...managedInvite('Sam',12),revoked:true,history:[{type:'revoked',at:'2026-10-08T00:00:00Z'}]},other={...managedInvite('Taylor',13),revoked:true},active=managedInvite('Alex',11),f=await harness(managedEvent({invitees:[active],revokedInvitees:[archived,other]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
+  await rowAction(f,invitationRow(f,'Sam'),'🗑 Delete invite').onclick();await rowAction(f,invitationRow(f,'Sam'),'Back').onclick();assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/delete')).length,0);assert.deepEqual(f.getEvent().revokedInvitees,[archived,other]);
+  await rowAction(f,invitationRow(f,'Sam'),'🗑 Delete invite').onclick();assert.match(textOf(f,invitationRow(f,'Sam')),/audit records are retained/);await rowAction(f,invitationRow(f,'Sam'),'Delete permanently').onclick();const request=f.calls.find(call=>call.path.endsWith('/invitations/delete'));assert.equal(request.body.token,archived.token);assert.equal(request.body.confirm,true);assert.deepEqual(f.getEvent().invitees,[active]);assert.deepEqual(f.getEvent().revokedInvitees,[other]);assert.equal(invitationRow(f,'Sam'),undefined);
+});
+
+test('invitation history displays tracked actions, exact timestamps and attendee changes in the profile timezone',async()=>{
+  const types=['created','opened','responded','changed','edited','revoked'],history=types.map((type,index)=>({type,at:'2026-10-08T0'+index+':00:00Z',name:index===4?'Alex Smith':'Alex',...(index===3?{status:'no',previousStatus:'yes',actorRole:'organiser',notify:true}:{}),...(index===4?{previousName:'Alex',participants:3,previousParticipants:2,participantMode:'fixed',previousParticipantMode:'preset',actorRole:'organiser'}:{}),...(index===5?{notify:false}:{})}));
+  const f=await harness(managedEvent({invitees:[{...managedInvite('Alex',11),history}]}));await f.findButton('event-list','✉️ Guest invitations').onclick();await rowAction(f,invitationRow(f,'Alex'),'🕘 See history').onclick();const row=invitationRow(f,'Alex'),text=textOf(f,row),times=f.descendants(rowPanel(f,row)).filter(node=>node.tag==='time');
+  for(const label of ['Invite created','Invitation opened','Response received','Response changed','Invite edited','Invitation revoked','Times shown in Australia/Sydney.','Accepted → Declined','Alex → Alex Smith','2 → 3 people','Guest can change count → Fixed count','Notification requested','Guest not notified'])assert.ok(text.includes(label),label);
+  assert.equal(times.length,history.length);for(let i=0;i<times.length;i++){assert.equal(times[i].attributes.datetime,new Date(history[i].at).toISOString());assert.equal(times[i].textContent,new Intl.DateTimeFormat(undefined,{timeZone:'Australia/Sydney',dateStyle:'medium',timeStyle:'short'}).format(new Date(history[i].at)));}assert.doesNotMatch(text,/Earlier activity/);
+});
+
+test('legacy invitation history explains missing records without inventing creation or open times',async()=>{
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','✉️ Guest invitations').onclick();await rowAction(f,invitationRow(f,'Alex'),'🕘 See history').onclick();const row=invitationRow(f,'Alex');assert.match(textOf(f,row),/No recorded history yet. Earlier activity isn’t available/);assert.equal(f.descendants(row).filter(node=>node.tag==='time').length,0);assert.doesNotMatch(textOf(f,row),/Invite created|Invitation opened/);
+});
+
+test('current invitation responses stay visible without expanding details and distinguish opened from Respond later',async()=>{
+  const names=[['Accepted','yes',true],['Declined','no',true],['Maybe','maybe',true],['Respond later','later',true],['Awaiting response','later',false]];
+  const guests=names.map(([name,status,responded],i)=>managedInvite(name,i+21,[{id:i+101,name,status,responded,respondedAt:null,participants:status==='yes'?2:0}]));guests.push(managedInvite('Unopened',30));
+  const f=await harness(managedEvent({invitees:guests}));await f.findButton('event-list','✉️ Guest invitations').onclick();
+  for(const [name] of names){const row=invitationRow(f,name),status=row.children.find(node=>node.className==='invitation-current-status'),badge=f.descendants(status).find(node=>node.className==='invitation-status');assert.ok(status);assert.notEqual(status.hidden,true);assert.equal(badge.textContent,name);assert.equal(badge.attributes['aria-label'],'Current response: '+name);assert.equal(f.descendants(status).some(node=>node.tag==='time'),false);}
+  const unopened=invitationRow(f,'Unopened'),badge=f.descendants(unopened).find(node=>node.className==='invitation-status');assert.equal(badge.textContent,'Not opened');
+  f.ids.get('invitation-links-filter').value='later';f.ids.get('invitation-links-filter').onchange();assert.deepEqual(visibleInvitations(f),['Respond later']);f.ids.get('invitation-links-filter').value='unanswered';f.ids.get('invitation-links-filter').onchange();assert.deepEqual(visibleInvitations(f),['Respond later','Awaiting response','Unopened']);
+});
+
+test('mixed reusable invitations show the latest genuine response and each guest response time',async()=>{
+  const first='2026-10-08T01:00:00Z',last='2026-10-08T02:00:00Z',invite={...managedInvite('Team',11,[{id:18,name:'Alex',status:'yes',responded:true,respondedAt:first,participants:2},{id:19,name:'Sam',status:'no',responded:true,respondedAt:last,participants:0}]),history:[{type:'responded',at:first,userId:18,status:'yes'},{type:'changed',at:last,userId:19,status:'no'},{type:'edited',at:'2026-10-09T00:00:00Z',name:'Team'}]};
+  const f=await harness(managedEvent({oneTimeInvite:false,invitees:[invite]}));await f.findButton('event-list','✉️ Guest invitations').onclick();const row=invitationRow(f,'Team'),status=row.children.find(node=>node.className==='invitation-current-status'),badge=f.descendants(status).find(node=>node.className==='invitation-status'),time=f.descendants(status).find(node=>node.tag==='time');assert.equal(badge.textContent,'Mixed responses · 2 guests');assert.equal(badge.dataset.status,'mixed');assert.equal(time.attributes.datetime,new Date(last).toISOString());assert.equal(time.textContent,'Last response: '+new Intl.DateTimeFormat(undefined,{timeZone:'Australia/Sydney',dateStyle:'medium',timeStyle:'short'}).format(new Date(last)));
+  const details=f.descendants(row).find(node=>node.className==='invitation-responses');assert.equal(details.open,false);assert.deepEqual(f.descendants(details).filter(node=>node.tag==='time').map(node=>node.attributes.datetime),[first,last].map(at=>new Date(at).toISOString()));assert.match(textOf(f,details),/Alex: Accepted/);assert.match(textOf(f,details),/Sam: Declined/);
+});
+
+test('legacy accepted and newly opened invitations do not invent a last-response timestamp',async()=>{
+  const legacy=managedInvite('Alex',11,[{id:18,name:'Alex',status:'yes',participants:2}]),opened={...managedInvite('Sam',12,[{id:19,name:'Sam',status:'later',responded:false,respondedAt:null,participants:0}]),history:[{type:'opened',at:'2026-10-08T01:00:00Z',userId:19},{type:'edited',at:'2026-10-09T00:00:00Z',name:'Sam'}]};
+  const f=await harness(managedEvent({invitees:[legacy,opened]}));await f.findButton('event-list','✉️ Guest invitations').onclick();for(const name of ['Alex','Sam']){const row=invitationRow(f,name);assert.equal(f.descendants(row).filter(node=>node.tag==='time').length,0);assert.doesNotMatch(textOf(f,row),/Last response:/);}
+});
+
+test('a manager access change during refresh closes the invitation dialog and clears private rows',async()=>{
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','✉️ Guest invitations').onclick();f.setEvent({...f.getEvent(),isOwner:false,isManager:false,isCoHost:false,invitees:[]});await f.ids.get('invitation-links-refresh').onclick();assert.equal(f.ids.get('invitation-links-dialog').open,false);assert.equal(invitationRows(f).length,0);assert.match(f.ids.get('notice').textContent,/management access has changed/);
+});
+
+test('refresh closes an edit or response form when another manager revokes that invitation',async()=>{
+  for(const label of ['✏️ Edit invite','↻ Change response']){
+    const invite=managedInvite('Alex',11,[{id:18,name:'Alex',status:'yes',participants:2}]),f=await harness(managedEvent({invitees:[invite]}));await f.findButton('event-list','✉️ Guest invitations').onclick();await rowAction(f,invitationRow(f,'Alex'),label).onclick();assert.equal(rowPanel(f,invitationRow(f,'Alex')).hidden,false);
+    f.setEvent({...f.getEvent(),invitationsVersion:'1111111111111111',invitees:[],revokedInvitees:[{...invite,revoked:true}]});await f.ids.get('invitation-links-refresh').onclick();const row=invitationRow(f,'Alex');assert.equal(rowPanel(f,row).hidden,true);assert.equal(rowAction(f,row,'Save invite'),undefined);assert.equal(rowAction(f,row,'Save response'),undefined);assert.equal(rowAction(f,row,'Alex').disabled,true);
+  }
+});
+
+test('closing while a response change is pending prevents a late result from reopening its form',async()=>{
+  const f=await harness(managedEvent({invitees:[managedInvite('Alex',11,[{id:18,name:'Alex',status:'yes',participants:2}])]}));await f.findButton('event-list','✉️ Guest invitations').onclick();await rowAction(f,invitationRow(f,'Alex'),'↻ Change response').onclick();const row=invitationRow(f,'Alex');rowField(f,row,'status').value='maybe';rowField(f,row,'status').onchange();const release=f.holdNextInvitationMutation(),saving=rowAction(f,row,'Save response').onclick();f.ids.get('invitation-links-close').onclick();release();await saving;assert.equal(f.ids.get('invitation-links-dialog').open,false);assert.equal(f.getEvent().invitees[0].responses[0].status,'maybe');await f.findButton('event-list','✉️ Guest invitations').onclick();assert.match(textOf(f,invitationRow(f,'Alex')),/Maybe/);assert.equal(rowPanel(f,invitationRow(f,'Alex')).hidden,true);
 });
 
 test('one-by-one guests append to an unsaved event list and preserve every attendee setting',async()=>{
@@ -611,9 +842,29 @@ test('guest roster opens manual additions and revokes the exact invitation mappe
   const f=await harness(managedEvent({invitees:[wrong,right],guestRoster:[{id:19,name:'Alex',status:'maybe',participants:0},{id:null,name:'Unopened',status:'unopened',participants:0}]}));
   await f.findButton('event-list','👥 Guest list').onclick();assert.equal(f.ids.get('guest-list-add').hidden,false);
   await f.findButton('guest-list-rows','🚫 Revoke invitation').onclick();assert.equal(f.ids.get('guest-list-dialog').open,false);assert.equal(f.ids.get('invitation-links-dialog').open,true);
-  const row=invitationRow(f,'Sam'),panel=f.descendants(row).find(node=>node.className==='invitation-remove');assert.equal(panel.hidden,false);assert.equal(f.descendants(invitationRow(f,'Alex')).find(node=>node.className==='invitation-remove').hidden,true);
-  await rowAction(f,row,'Remove silently').onclick();assert.equal(f.calls.find(call=>call.path.endsWith('/invitations/remove')).body.token,right.token);
+  const row=invitationRow(f,'Sam');assert.equal(rowPanel(f,row).hidden,false);assert.equal(rowPanel(f,invitationRow(f,'Alex')).hidden,true);
+  await rowAction(f,row,'Revoke invite').onclick();assert.equal(f.calls.find(call=>call.path.endsWith('/invitations/revoke')).body.token,right.token);
   f.ids.get('invitation-links-close').onclick();await f.findButton('event-list','👥 Guest list').onclick();await f.ids.get('guest-list-add').onclick();assert.equal(f.ids.get('guest-list-dialog').open,false);assert.equal(f.ids.get('invitation-add').open,true);assert.equal(f.ids.get('invitation-single').open,true);assert.equal(f.ids.get('invitation-single-name').focused,true);
+});
+
+test('guest roster RSVP shortcut selects the exact guest and supports silent or notified changes',async()=>{
+  for(const notify of [false,true]){
+    const alex={id:18,name:'Alex',status:'yes',participants:2},sam={id:19,name:'Sam',status:'maybe',participants:0},invite=managedInvite('Team',11,[alex,sam]);
+    const f=await harness(managedEvent({isOwner:false,isManager:true,invitees:[invite],guestRoster:[sam]}));
+    await f.findButton('event-list','👥 Guest list').onclick();await f.findButton('guest-list-rows','↻ Change RSVP').onclick();
+    const row=invitationRow(f,'Team');assert.equal(f.ids.get('guest-list-dialog').open,false);assert.equal(rowPanel(f,row).dataset.kind,'response');assert.equal(rowField(f,row,'userId').value,'19');assert.equal(rowField(f,row,'status').value,'maybe');
+    rowField(f,row,'status').value='no';rowField(f,row,'status').onchange();rowField(f,row,'notify').checked=notify;
+    await rowAction(f,row,'Save response').onclick();const request=f.calls.find(call=>call.path.endsWith('/invitations/response'));
+    assert.equal(request.body.userId,19);assert.equal(request.body.token,invite.token);assert.equal(request.body.status,'no');assert.equal(request.body.notify,notify);assert.deepEqual(f.getEvent().invitees[0].responses[0],alex);
+  }
+});
+
+test('guest roster edit shortcut opens the invitation editor and unopened guests cannot change RSVP',async()=>{
+  const invite=managedInvite('Alex',11),f=await harness(managedEvent({invitees:[invite],guestRoster:[{id:null,name:'Alex',status:'unopened'}]}));
+  await f.findButton('event-list','👥 Guest list').onclick();assert.equal(f.findButton('guest-list-rows','↻ Change RSVP').disabled,true);
+  await f.findButton('guest-list-rows','✏️ Edit invite').onclick();assert.equal(rowPanel(f,invitationRow(f,'Alex')).dataset.kind,'edit');
+  f.ids.get('invitation-links-close').onclick();f.setEvent({...f.getEvent(),group:'Past events'});await f.findButton('event-list','👥 Guest list').onclick();
+  assert.equal(f.findButton('guest-list-rows','✏️ Edit invite').disabled,true);assert.equal(f.findButton('guest-list-rows','↻ Change RSVP').disabled,true);
 });
 
 test('ticket-booking guest rosters omit named-invite add and revoke controls',async()=>{
@@ -625,7 +876,7 @@ test('individual additions share the mutation guard and cannot update a closed i
   const f=await harness(managedEvent({invitees:[managedInvite('Alex',11)]}));await f.findButton('event-list','✉️ Guest invitations').onclick();
   const release=f.holdNextInvitationMutation();f.ids.get('invitation-single-name').value='Sam';const adding=f.ids.get('invitation-single-add').onclick();
   assert.equal(f.ids.get('invitation-single-add').disabled,true);assert.equal(f.ids.get('invitation-add-submit').disabled,true);assert.equal(f.ids.get('invitation-single-mode').disabled,true);
-  await rowAction(f,invitationRow(f,'Alex'),'Remove invite').onclick();assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/remove')).length,0);
+  await rowAction(f,invitationRow(f,'Alex'),'🚫 Revoke invite').onclick();assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/revoke')).length,0);
   f.ids.get('invitation-links-close').onclick();release();await adding;assert.equal(f.ids.get('invitation-links-dialog').open,false);assert.equal(f.ids.get('invitation-single-name').value,'Sam');
   await f.findButton('event-list','✉️ Guest invitations').onclick();assert.ok(invitationRow(f,'Sam'));assert.equal(f.ids.get('invitation-single-name').value,'');assert.equal(f.ids.get('invitation-single-add').disabled,false);
 });
@@ -633,7 +884,7 @@ test('individual additions share the mutation guard and cannot update a closed i
 test('unopened roster revocation uses its personal link and finished events disable guest mutations',async()=>{
   const invite=managedInvite('Alex',11),f=await harness(managedEvent({invitees:[invite],guestRoster:[{id:null,name:'Alex',status:'unopened',participants:0}]}));
   await f.findButton('event-list','👥 Guest list').onclick();await f.findButton('guest-list-rows','🚫 Revoke invitation').onclick();
-  const row=invitationRow(f,'Alex');assert.equal(f.descendants(row).find(node=>node.className==='invitation-remove').hidden,false);assert.equal(rowAction(f,row,'Notify guest').disabled,true);
+  const row=invitationRow(f,'Alex');assert.equal(rowPanel(f,row).hidden,false);assert.equal(rowField(f,row,'notify').disabled,true);
   f.ids.get('invitation-links-close').onclick();f.setEvent({...f.getEvent(),group:'Past events'});await f.findButton('event-list','👥 Guest list').onclick();assert.equal(f.ids.get('guest-list-add').disabled,true);assert.equal(f.findButton('guest-list-rows','🚫 Revoke invitation').disabled,true);
   await f.ids.get('guest-list-invitations').onclick();assert.equal(f.ids.get('invitation-single-add').disabled,true);assert.equal(f.ids.get('invitation-add-submit').disabled,true);await f.ids.get('invitation-single-add').onclick();assert.equal(f.calls.filter(call=>call.path.endsWith('/invitations/add')).length,0);
 });

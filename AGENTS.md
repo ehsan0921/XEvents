@@ -65,9 +65,14 @@ existing invitations, and users' private event data when making changes.
 - Work on `dev` and verify the affected flows there before promoting to `main`.
   `main` deploys production; `dev` deploys the separate development Worker and D1.
   Keep all bot credentials, app URLs and database bindings isolated by environment.
-- The production-to-dev workflow merges code without force-pushing. Optional D1
-  copying is schema-only into an empty development database. Never copy real
-  guest records, media references, payment state or delivery queues into tests.
+- Keep code synchronization and database refresh separate. The user explicitly
+  authorizes the manual production-to-dev database snapshot workflow to copy real
+  business records into the private development D1. Replace development data,
+  preserve its settings/whitelist, clear sessions and delivery/coordination state,
+  and require the development snapshot access/payment/notification safeguards.
+  Never merge code, deploy Workers, write production data or publish database
+  exports as part of this database-only workflow. Automated tests still use
+  fictional local fixtures, never actual production snapshots.
 - Run deployment automation from one canonical repository; mirrors run checks
   only. Store private configuration in GitHub environment secrets and ignored files.
 

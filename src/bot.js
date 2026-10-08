@@ -613,7 +613,7 @@ export class Bot {
       return this.chooseParticipants(id,e,session,Number(arg));
     }
     if (required && !can(e, id, required)) return this.send(id, 'The organiser has not enabled this option for guests.');
-    if (action === 'v') { this.session(id); await this.home(id, 'Use the event buttons below.'); return this.card(id, e); }
+    if (action === 'v') { this.session(id); return this.card(id, e); }
     if (action === 'details') return this.card(id, e, false);
     if(action==='invite-links')return this.personalLinks(id,e,arg);
     if(action==='invite-copy')return invitationCopyCard(this,id,e,arg);

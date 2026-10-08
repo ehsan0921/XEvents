@@ -64,6 +64,15 @@ export async function processUpdate(env, update) {
   }
 }
 
+export function unavailablePhotoFallback(params, result) {
+  if (result.ok || result.error_code !== 400 || typeof params.caption !== 'string' || !params.caption.trim() || !/file[_ ]?id|file identifier|wrong remote file|photo|image|media|failed to get http url/i.test(result.description || '')) return null;
+  const { chat_id, caption, caption_entities, reply_markup, message_thread_id, reply_parameters, disable_notification, protect_content } = params;
+  return { chat_id, text: caption + '\n\nImage unavailable. The organiser can upload it again.',
+    ...(caption_entities ? { entities: caption_entities } : {}), ...(reply_markup ? { reply_markup } : {}),
+    ...(message_thread_id !== undefined ? { message_thread_id } : {}), ...(reply_parameters ? { reply_parameters } : {}),
+    ...(disable_notification !== undefined ? { disable_notification } : {}), ...(protect_content !== undefined ? { protect_content } : {}) };
+}
+
 export async function drainOutbox(env) {
   const owner = crypto.randomUUID();
   const lock = await env.DB.prepare('INSERT INTO delivery_lease(id,owner,expires) VALUES (1,?,unixepoch()+60) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,expires=excluded.expires WHERE delivery_lease.expires<unixepoch() RETURNING owner').bind(owner).first();
@@ -75,7 +84,15 @@ export async function drainOutbox(env) {
     if (Date.now() > deadline || due > Math.floor(Date.now() / 1000)) break;
     const row = await env.DB.prepare('UPDATE outbox SET due=unixepoch()+60, attempts=attempts+1 WHERE id=? AND due<=unixepoch() RETURNING *').bind(id).first();
     if (!row) continue;
-    const result = await telegram(env, row.method, JSON.parse(row.params));
+    let result = await telegram(env, row.method, JSON.parse(row.params));
+    const fallback = row.method === 'sendPhoto' && unavailablePhotoFallback(JSON.parse(row.params), result);
+    if (fallback) {
+      // Keep the same durable delivery identity. A retry sends the text card, not
+      // the permanently invalid photo. Snapshot recipient checks still apply.
+      row.method = 'sendMessage';row.params = JSON.stringify(fallback);
+      await env.DB.prepare('UPDATE outbox SET method=?,params=? WHERE id=?').bind(row.method, row.params, id).run();
+      result = await telegram(env, row.method, fallback);
+    }
     if (row.method === 'refundStarPayment' && !result.snapshotBlocked && (result.ok || [400,403].includes(result.error_code))) {
       const params=JSON.parse(row.params);
       await mutateState(env, (data,bot) => refundResult(bot,params.user_id,params.telegram_payment_charge_id,result.ok));

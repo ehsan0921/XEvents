@@ -47,6 +47,15 @@ test('event settings identify the event and response refresh loads current count
   }
 });
 
+test('opening an event sends the event card directly without a placeholder message',async()=>{
+  const f=fixture(),e=await f.create();e.banner='fictional-banner';f.calls.length=0;
+  await f.cb(1,`v:${e.id}`);
+  assert.equal(f.calls.filter(call=>['sendMessage','sendPhoto'].includes(call.method)).length,1);
+  assert.equal(f.calls.at(-1).method,'sendPhoto');
+  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`h:${e.id}`));
+  assert.equal(f.calls.some(call=>call.text==='Use the event buttons below.'),false);
+});
+
 test('native App menu stays available without duplicate App buttons or stale keyboard launchers',async()=>{
   const f=fixture();f.bot.appUrl='https://example.test/app';
   await f.msg(1,'/start');

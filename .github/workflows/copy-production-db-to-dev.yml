@@ -9,7 +9,6 @@ permissions:
 jobs:
   refresh-database:
     name: Replace dev data with a production snapshot
-    if: vars.XEVENTS_DATABASE_REFRESH_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # This environment is restricted to main. It has its own private credentials.
@@ -19,12 +18,31 @@ jobs:
       group: xevents-development
       cancel-in-progress: false
     steps:
-      - name: Require the trusted workflow branch
+      - name: Check database-copy setup
         env:
           SELECTED_REF: ${{ github.ref }}
+          DATABASE_REFRESH_ENABLED: ${{ vars.XEVENTS_DATABASE_REFRESH_ENABLED }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_CONFIG_JSON: ${{ secrets.WRANGLER_CONFIG_JSON }}
+          PRODUCTION_CONFIG_JSON: ${{ secrets.PRODUCTION_CONFIG_JSON }}
         run: |
           if [ "$SELECTED_REF" != 'refs/heads/main' ]; then
-            echo 'Run this database-only workflow from main.' >&2
+            echo '::error::Run this database-only workflow from main.'
+            exit 1
+          fi
+          if [ "$DATABASE_REFRESH_ENABLED" != 'true' ]; then
+            echo '::error::Database copying is disabled in this mirror. Run Copy production database to dev in ehsan0921/Telegram-event-management on main.'
+            exit 1
+          fi
+          MISSING=0
+          for SECRET_NAME in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID WRANGLER_CONFIG_JSON PRODUCTION_CONFIG_JSON; do
+            if [ -z "${!SECRET_NAME}" ]; then
+              echo "::error::Missing $SECRET_NAME. Add it to Settings > Environments > development-refresh > Environment secrets, then run again."
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" = '1' ]; then
             exit 1
           fi
       - name: Check out the database-copy tools

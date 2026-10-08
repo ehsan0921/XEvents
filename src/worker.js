@@ -1,4 +1,6 @@
 import { mutateState, BusyError } from './worker-store.js';
+import {broadcastRecord,broadcastReceipt} from './guest-messages.js';
+import {invitationAvailable} from './invitations.js';
 import { miniApi } from './mini-api.js';
 import { isSuperAdmin, rememberUser } from './admin.js';
 import { sendDueReminders } from './reminders.js';
@@ -84,7 +86,23 @@ export async function drainOutbox(env) {
     if (Date.now() > deadline || due > Math.floor(Date.now() / 1000)) break;
     const row = await env.DB.prepare('UPDATE outbox SET due=unixepoch()+60, attempts=attempts+1 WHERE id=? AND due<=unixepoch() RETURNING *').bind(id).first();
     if (!row) continue;
-    let result = await telegram(env, row.method, JSON.parse(row.params));
+    const {__broadcast:tracking,__broadcastDelivered:delivered,...deliveryParams}=JSON.parse(row.params);
+    if(tracking && !delivered){
+      const allowed=await mutateState(env,data=>{
+        const record=broadcastRecord(data,tracking.owner,tracking.token);
+        const event=record && data.events[record.event];
+        return !!(record && !record.undone && event && !event.cancelled && event.owner===tracking.owner && event.guests[deliveryParams.chat_id] && invitationAvailable(event,deliveryParams.chat_id));
+      });
+      if(!allowed){await env.DB.prepare('DELETE FROM outbox WHERE id=?').bind(id).run();continue;}
+    }
+    let result = delivered ? {ok:true,result:{message_id:delivered}} : await telegram(env, row.method, deliveryParams);
+    if(tracking && result.ok && Number.isSafeInteger(result.result?.message_id)) {
+      if(!delivered){
+        row.params=JSON.stringify({...deliveryParams,__broadcast:tracking,__broadcastDelivered:result.result.message_id});
+        await env.DB.prepare('UPDATE outbox SET method=?,params=? WHERE id=?').bind(row.method,row.params,id).run();
+      }
+      await mutateState(env,(_data,bot)=>broadcastReceipt(bot,tracking.owner,tracking.token,deliveryParams.chat_id,result.result.message_id));
+    }
     const fallback = row.method === 'sendPhoto' && unavailablePhotoFallback(JSON.parse(row.params), result);
     if (fallback) {
       // Keep the same durable delivery identity. A retry sends the text card, not
@@ -120,7 +138,7 @@ export default {
       return response;
       } catch (error) { const reference=crypto.randomUUID();console.error(JSON.stringify({event:'mini_api_failed',reference,path:url.pathname,type:error.name})); return Response.json({ error: 'Could not load the planner. Please try again.',reference }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
     }
-    if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/errors.js', '/gallery.js', '/event-actions.js', '/style.css'].includes(url.pathname))) {
+    if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/errors.js', '/gallery.js', '/event-actions.js', '/guest-messages.js', '/style.css'].includes(url.pathname))) {
       const target = new URL(request.url);
       const appPage = url.pathname === '/app' || url.pathname === '/app/';
       if (appPage) target.pathname = '/';

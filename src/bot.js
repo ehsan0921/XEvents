@@ -1,4 +1,5 @@
 import {paymentMethod,paidEvent} from './event-payment.js';
+import {startBroadcast,toggleBroadcast,collectBroadcast,sendBroadcast,undoBroadcast} from './guest-messages.js';
 import {invitationMode,claimInvitation,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
 import {isManager,cohostEntries,cohostIds,cohostGuard,cohostLink,createCohostInvite,revokeCohost,claimCohost} from './cohosts.js';
 import {invitationLinksCard,invitationCopyCard} from './invitation-links.js';
@@ -257,6 +258,7 @@ export class Bot {
       if (host) extras.push(...(mode==='named' ? [this.appUrl ? this.miniButton('Personal invitations',`?invitations=${e.id}`) : button('Personal invitations',`invite-links:${e.id}`)] : [{ text: mode==='tickets' ? 'Share ticket link' : '📨 Invite people', url: `https://t.me/share/url?url=${encodeURIComponent(this.link(e))}&text=${encodeURIComponent([e.inviteMessage,e.title].filter(Boolean).join('\n\n'))}` }]), button('⚙️ Manage', `h:${e.id}`));
       if(paidEvent(e) && (owner || !host))extras.push({text:owner?'Payments & refunds':'Payment support',url:`https://t.me/${this.username}?start=payments`});
       if (can(e, id, 'guestList')) extras.push(button('👥 Guest list', `g:${e.id}`));
+      if (owner) extras.push(button('📨 Message guests', `bm:${e.id}`));
       if (!host && accepted && paidEvent(e) && (!requiresApproval(e) || e.guests[id].approval === 'approved') && e.guests[id].payment?.status !== 'paid') extras.push(button(e.starPrice?'⭐ Pay with Stars':'Payment instructions', `star-terms:${e.id}`));
       if (!host && accepted && (requiresApproval(e) || mode==='tickets')) extras.push(button('🎟 My status', `status:${e.id}`));
       if (can(e, id, 'uploadMedia')) extras.push(button('📎 Add media', `u:${e.id}`));
@@ -318,6 +320,12 @@ export class Bot {
     const paymentLink=text.match(/^\/start pay_([a-f0-9]{16})$/);
     if(paymentLink) {const e=this.db.events[paymentLink[1]];return this.allowed(e,id) ? this.paymentInfo(id,e) : this.home(id,'Open your event invitation before paying.');}
     const current = this.db.sessions[id];
+    if(current?.step==='broadcast' && !text.startsWith('/') && !Object.values(menu).includes(text)) {
+      const event=this.db.events[current.event];
+      if(!event || event.owner!==id || event.cancelled){this.session(id);return this.send(id,'This event is unavailable for messages.');}
+      if(text==='Done')return sendBroadcast(this,id,event);
+      return collectBroadcast(this,id,event,m);
+    }
     if(text===menu.new)return startChatCreation(this,id);
     const navigation = { [menu.new]: '/new', [menu.events]: '/events', [menu.help]: '/help', [menu.home]: '/start', [menu.cancel]: '/cancel', [menu.app]: '/app', [menu.picker]: '/picker', [menu.pending]: '/pending' };
     if (['📱 Open app','📱 Open planner','📱 Open XEvents planner'].includes(text)) text = '/app';
@@ -529,6 +537,16 @@ export class Bot {
     const [action, eid, arg, version] = (q.data || '').split(':');
     const e = this.db.events[eid];
     if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id }).catch(() => {});
+    if(action==='bm-undo')return undoBroadcast(this,id,eid);
+    if(['bm','bm-group','bm-send','bm-cancel'].includes(action)) {
+      if(!e || e.owner!==id || e.cancelled)return this.send(id,'Only the creator of an active event can message guests.');
+      if(action==='bm')return startBroadcast(this,id,e);
+      const s=this.db.sessions[id];
+      if(s?.step!=='broadcast' || s.event!==eid || (action==='bm-group' ? version!==s.token : arg!==s.token))return this.send(id,'These message controls have expired. Open Message guests again.');
+      if(action==='bm-group')return toggleBroadcast(this,id,e,arg);
+      if(action==='bm-cancel'){this.session(id);return this.card(id,e);}
+      return sendBroadcast(this,id,e);
+    }
     if (action === 'sr' || action === 'src') {
       const order=orderFor(this.db,eid,arg);
       if (!order || order.owner !== id || !['paid','refund_failed'].includes(order.status)) return this.send(id,'No refundable payment is available.');

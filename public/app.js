@@ -1,4 +1,5 @@
 import { setupGallery } from './gallery.js';
+import { setupGuestMessages } from './guest-messages.js';
 import { setupEventActions } from './event-actions.js';
 const tg = window.Telegram?.WebApp;
 const $ = id => document.getElementById(id);
@@ -147,6 +148,7 @@ function inviteText(e,guest){
 function share(e) { if(e.invitationMode==='named' && isManager(e))return openNamedLinks(e);openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(inviteText(e))}`); }
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
 function action(text, fn, className = 'secondary') { const b = element('button', text, className); b.type = 'button'; b.onclick = async () => { if(b.disabled)return; b.disabled=true; try { await fn(); } catch(error) { notice(error.message); } finally { b.disabled=false; } }; return b; }
+const openGuestMessages=setupGuestMessages({$,document,api,notice,initData});
 async function openGuestList(id) {
   const navigation=pageNavigationGeneration;
   const {event:e}=await api(`events/${id}`);
@@ -404,6 +406,7 @@ function renderEvents() {
     const actions = element('div', '', 'event-actions'); actions.append(action('💬 Open in chat', () => openTelegram(e.inviteUrl), 'primary'));
     if (isManager(e) && !e.cancelled) actions.append(action('✏️ Edit event', () => editEvent(e.id)));
     if(isManager(e))actions.append(action('👥 Guest list',()=>openGuestList(e.id)));
+    if(e.isOwner && !e.cancelled)actions.append(action('📨 Message guests',()=>openGuestMessages(e)));
     if(isManager(e) && !e.cancelled)actions.append(action('🎟 Check in guests',()=>openCheckin(e.id)));
     if(e.ticket)actions.append(action('🎟 Check-in code',()=>openTicket(e.id)));
     if((e.starPrice || ['bank','link'].includes(e.paymentMethod)) && !isManager(e) && e.status==='yes' && e.approval==='approved' && e.paymentStatus!=='paid')actions.append(action(e.starPrice?'⭐ Pay with Stars':'💳 Payment instructions',()=>openTelegram(e.inviteUrl.split('?')[0]+'?start=pay_'+e.id)));

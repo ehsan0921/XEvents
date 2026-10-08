@@ -69,6 +69,7 @@
           <label for="ticket-info">Invitation details <span>optional</span></label><textarea id="ticket-info" rows="3" maxlength="1000" placeholder="Entry instructions or details to include on confirmed guests’ tickets."></textarea>
         </details>
         <details id="media-options" class="panel"><summary>Media & QR codes</summary>
+          <p class="small muted">Share photos with attendees in one event collection, with no built-in photo-count limit. Telegram and hosting limits apply.</p>
           <label class="check-option"><input type="checkbox" id="qr-enabled"><span>Enable QR codes<span class="check-note">Show ticket QR codes and upload QR codes. Off keeps plain ticket codes and upload links available.</span></span></label>
           <label class="check-option"><input type="checkbox" id="allow-upload-media"><span>Send photos, videos & files<span class="check-note">Let guests contribute to the event collection.</span></span></label>
           <label class="check-option"><input type="checkbox" id="allow-view-media"><span>See shared media<span class="check-note">Let guests browse the event collection.</span></span></label>
@@ -126,6 +127,21 @@
   <dialog id="ticket-dialog" aria-labelledby="ticket-title"><div class="dialog-heading"><h2 id="ticket-title">Your ticket</h2><button type="button" id="ticket-close" class="secondary dialog-close" aria-label="Close ticket" title="Close ticket">&times;</button></div><p id="ticket-name"></p><p class="small muted ticket-code-label">Your check-in code</p><code id="ticket-code" aria-label="Six-digit check-in code"></code><p id="ticket-countdown" class="small muted"></p><div class="event-actions ticket-code-actions"><button type="button" id="ticket-copy" class="primary">Copy code</button><button type="button" id="ticket-refresh" class="secondary">↻ Refresh code</button></div><p id="ticket-message" role="status"></p><img id="ticket-image" alt="Ticket QR code" hidden></dialog>
   <dialog id="checkin-dialog" aria-labelledby="checkin-title"><div class="dialog-heading"><h2 id="checkin-title">Check in guests</h2><button type="button" id="checkin-close" class="secondary dialog-close" aria-label="Close ticket check-in" title="Close ticket check-in">&times;</button></div><p id="checkin-event" class="small muted"></p><button type="button" id="checkin-scan" class="secondary">📷 Scan QR code</button><label for="checkin-code">Guest’s six-digit code</label><div class="checkin-code-entry"><div class="checkin-code-cells" aria-hidden="true"><span id="checkin-digit-0">·</span><span id="checkin-digit-1">·</span><span id="checkin-digit-2">·</span><span id="checkin-digit-3">·</span><span id="checkin-digit-4">·</span><span id="checkin-digit-5">·</span></div><input id="checkin-code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" aria-describedby="checkin-help" aria-label="Guest’s six-digit check-in code"></div><p id="checkin-help" class="small muted">Ask the guest to open their check-in code.</p><div id="checkin-keypad" class="checkin-keypad" aria-label="Check-in number pad"></div><button type="button" id="checkin-check" class="primary wide" disabled>Check in</button><button type="button" id="checkin-confirm" hidden>Check in</button><p id="checkin-result" role="status" aria-live="polite"></p></dialog>
   <dialog id="guest-list-dialog" aria-labelledby="guest-list-title"><div class="dialog-heading"><h2 id="guest-list-title">Guest list</h2><button type="button" id="guest-list-close" class="secondary dialog-close" aria-label="Close guest list" title="Close guest list">&times;</button></div><p id="guest-list-event" class="small muted"></p><p id="guest-list-summary"></p><div id="guest-list-filters" class="event-actions"></div><div class="event-actions guest-list-tools"><button type="button" id="guest-list-add" class="primary" hidden>👤 Add guest</button><button type="button" id="guest-list-invitations" class="secondary" hidden>✉️ Invitations</button></div><div id="guest-list-rows"></div><div class="event-actions"><button type="button" id="guest-list-manage" class="primary">💬 Manage in chat</button></div></dialog>
+  <dialog id="guest-message-dialog" aria-labelledby="guest-message-title">
+    <div class="dialog-heading"><h2 id="guest-message-title">Message guests</h2><button type="button" id="guest-message-close" class="secondary dialog-close" aria-label="Close message guests">&times;</button></div>
+    <p id="guest-message-event" class="small muted"></p>
+    <form id="guest-message-form">
+      <div id="guest-message-compose">
+        <label class="check-option"><input type="checkbox" id="guest-message-all"><span>All guest groups</span></label>
+        <div id="guest-message-groups"></div>
+        <label>Message<textarea id="guest-message-text" maxlength="4000" rows="4" placeholder="Write to your guests…"></textarea></label>
+        <label>Attachments<input type="file" id="guest-message-files" multiple></label>
+        <p class="small muted">Up to 20 attachments, 20 MB each.</p><ul id="guest-message-uploads"></ul>
+      </div>
+      <p id="guest-message-status" role="status" aria-live="polite"></p>
+      <div class="event-actions"><button type="submit" id="guest-message-send" class="primary">✅ Done · Send</button><button type="button" id="guest-message-undo" class="secondary" hidden>↩ Undo message</button></div>
+    </form>
+  </dialog>
   <dialog id="invitation-links-dialog" aria-labelledby="invitation-links-title">
     <div class="dialog-heading"><h2 id="invitation-links-title">Guest invitations</h2><button type="button" class="secondary dialog-close" id="invitation-links-close" aria-label="Close guest invitations" title="Close guest invitations">&times;</button></div>
     <p class="small" id="invitation-links-summary" aria-live="polite"></p>

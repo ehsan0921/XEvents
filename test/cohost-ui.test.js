@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {setupGallery} from '../public/gallery.js';
 import {setupEventActions} from '../public/event-actions.js';
+import {setupGuestMessages} from '../public/guest-messages.js';
 
 const eventFixture=fields=>({id:'0123456789abcdef',title:'Club evening',location:'Club house',description:'Meet the team',isOwner:true,isManager:true,isCoHost:false,cohosts:[],cohostLinks:[],cohost:null,cohostInviteUrl:null,cohostVersion:'0000000000000000',invitationMode:'named',invitees:[{name:'Alex',participants:2,url:'https://t.me/test?start=guest'}],group:'Upcoming events',upcoming:true,startsAt:'2099-10-24T08:00:00Z',timezone:'Australia/Sydney',localDate:'2099-10-24',localTime:'18:00',permissions:{},qrEnabled:true,uploadLink:'https://t.me/test?start=upload',paymentMethod:'stars',starPrice:100,starPricing:'person',paymentTerms:'Admission for one person.',...fields});
 const pendingLink=(id,label)=>({id,label,status:'pending',createdAt:'2026-10-07T00:00:00Z',cohost:null,url:'https://t.me/test?start=cohost_'+id});
@@ -78,14 +79,14 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
     if(path==='/api/preview')return response({startsAt:event.startsAt,timezone:event.timezone});
     return response({});
   };
-  const source=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8').replace("import { setupGallery } from './gallery.js';",'').replace("import { setupEventActions } from './event-actions.js';",'');
+  const source=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8').replace(/^import .*$/gm,'');
   const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
   const navigator={};
   if(clipboardMode!=='absent')navigator.clipboard={writeText:async text=>{if(clipboardMode==='denied')throw Error('Clipboard denied.');copied.push(text);}};
   const TestDate=clock?class extends Date{constructor(...args){super(...(args.length?args:[clock.now]));}static now(){return clock.now;}}:Date;
   const schedule=clock?(callback,delay=0)=>{const id=++timerSequence;timers.set(id,{callback,at:clock.now+delay});return id;}:setTimeout;
   const unschedule=clock?id=>timers.delete(id):clearTimeout;
-  await new AsyncFunction('window','document','location','fetch','crypto','navigator','setupGallery','setupEventActions','Date','setTimeout','clearTimeout',source)(window,document,{search},fetcher,webcrypto,navigator,setupGallery,setupEventActions,TestDate,schedule,unschedule);
+  await new AsyncFunction('window','document','location','fetch','crypto','navigator','setupGallery','setupEventActions','Date','setTimeout','clearTimeout','setupGuestMessages',source)(window,document,{search},fetcher,webcrypto,navigator,setupGallery,setupEventActions,TestDate,schedule,unschedule,setupGuestMessages);
   await new Promise(resolve=>setImmediate(resolve));
   const descendants=node=>node.children.flatMap(child=>[child,...descendants(child)]);
   const findButton=(id,label)=>descendants(ids.get(id)).find(node=>node.tag==='button' && node.textContent===label);

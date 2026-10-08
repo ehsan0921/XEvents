@@ -2,12 +2,13 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
+import {checkGuestMessages} from './check-guest-messages.mjs';
 
 const telegramCalls=[];
 const serveAssets = async request => {
   const pathname=new URL(request.url).pathname;
   const file=pathname==='/' ? 'index.html' : pathname.slice(1);
-  if(!['index.html','app.js','errors.js','gallery.js','event-actions.js','style.css'].includes(file))return new Response('Not found',{status:404});
+  if(!['index.html','app.js','errors.js','gallery.js','event-actions.js','guest-messages.js','style.css'].includes(file))return new Response('Not found',{status:404});
   const headers={'Content-Type':file.endsWith('.js') ? 'application/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html'};
   if(file==='index.html') {
     headers.ETag='"fixture-index"';headers['Last-Modified']='Thu, 01 Oct 2026 00:00:00 GMT';
@@ -1298,3 +1299,4 @@ try {
   console.log('Worker integration passed: compact invitation tools, private history and archives, edits, response changes, revocation/deletion and idempotent notifications; fixed personal attendee counts and live count button captions, invitation response summaries, add/revoke with notify or silent removal, exact durable notifications, native button event creation, profiles, private photos, ticket bookings, private expiring check-in codes and legacy QR compatibility, personal RSVP links, multiple tagged co-host links and isolated revocation, legacy co-host migration, approvals, payments, durable refunds and media. Telegram mocked.');
 } finally { await mf.dispose(); }
 await checkTestAccess();
+await checkGuestMessages();

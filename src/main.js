@@ -19,11 +19,12 @@ let bot;
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopping = true; });
 
 async function api(method, params = {}) {
+  const {__broadcast,...safeParams}=params;
   // Never log URLs or raw fetch errors: Telegram URLs contain the token.
   let response;
   try {
     response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params), signal: AbortSignal.timeout(45000)
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(safeParams), signal: AbortSignal.timeout(45000)
     });
   } catch { throw new Error(`Telegram ${method}: network failure`); }
   const body = await response.json();

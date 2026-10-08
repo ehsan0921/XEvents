@@ -8,6 +8,21 @@ function fixture(qrEnabled){
   return {event,env,request:new Request(`https://test/api/events/${event.id}/upload-qr`)};
 }
 
+test('shared media links and QR codes preserve guest access and QR settings',async()=>{
+  const {event,env}=fixture(true);event.permissions.viewMedia=true;
+  const request=path=>new Request(`https://test/api/events/${event.id}/${path}`);
+  const gallery=await (await mediaApi(request('gallery'),env,{id:2})).json();
+  assert.equal(gallery.galleryUrl,`https://t.me/TestEvents_bot?startapp=gallery_${event.id}`);
+  assert.equal(gallery.qrEnabled,true);
+  const qr=await (await mediaApi(request('gallery-qr'),env,{id:2})).json();
+  assert.equal(qr.link,gallery.galleryUrl);assert.match(qr.image,/^data:image\/gif;base64,/);
+  assert.equal((await mediaApi(request('gallery-qr'),env,{id:3})).status,403);
+  event.permissions.viewMedia=false;
+  assert.equal((await mediaApi(request('gallery-qr'),env,{id:2})).status,403);
+  event.qrEnabled=false;
+  assert.equal((await mediaApi(request('gallery-qr'),env,{id:1})).status,400);
+});
+
 test('disabled upload QR cannot be requested directly by an organiser or guest',async()=>{
   const {env,request}=fixture(false);
   const organiser=await mediaApi(request,env,{id:1});

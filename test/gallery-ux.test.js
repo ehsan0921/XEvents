@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import {setupGallery} from '../public/gallery.js';
 
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};}
+
+test('gallery shows a direct sharing action and respects disabled QR codes',async t=>{
+  let enabled=true;
+  const f=galleryHarness(t,async path=>path.endsWith('gallery-qr')?{image:'data:image/gif;base64,R0lG',link:'https://t.me/fictional_bot?startapp=gallery_test'}:{title:'Club meetup',media:[],galleryUrl:'https://t.me/fictional_bot?startapp=gallery_test',qrEnabled:enabled});
+  await f.openGallery('first');assert.equal(f.$('gallery-copy').hidden,false);assert.equal(f.$('gallery-qr').hidden,false);
+  await f.$('gallery-qr').onclick();assert.equal(f.$('qr-title').textContent,'Shared media QR code');
+  f.dismissPendingMedia();enabled=false;await f.openGallery('second');assert.equal(f.$('gallery-qr').hidden,true);assert.equal(f.$('gallery-copy').hidden,false);
+});
 function galleryHarness(t,api=async()=>({title:'Club meetup',media:[],canUpload:false})){
   class Node{
     constructor(tag='div',text=''){this.tagName=tag.toUpperCase();this.textContent=text;this.children=[];this.attributes={};this.isConnected=true;this.open=false;this.opens=0;this.pauses=0;this.loads=0;}

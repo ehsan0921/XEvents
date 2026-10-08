@@ -1041,6 +1041,7 @@ if (!initData) {
     if (compactPicker) { setupForm(state.events.find(e => e.id === data.session?.event) || null); document.querySelector('.bottom-nav').hidden = true; if (data.session?.token !== query.get('session')) { notice('This picker has expired. Open a new picker from the current chat step.'); $('save-event').disabled = true; } }
     else if(query.get('invitations'))await openNamedLinks({id:query.get('invitations')},query.get('guest'));
     else if (query.get('gallery')) await openGallery(query.get('gallery'));
+    else if (/^gallery_[a-f0-9]{16}$/.test(tg?.initDataUnsafe?.start_param || '')) await openGallery(tg.initDataUnsafe.start_param.slice(8));
     else if (query.get('qr')) await showQr(query.get('qr'));
     else if(query.get('ticket'))await openTicket(query.get('ticket'));
     else if(query.get('checkin'))await openCheckin(query.get('checkin'));

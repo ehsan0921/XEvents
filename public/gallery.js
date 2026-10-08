@@ -24,12 +24,17 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
     galleryEvent=id;go('gallery');$('gallery-error').hidden=true;
     $('gallery-title').textContent='Shared media';$('gallery-summary').textContent='Loading files…';
     $('gallery-upload').hidden=true;$('gallery-upload').onclick=null;
+    for(const name of ['gallery-copy','gallery-qr']){$(name).hidden=true;$(name).onclick=null;}
     $('gallery-list').replaceChildren(element('p','Loading files…','muted'));
     for(const url of urls) URL.revokeObjectURL(url);urls.clear();
     try {
       const gallery=await api(`events/${id}/gallery`);if(current!==generation)return;
       $('gallery-title').textContent=gallery.title;$('gallery-summary').textContent=`${gallery.media.length} shared files. Download here or send a file to your Telegram chat.`;
       $('gallery-upload').hidden=!gallery.canUpload;$('gallery-upload').onclick=()=>openTelegram(gallery.uploadUrl);
+      $('gallery-copy').hidden=!gallery.galleryUrl;
+      $('gallery-copy').onclick=async()=>{try{await navigator.clipboard.writeText(gallery.galleryUrl);notice('Shared media link copied.');}catch{notice('Could not copy. Use Share in the QR code window.');}};
+      $('gallery-qr').hidden=!gallery.galleryUrl || gallery.qrEnabled===false;
+      $('gallery-qr').onclick=()=>showQr(id,true);
       const list=$('gallery-list');list.replaceChildren();if(!gallery.media.length)list.append(element('p','No files have been shared yet.','muted'));
       for(const file of gallery.media) {
         const kind=file.previewKind || (['photo','video'].includes(file.type)?file.type:null),previewFile={...file,type:kind};
@@ -50,9 +55,13 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
       }
     }catch(error){if(current!==generation)return;$('gallery-list').replaceChildren();$('gallery-summary').textContent='';$('gallery-error').textContent=error.message;$('gallery-error').hidden=false;}
   }
-  async function showQr(id) {
+  async function showQr(id,shared=false) {
     const pending=++qrGeneration;
-    try{const qr=await api(`events/${id}/upload-qr`);if(pending!==qrGeneration)return;$('upload-qr').src=qr.image; $('qr-description').textContent=qr.anyone ? 'Anyone with this link can add media without an RSVP. They can view Shared media if you enable viewing. Private event details stay hidden.' : 'Existing event guests can scan this code to add media. Enable uploads by link in event settings to let anyone contribute without an RSVP.';
+    try{const qr=await api(`events/${id}/${shared?'gallery-qr':'upload-qr'}`);if(pending!==qrGeneration)return;$('upload-qr').src=qr.image;
+      $('qr-title').textContent=shared?'Shared media QR code':'Upload link & QR code';
+      $('upload-qr').alt=shared?'QR code for shared media':'QR code for event uploads';
+      $('qr-share').textContent=shared?'Share shared media link':'Share upload link';
+      $('qr-description').textContent=shared?'Scan to open Shared media. Event access and viewing permissions still apply.':qr.anyone ? 'Anyone with this link can add media without an RSVP. They can view Shared media if you enable viewing. Private event details stay hidden.' : 'Existing event guests can scan this code to add media. Enable uploads by link in event settings to let anyone contribute without an RSVP.';
       $('qr-share').onclick=()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(qr.link)}&text=${encodeURIComponent('Share your event photos and files')}`);
       $('qr-download').onclick=()=>{const bytes=Uint8Array.from(atob(qr.image.split(',')[1]),character=>character.charCodeAt(0));saveBlob(new Blob([bytes],{type:'image/gif'}),'event-upload-qr.gif');};$('qr-dialog').showModal();
     }catch(error){if(pending===qrGeneration)notice(error.message);}

@@ -688,7 +688,7 @@ export class Bot {
     }
     if (action === 'g') {
       const active=Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner && invitationAvailable(e,Number(uid))).map(([,g])=>g);
-      const unopened=Object.entries(e.invitees || {}).filter(([token])=>!active.some(g=>g.invitationToken===token)).map(([,g])=>g);
+      const unopened=Object.entries(e.invitees || {}).filter(([token])=>!active.some(g=>g.invitationToken===token)).map(([token,g])=>({...g,invitationToken:token}));
       const accepted=active.filter(g=>confirmed(e,g));
       const pending=active.filter(g=>g.status==='yes' && requiresApproval(e) && g.approval!=='approved');
       const payment=active.filter(g=>g.status==='yes' && !confirmed(e,g) && !pending.includes(g));
@@ -699,9 +699,11 @@ export class Bot {
         ['📭 Not responded',[...active.filter(g=>!hasRecordedResponse(g)),...unopened]],
         ['⏳ Awaiting approval',pending],...(payment.length ? [['⭐ Awaiting payment',payment]] : [])
       ];
-      let text = `👥 ${e.title}\n${this.updatedAt(e, id)}\n\nTotal invitations: ${active.length+unopened.length}\nPeople accepted: ${accepted.reduce((sum,g)=>sum+participantCount(e,g),0)}\n`;
+      const people=group=>group.reduce((sum,g)=>sum+participantCount(e,g),0);
+      let text = `👥 ${e.title}\n${this.updatedAt(e, id)}\n\nTotal people: ${people([...active,...unopened])}\nPeople accepted: ${people(accepted)}\n`;
       for (const [label,group] of groups) {
-        text += `\n${label} (${group.length})\n`;
+        const count=people(group);
+        text += `\n${label} (${count} ${count===1?'person':'people'})\n`;
         text += group.length ? group.map(g => `• ${g.name}${g.status === 'yes' ? ' (' + participantCount(e, g) + ' people)' : ''}${g.comment ? ' — ' + g.comment : ''}`).join('\n') + '\n' : 'Nobody yet\n';
       }
       return this.long(id, text, keyboard([button('↻ Refresh', `g:${eid}`),button('Back to event', `v:${eid}`)]));

@@ -82,20 +82,30 @@ test('guest list counts invitations, attendees and unanswered named links withou
     8:{name:'Revoked',status:'yes',invitationToken:'removed'}
   };
   await f.cb(1,`g:${e.id}`);let text=f.calls.at(-1).text;
-  assert.match(text,/Total invitations: 7\nPeople accepted: 5/);
-  assert.match(text,/Accepted \(2\)/);assert.match(text,/Awaiting approval \(0\)/);
-  for(const label of ['Rejected','Tentative','Respond later'])assert.ok(text.includes(label+' (1)'));
-  assert.match(text,/Not responded \(2\)\n• Opened\n• Unopened/);assert.doesNotMatch(text,/Revoked|• Host/);
+  assert.match(text,/Total people: 10\nPeople accepted: 5/);
+  assert.match(text,/Accepted \(5 people\)/);assert.match(text,/Awaiting approval \(0 people\)/);
+  for(const label of ['Rejected','Tentative','Respond later'])assert.ok(text.includes(label+' (1 person)'));
+  assert.match(text,/Not responded \(2 people\)\n• Opened\n• Unopened/);assert.doesNotMatch(text,/Revoked|• Host/);
   e.guests[6]={...e.guests[6],status:'no',responseRecorded:true};await f.cb(1,`g:${e.id}`);
-  text=f.calls.at(-1).text;assert.match(text,/Rejected \(2\)/);assert.match(text,/Not responded \(1\)/);
+  text=f.calls.at(-1).text;assert.match(text,/Rejected \(2 people\)/);assert.match(text,/Not responded \(1 person\)/);
 });
 
 test('guest list keeps pending approvals and payments out of confirmed acceptance counts',async()=>{
   const f=fixture(),e=await f.create();e.requireApproval=true;e.starPrice=10;e.askParticipantCount=true;
   e.guests={2:{name:'Confirmed',status:'yes',approval:'approved',participants:2,payment:{status:'paid'}},3:{name:'Pending',status:'yes'},4:{name:'Unpaid',status:'yes',approval:'approved'}};
   await f.cb(1,`g:${e.id}`);const text=f.calls.at(-1).text;
-  assert.match(text,/Total invitations: 3\nPeople accepted: 2/);
-  for(const label of ['Accepted','Awaiting approval','Awaiting payment'])assert.ok(text.includes(label+' (1)'));
+  assert.match(text,/Total people: 4\nPeople accepted: 2/);
+  assert.ok(text.includes('Accepted (2 people)'));
+  for(const label of ['Awaiting approval','Awaiting payment'])assert.ok(text.includes(label+' (1 person)'));
+});
+
+test('guest list counts reserved people in declined, tentative and unopened invitations',async()=>{
+  const f=fixture(),e=await f.create();e.invitationMode='named';
+  e.invitees={a:{name:'Declined family',participants:3},b:{name:'Maybe pair',participants:2},c:{name:'Unopened group',participants:4}};
+  e.guests={2:{name:'Declined family',status:'no',invitationToken:'a'},3:{name:'Maybe pair',status:'maybe',invitationToken:'b'}};
+  const before=JSON.stringify(e);await f.cb(1,`g:${e.id}`);const text=f.calls.at(-1).text;
+  assert.match(text,/Total people: 9/);assert.match(text,/Rejected \(3 people\)/);assert.match(text,/Tentative \(2 people\)/);assert.match(text,/Not responded \(4 people\)/);
+  assert.equal(JSON.stringify(e),before);
 });
 
 test('event card offers cancellation before optional deletion and keeps records by default',async()=>{

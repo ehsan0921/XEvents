@@ -156,7 +156,7 @@ async function openGuestList(id) {
   if(!isManager(e))return;
   const roster=e.guestRoster || [],accepted=roster.filter(g=>g.status==='yes');
   $('guest-list-title').textContent='Guest list';$('guest-list-event').textContent=e.title;
-  $('guest-list-summary').textContent=`${accepted.reduce((sum,g)=>sum+g.participants,0)} people accepted · ${accepted.length} responses · ${roster.filter(g=>g.confirmed).reduce((sum,g)=>sum+g.participants,0)} confirmed`;
+  $('guest-list-summary').textContent=`${accepted.reduce((sum,g)=>sum+g.participants,0)} people accepted · ${roster.reduce((sum,g)=>sum+g.participants,0)} people total · ${roster.filter(g=>g.confirmed).reduce((sum,g)=>sum+g.participants,0)} confirmed`;
   const filters=$('guest-list-filters');filters.replaceChildren();
   const named=e.invitationMode==='named',readOnly=e.cancelled || e.group==='Past events';
   const invitationFor=guest=>guest.id!=null ? e.invitees?.find(invite=>invite.responses?.some(response=>response.id===guest.id)) : e.invitees?.find(invite=>invite.name===guest.name);

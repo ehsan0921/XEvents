@@ -25,6 +25,9 @@ fieldset.panel{min-width:0}fieldset legend{font-size:18px;font-weight:700;letter
 #qr-dialog::backdrop,#photo-dialog::backdrop { background:rgba(0,0,0,.65); }
 #guest-list-dialog { width:calc(100% - 32px); max-width:600px; max-height:85dvh; overflow:auto; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:18px; padding:20px; }
 #guest-list-dialog::backdrop { background:rgba(0,0,0,.65); }
+#guest-list-dialog .dialog-heading { position:sticky; top:-20px; z-index:1; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 0; background:var(--panel); }
+#guest-list-dialog .dialog-heading h2 { min-width:0; margin:0; overflow-wrap:anywhere; }
+#guest-list-close { flex:0 0 44px; width:44px; min-height:44px; margin:0; padding:0; font-size:26px; line-height:1; }
 #guest-list-filters { display:flex; flex-wrap:wrap; gap:6px; }
 #guest-list-filters [aria-pressed="true"] { background:var(--accent); color:var(--panel); }
 #ticket-dialog,#checkin-dialog { width:calc(100% - 32px); max-width:480px; max-height:85dvh; overflow:auto; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:18px; padding:20px; }

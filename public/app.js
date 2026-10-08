@@ -75,16 +75,17 @@ function go(tab) {
   if(formSaving){notice('Your event is saving. Please wait.');return;}
   const target = tab === 'pending' ? 'events' : tab;
   if (tab === 'events' || tab === 'pending') { listFilter = tab === 'pending' ? 'pending' : 'all'; renderEvents(); }
-  if (tab === 'admin' && !state.user?.isSuperAdmin) return;
+  if (['admin','admin-analytics'].includes(tab) && !state.user?.isSuperAdmin) return;
   if(target!=='gallery')dismissPendingMedia?.();
   dismissTicket();
   pageNavigationGeneration++;currentView=target;updateAppClose();
-  for (const name of ['home','events', 'create', 'settings', 'admin', 'gallery', 'explore']) $(name + '-view').hidden = name !== target;
+  for (const name of ['home','events', 'create', 'settings', 'admin', 'admin-analytics', 'gallery', 'explore']) $(name + '-view').hidden = name !== target;
   if(tab==='home'){renderHome();loadHomeSuggestions();}
   if (tab === 'explore') loadExplore();
   if (tab === 'admin') loadAdmin();
+  if (tab === 'admin-analytics') loadAdminAnalytics();
   for (const button of document.querySelectorAll('[data-tab]')) {
-    if (button.dataset.tab === (tab==='admin'?'settings':tab==='pending'?'events':tab)) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
+    if (button.dataset.tab === (['admin','admin-analytics'].includes(tab)?'settings':tab==='pending'?'events':tab)) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
   window.scrollTo(0, 0);
 }
@@ -743,6 +744,57 @@ async function loadExplore() {
 $('explore-refresh').onclick=loadExplore;
 function filterExplore(){const text=$('explore-search').value.trim().toLowerCase();let count=0;for(const card of $('explore-list').children)if(card.dataset.searchText!==undefined){card.hidden=!card.dataset.searchText.includes(text);if(!card.hidden)count++;}$('explore-zone').textContent='Public events in '+selectedZone().replaceAll('_',' ')+(text ? ' · '+count+' matches':'');}
 $('explore-search').oninput=filterExplore;
+let analyticsSequence = 0;
+function renderActivityChart(container, daily, metric, label) {
+  const svgNode = (tag, attributes = {}, text) => {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+  container.replaceChildren();
+  const maximum = Math.max(1, ...daily.map(day => day[metric]));
+  const chart = svgNode('svg', { viewBox: '0 0 360 190', role: 'img', 'aria-label': label + ' by day; exact values are in Daily counts.', class: 'analytics-chart' });
+  chart.append(svgNode('title', {}, label + ' by day'));
+  const left = 32, width = 316, baseline = 155, height = 130, step = width / daily.length;
+  for (const fraction of [0, 1]) {
+    const y = baseline - fraction * height;
+    chart.append(svgNode('line', { x1: left, y1: y, x2: left + width, y2: y, class: 'analytics-grid' }), svgNode('text', { x: left - 7, y: y + 4, 'text-anchor': 'end', class: 'analytics-axis' }, String(fraction * maximum)));
+  }
+  daily.forEach((day, index) => {
+    const barHeight = day[metric] / maximum * height;
+    const bar = svgNode('rect', { x: left + index * step + step * .12, y: baseline - barHeight, width: step * .76, height: barHeight, rx: Math.min(2, step * .15), class: 'analytics-bar analytics-' + metric });
+    bar.append(svgNode('title', {}, `${day.date}: ${day[metric]} ${label.toLowerCase()}`));chart.append(bar);
+  });
+  for (const [index, anchor] of [[0, 'start'], [daily.length - 1, 'end']]) chart.append(svgNode('text', { x: index ? left + width : left, y: 180, 'text-anchor': anchor, class: 'analytics-axis' }, daily[index].date.slice(5)));
+  container.append(chart);
+  if (!daily.some(day => day[metric])) container.append(element('p', 'No activity in this date range.', 'small muted'));
+}
+async function loadAdminAnalytics() {
+  if (!state.user?.isSuperAdmin) return;
+  const sequence = ++analyticsSequence, zone = selectedZone();
+  $('analytics-refresh').disabled = true;$('analytics-error').hidden = true;$('analytics-content').hidden = true;
+  $('analytics-status').textContent = 'Loading daily activity…';$('analytics-zone').textContent = 'Timezone: ' + zone.replaceAll('_', ' ');
+  try {
+    const data = await api('admin/analytics?days=' + encodeURIComponent($('analytics-range').value) + '&timezone=' + encodeURIComponent(zone));
+    if (sequence !== analyticsSequence) return;
+    $('analytics-summary').textContent = `${data.totals.users} new users · ${data.totals.events} events created · ${data.days} days`;
+    renderActivityChart($('analytics-users-chart'), data.daily, 'users', 'New users');
+    renderActivityChart($('analytics-events-chart'), data.daily, 'events', 'Events created');
+    const table = $('analytics-daily');table.replaceChildren();
+    for (const day of [...data.daily].reverse()) {
+      const row = element('tr'), date = element('th', day.date);date.scope = 'row';
+      row.append(date, element('td', String(day.users)), element('td', String(day.events)));table.append(row);
+    }
+    $('analytics-note').textContent = 'Today is partial. Counts use recorded first-seen and creation dates. Older users without recorded dates and deleted events are not included.' + (data.undated.users || data.undated.events ? ` Undated records excluded: ${data.undated.users} users, ${data.undated.events} events.` : '');
+    $('analytics-content').hidden = false;$('analytics-status').textContent = '';
+  } catch (error) {
+    if (sequence !== analyticsSequence) return;
+    $('analytics-error').textContent = error.message;$('analytics-error').hidden = false;$('analytics-status').textContent = '';
+  } finally { if (sequence === analyticsSequence) $('analytics-refresh').disabled = false; }
+}
+$('analytics-refresh').onclick = loadAdminAnalytics;
+$('analytics-range').onchange = loadAdminAnalytics;
 async function loadAdmin() {
   $('admin-refresh').disabled = true; $('admin-error').hidden = true;
   const results=await Promise.allSettled([api('admin/overview'),loadAdminWhitelist()]);

@@ -65,6 +65,15 @@ async function checkTestAccess() {
     assert.equal((await worker.dispatchFetch('https://access.test/api/bootstrap')).status,401);
     assert.equal((await api('bootstrap',seedUser)).status,200);
     assert.equal((await api('bootstrap',admin)).status,200,'The configured admin must remain able to manage testers.');
+    assert.equal((await api('admin/analytics',seedUser)).status,403,'Analytics must require server-side super admin access.');
+    assert.equal((await worker.dispatchFetch('https://access.test/api/admin/analytics')).status,401);
+    assert.equal((await api('admin/analytics?days=365',admin)).status,400);
+    assert.equal((await api('admin/analytics?timezone=Bad%2FZone',admin)).status,400);
+    const analyticsResponse=await api('admin/analytics?days=7&timezone=UTC',admin);
+    assert.equal(analyticsResponse.status,200);assert.equal(analyticsResponse.headers.get('Cache-Control'),'no-store');
+    const analytics=await analyticsResponse.json();
+    assert.equal(analytics.daily.length,7);assert.equal(analytics.totals.users,2);
+    assert.doesNotMatch(JSON.stringify(analytics),/Access tester|firstName|username|phone|"id"/);
     // Hold delivery so command retries can be checked against the exact durable outbox.
     await db.prepare("INSERT INTO delivery_lease(id,owner,expires) VALUES (1,'access-fixture',unixepoch()+3600)").run();
     const eventId='7100000000000001',inviteToken='71000000000000000000000000000001',cohostToken='71000000000000000000000000000002',mediaId='710000000001';

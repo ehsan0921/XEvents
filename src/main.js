@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import {telegramPayload} from './telegram-upload.js';
 import { open, unlink } from 'node:fs/promises';
 import { Store } from './store.js';
 import { Bot } from './bot.js';
@@ -24,7 +25,7 @@ async function api(method, params = {}) {
   let response;
   try {
     response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(safeParams), signal: AbortSignal.timeout(45000)
+      method: 'POST', ...telegramPayload(safeParams), signal: AbortSignal.timeout(45000)
     });
   } catch { throw new Error(`Telegram ${method}: network failure`); }
   const body = await response.json();

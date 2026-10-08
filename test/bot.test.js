@@ -56,10 +56,10 @@ test('opening an event sends the event card directly without a placeholder messa
   assert.equal(f.calls.some(call=>call.text==='Use the event buttons below.'),false);
 });
 
-test('guest list and event card have refresh buttons and guest list refresh rechecks visibility',async()=>{
+test('guest list keeps refresh while event card hides it and guest list refresh rechecks visibility',async()=>{
   const f=fixture(),e=await f.create();e.guests[2]={name:'Example attendee',status:'yes',participants:1};
   await f.cb(1,`v:${e.id}`);
-  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='↻ Refresh' && b.callback_data===`v:${e.id}`));
+  assert.ok(!f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='↻ Refresh'));
   await f.cb(1,`g:${e.id}`);
   const refresh=f.calls.at(-1).reply_markup.inline_keyboard.flat().find(b=>b.text==='↻ Refresh');
   assert.equal(refresh.callback_data,`g:${e.id}`);
@@ -443,11 +443,11 @@ test('banners persist from creation, are owner-controlled, and addresses are cop
   await f.msg(2,`/start e_${e.id}`); await f.cb(2,`banner:${e.id}`); assert.equal(f.store.data.sessions[2],undefined);
   e.guests[2].status='yes';e.guests[2].approval='approved';
   await f.bot.card(2,e); const card=f.calls.at(-1);
-  assert.equal(card.reply_markup.inline_keyboard.flat().find(b=>b.copy_text).copy_text.text,'My house');
+  assert.ok(!card.reply_markup.inline_keyboard.flat().some(b=>b.text.includes('Copy address')));
   assert.equal(card.method,'sendPhoto');
   const entity=card.caption_entities[0]; assert.equal(card.caption.slice(entity.offset,entity.offset+entity.length),'My house');
   e.location='A'.repeat(300); await f.bot.card(2,e);
-  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`address:${e.id}`));
+  assert.ok(!f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`address:${e.id}`));
   await f.cb(2,`address:${e.id}`); assert.equal(f.calls.at(-1).entities[0].length,300);
 });
 
@@ -528,4 +528,18 @@ test('media links show only banner/title and media actions without RSVP and revo
   assert.equal(f.bot.mediaAllowed(e,99),true);await f.cb(99,`media-add:${e.id}`);await f.msg(99,undefined,{photo:[{file_id:'one'}]});await f.msg(99,'/done');
   assert.equal(f.calls.at(-1).caption,e.title);assert.doesNotMatch(f.calls.at(-1).caption,/PRIVATE/);
   await f.cb(1,`toggle:${e.id}:allowLinkUploads`);assert.equal(f.bot.mediaAllowed(e,99),false);
+});
+
+test('organiser media sharing has its own copy and QR row with protected chat QR delivery',async()=>{
+  const f=fixture(),e=await f.create();e.qrEnabled=true;f.bot.appUrl='https://example.invalid/app';
+  await f.bot.card(1,e);let rows=f.calls.at(-1).reply_markup.inline_keyboard;
+  const index=rows.findIndex(row=>row.some(b=>b.text==='📋 Copy upload link'));
+  assert.ok(rows[index-1].some(b=>b.text==='🗂 Shared media'));
+  assert.deepEqual(rows[index].map(b=>b.text),['📋 Copy upload link','▦ Show QR code']);
+  assert.equal(rows[index][0].url,undefined);assert.match(rows[index][0].copy_text.text,/^https:\/\/t\.me\//);
+  assert.ok(!rows.flat().some(b=>/Copy address|Refresh|Reminder/.test(b.text)));
+  await f.cb(1,'upload-qr:'+e.id);assert.equal(f.calls.at(-1).method,'sendPhoto');assert.ok(f.calls.at(-1).__photoUpload);
+  await f.cb(2,'upload-qr:'+e.id);assert.equal(f.calls.at(-1).method,'sendMessage');
+  e.qrEnabled=false;await f.bot.card(1,e);assert.ok(!f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='▦ Show QR code'));
+  await f.cb(1,'upload-qr:'+e.id);assert.equal(f.calls.at(-1).method,'sendMessage');
 });

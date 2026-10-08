@@ -1,4 +1,5 @@
 import { mutateState, BusyError } from './worker-store.js';
+import {telegramPayload} from './telegram-upload.js';
 import {broadcastRecord,broadcastReceipt,broadcastDeliveryResult} from './guest-messages.js';
 import {invitationAvailable} from './invitations.js';
 import { miniApi } from './mini-api.js';
@@ -23,7 +24,7 @@ async function telegram(env, method, params) {
   let response;
   try {
     response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params), signal: AbortSignal.timeout(method === 'answerPreCheckoutQuery' ? 5000 : 10000)
+      method: 'POST', ...telegramPayload(params), signal: AbortSignal.timeout(method === 'answerPreCheckoutQuery' ? 5000 : 10000)
     });
   } catch { return { ok: false, error_code: 503 }; }
   try { return await response.json(); } catch { return { ok: false, error_code: 503 }; }

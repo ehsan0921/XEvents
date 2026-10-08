@@ -1,4 +1,5 @@
 import {paymentMethod,paidEvent} from './event-payment.js';
+import {qrPhoto} from './telegram-upload.js';
 import {startBroadcast,toggleBroadcast,collectBroadcast,sendBroadcast,undoBroadcast} from './guest-messages.js';
 import {invitationMode,claimInvitation,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
 import {isManager,cohostEntries,cohostIds,cohostGuard,cohostLink,createCohostInvite,revokeCohost,claimCohost} from './cohosts.js';
@@ -263,15 +264,18 @@ export class Bot {
       if (!host && accepted && (requiresApproval(e) || mode==='tickets')) extras.push(button('🎟 My status', `status:${e.id}`));
       if (can(e, id, 'uploadMedia')) extras.push(button('📎 Add media', `u:${e.id}`));
       if (this.appUrl && can(e, id, 'viewMedia')) extras.push(this.miniButton('🗂 Shared media', `?gallery=${e.id}`));
+      if(host && shareUploadLink(e,this.username)){
+        rows.push(...paired(extras));extras.length=0;
+        const sharing=[{text:'📋 Copy upload link',copy_text:{text:shareUploadLink(e,this.username)}}];
+        if(e.qrEnabled!==false)sharing.push(button('▦ Show QR code',`upload-qr:${e.id}`));
+        rows.push(sharing);
+      }
       if(this.appUrl && host)extras.push(this.miniButton(e.qrEnabled!==false?'Scan tickets':'Check tickets',`?checkin=${e.id}`));
       if(this.appUrl && !host && confirmed(e,e.guests[id]))extras.push(this.miniButton('🎟 Check-in code',`?ticket=${e.id}`));
-      if (upcoming(e)) extras.push(button('🔔 Reminder', `reminder:${e.id}`));
-      if (canSeeLocation(e, id) && e.location) extras.push(e.location.length <= 256 ? { text: '📋 Copy address', copy_text: { text: e.location } } : button('📋 Copy address', `address:${e.id}`));
-      if (host && shareUploadLink(e,this.username)) extras.push(this.appUrl && e.qrEnabled!==false ? this.miniButton('Upload QR code',`?qr=${e.id}`) : {text:'Share upload link',url:`https://t.me/share/url?url=${encodeURIComponent(shareUploadLink(e,this.username))}`});
     }
     if (owner) extras.push(e.cancelled ? button('Delete event', `delete:${e.id}`) : button('Cancel event', `x:${e.id}`));
     rows.push(...paired(extras));
-    if(!rsvpOnly)rows.push([button('↻ Refresh',`v:${e.id}`)],[button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
+    if(!rsvpOnly)rows.push([button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
     const visibility = can(e, id, 'guestList') ? 'Guest names and RSVP comments can be seen in the guest list.' : 'The organiser has kept the guest list private. Your response and comment are shared with the organiser.';
     const location = canSeeLocation(e, id) ? e.location || 'Location to follow' : paidEvent(e) ? requiresApproval(e) ? 'Shared after approval and confirmed payment' : 'Shared after confirmed payment' : requiresApproval(e) ? 'Shared after organiser approval' : 'Shared after acceptance';
     let text = `🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n\n🗓 ${this.time(e, id)}\n📍 ${location}\n\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n${[e.inviteMessage,e.description].filter(Boolean).join('\n\n')}\n\n${host ? (owner ? 'You’re the organiser.\n\n' : 'You’re the co-host.\n\n') : mode==='named' ? 'Personal invitation for '+e.guests[id].name+'\n\n'+(accepted ? '✅ Accepted\n\n' : '') : mode==='tickets' ? (accepted ? '🎟 Ticket '+(confirmed(e,e.guests[id]) ? 'confirmed' : 'requested')+'\n\n' : '') : accepted ? '✅ Accepted\n\n' : ''}${closed ? '⏰ Responses closed — deadline passed.\n\n' : ''}${e.responseDeadline ? 'Response deadline: ' + eventTime({ startsAt: e.responseDeadline, timezone: e.deadlineTimezone || e.timezone || 'UTC' }, this.db.preferences[id]?.timezone) + '\n\n' : ''}${counts}${host && mode!=='named' ? '\n\n'+(mode==='tickets' ? 'Ticket link:' : 'Invite people:')+'\n' + this.link(e) : ''}\n\n${visibility} `;
@@ -539,6 +543,11 @@ export class Bot {
     const e = this.db.events[eid];
     if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id }).catch(() => {});
     if(action==='bm-undo')return undoBroadcast(this,id,eid);
+    if(action==='upload-qr'){
+      const link=e && shareUploadLink(e,this.username);
+      if(!e || !isManager(e,id) || !link || e.qrEnabled===false)return this.send(id,'Upload QR code is unavailable.');
+      return this.api('sendPhoto',{chat_id:id,__photoUpload:qrPhoto(link),caption:`${e.title}\nScan to add event photos and files.`,reply_markup:keyboard([{text:'📋 Copy upload link',copy_text:{text:link}}])});
+    }
     if(['bm','bm-group','bm-send','bm-cancel'].includes(action)) {
       if(!e || e.owner!==id || e.cancelled)return this.send(id,'Only the creator of an active event can message guests.');
       if(action==='bm')return startBroadcast(this,id,e);

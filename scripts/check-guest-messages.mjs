@@ -10,7 +10,7 @@ export async function checkGuestMessages(){
     bindings:{APP_ENV:'production',BOT_USERNAME:'fictionalBot',APP_URL:'https://messages.test/app',TELEGRAM_BOT_TOKEN:'fictional-message-token',TELEGRAM_WEBHOOK_SECRET:'fictional-secret'},
     outboundService:async request=>{
       const method=new URL(request.url).pathname.split('/').at(-1);
-      const params=request.headers.get('Content-Type')?.includes('application/json')?await request.json():{};
+      const params=request.headers.get('Content-Type')?.includes('application/json')?await request.json():Object.fromEntries(await request.formData());
       calls.push({method,params});
       if(blocked && params.chat_id===710003 && ['sendMessage','copyMessage'].includes(method))return Response.json({ok:false,error_code:403});
       if(holdNext && params.text?.startsWith('📨 Message from the organiser')){holdNext=false;await new Promise(resolve=>{release=resolve;});}
@@ -81,6 +81,13 @@ export async function checkGuestMessages(){
     const third=await api('start');await api('send',{token:third.data.token,groups:['no'],text:'Blocked guest fixture'});await settle();
     const failed=(await api('history')).data.messages.find(m=>m.token===third.data.token);
     assert.equal(failed.failed,1);assert.equal(failed.delivered,0);assert.equal(failed.pending,0);
+    await db.prepare('DELETE FROM outbox').run();
+    event.permissions.uploadMedia=true;event.qrEnabled=true;
+    await db.prepare("UPDATE records SET data=? WHERE kind='events' AND id=?").bind(JSON.stringify(event),eventId).run();
+    const qrResponse=await worker.dispatchFetch('https://messages.test/telegram',{method:'POST',headers:{'Content-Type':'application/json','X-Telegram-Bot-Api-Secret-Token':'fictional-secret'},body:JSON.stringify({update_id:9001,callback_query:{id:'fictional-query',from:{id:710001,first_name:'Fictional host'},data:'upload-qr:'+eventId}})});
+    assert.equal(qrResponse.status,200);await settle();
+    const photo=calls.find(c=>c.method==='sendPhoto');assert.ok(photo);assert.equal(photo.params.photo.type,'image/png');
+    assert.equal(photo.params.__photoUpload,undefined);assert.equal(photo.params.chat_id,'710001');
     console.log('Guest messaging Worker integration passed: creator authorization, filters, attachments, durable receipts, idempotent send and undo. Telegram mocked.');
   }finally{await worker.dispose();}
 }

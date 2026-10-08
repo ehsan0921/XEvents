@@ -13,7 +13,7 @@ function exploreHarness(){
   let zone='Australia/Sydney';
   const api=path=>new Promise((resolve,reject)=>requests.push({path,resolve,reject}));
   const source=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
-  const start=source.indexOf('let exploreSequence='),end=source.indexOf('async function loadAdmin()',start);
+  const start=source.indexOf('let exploreSequence='),end=source.indexOf('let analyticsSequence',start);
   assert.ok(start>=0 && end>start,'Explore implementation must be present.');
   const loadExplore=new Function('$','selectedZone','api','element','priceTag','format','priceEstimate','action','openTelegram',source.slice(start,end)+'\nreturn loadExplore;')($,()=>zone,api,(tag,text)=>new El(tag,text),()=>new El('span','Free'),()=> 'Local event time',()=>'',label=>new El('button',label),()=>{});
   return {$,requests,loadExplore,setZone:value=>{zone=value;}};

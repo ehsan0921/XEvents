@@ -80,7 +80,23 @@
       </form>
       <div id="success" class="panel success" hidden><span class="eyebrow">IT’S A DATE</span><h2 id="success-title">Your event is ready.</h2><p id="success-time"></p><button class="primary wide" id="share-event">Invite your people ↗</button><button class="secondary wide" id="open-chat">Open event in chat</button><button class="text-button wide" id="another-event">Back to my events</button></div>
     </section>
+    <section id="admin-analytics-view" class="view" hidden>
+      <span class="eyebrow">SUPER ADMIN</span><h1>Daily activity.</h1>
+      <div class="event-actions"><button type="button" class="secondary" data-tab="admin">← Admin panel</button><button type="button" class="secondary" id="analytics-refresh">↻ Refresh</button></div>
+      <label for="analytics-range">Date range</label><select id="analytics-range"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select>
+      <p id="analytics-zone" class="small muted"></p>
+      <p id="analytics-status" role="status" aria-live="polite"></p><p id="analytics-error" class="error" role="alert" hidden></p>
+      <div id="analytics-content" hidden>
+        <div class="panel analytics-total"><span class="eyebrow">ALL TIME</span><h2>Total users</h2><strong id="analytics-total-users"></strong><p class="small muted">All known users, including older accounts without a recorded join date.</p></div>
+        <div id="analytics-summary" class="counts"></div>
+        <article class="panel analytics-panel"><h2>New users</h2><p class="small muted">People first seen by XEvents each day.</p><div id="analytics-users-chart"></div></article>
+        <article class="panel analytics-panel"><h2>Events created</h2><p class="small muted">Creation date, including cancelled events still saved.</p><div id="analytics-events-chart"></div></article>
+        <details class="panel"><summary>Daily counts</summary><div class="analytics-table-wrap"><table class="analytics-table"><caption>Daily new users and events created</caption><thead><tr><th scope="col">Date</th><th scope="col">Users</th><th scope="col">Events</th></tr></thead><tbody id="analytics-daily"></tbody></table></div></details>
+        <p id="analytics-note" class="small muted"></p>
+      </div>
+    </section>
     <section id="admin-view" class="view" hidden><span class="eyebrow">SUPER ADMIN</span><h1>All plans.<br>All people.</h1><p class="muted">Browse every event and everyone who has used XEvents.</p>
+      <button type="button" class="secondary wide" data-tab="admin-analytics">📊 Daily activity</button>
       <details id="admin-whitelist" class="panel" hidden>
         <summary id="whitelist-summary">🔒 Dev access</summary>
         <p id="whitelist-access" role="status" aria-live="polite"></p>

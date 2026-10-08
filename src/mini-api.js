@@ -11,7 +11,7 @@ import { mayUseTestApp, testAccessMessage, TestAccessError, whitelistStatus, app
 import { parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
 import { shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
-import { isSuperAdmin, rememberUser, adminOverview } from './admin.js';
+import { isSuperAdmin, rememberUser, adminOverview, adminAnalytics, adminUserCount } from './admin.js';
 import { schedule, timezone, InputError } from './time.js';
 import { mutateState, BusyError } from './worker-store.js';
 import { randomBytes } from 'node:crypto';
@@ -161,6 +161,22 @@ async function miniApiForUser(request, env, user) {
   if (mediaResponse) return mediaResponse;
   if (path.startsWith('/api/admin')) {
     if (!isSuperAdmin(user, env)) return respond({ error: 'Super admin access required.' }, 403);
+    if (path === '/api/admin/analytics' && request.method === 'GET') {
+      const query = new URL(request.url).searchParams;
+      // Validate before querying, and project timestamps only (no guest or media data).
+      try {
+        const options = { days: query.get('days') ?? '30', zone: query.get('timezone') ?? 'UTC' };
+        adminAnalytics([], options);
+        const [activity, users] = await env.DB.batch([
+          env.DB.prepare("SELECT kind, CASE WHEN kind='users' THEN json_extract(data,'$.firstSeen') ELSE json_extract(data,'$.createdAt') END AS timestamp FROM records WHERE kind IN ('users','events')"),
+          env.DB.prepare("SELECT id FROM records WHERE kind IN ('users','preferences','sessions') UNION SELECT json_extract(data,'$.owner') AS id FROM records WHERE kind='events' UNION SELECT guest.key AS id FROM records, json_each(records.data,'$.guests') AS guest WHERE records.kind='events'")
+        ]);
+        return respond({ ...adminAnalytics(activity.results, options), totalUsers: adminUserCount(users.results) });
+      } catch (error) {
+        if (!(error instanceof InputError)) throw error;
+        return respond({ error: error.message }, 400);
+      }
+    }
     if (path === '/api/admin/whitelist') {
       if (request.method === 'GET') return respond(await whitelistStatus(env));
       if (request.method === 'POST') {

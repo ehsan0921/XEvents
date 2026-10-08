@@ -1,4 +1,6 @@
 import { eventGroup } from './reminders.js';
+import { Temporal } from '@js-temporal/polyfill';
+import { timezone, InputError } from './time.js';
 import { permissions, responseCounts, participantCount,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
 
 export const isSuperAdmin = (user, env = {}) => {
@@ -13,6 +15,35 @@ export async function rememberUser(env, user) {
   const now = new Date().toISOString();
   const profile = { id: user.id, firstName: user.first_name || '', lastName: user.last_name || '', username: user.username || '', firstSeen: now, lastSeen: now };
   await env.DB.prepare("INSERT INTO records(kind,id,data) VALUES ('users',?,?) ON CONFLICT(kind,id) DO UPDATE SET data=json_set(excluded.data,'$.firstSeen',coalesce(json_extract(records.data,'$.firstSeen'),json_extract(excluded.data,'$.firstSeen')))").bind(String(user.id), JSON.stringify(profile)).run();
+}
+
+// Match the admin directory, including users from before first-seen tracking.
+export function adminUserCount(rows) {
+  return new Set(rows.map(row => Number(row.id)).filter(id => Number.isSafeInteger(id) && id > 0)).size;
+}
+
+// Read-only counts: never infer a registration date from a guest's RSVP or last visit.
+export function adminAnalytics(rows, { days = '30', zone = 'UTC', now = Date.now() } = {}) {
+  days = Number(days);
+  if (![7, 30, 90].includes(days)) throw new InputError('Choose 7, 30 or 90 days.');
+  zone = timezone(zone);
+  const today = Temporal.Instant.fromEpochMilliseconds(now).toZonedDateTimeISO(zone).toPlainDate();
+  const start = today.subtract({ days: days - 1 });
+  const daily = Array.from({ length: days }, (_, i) => ({ date: start.add({ days: i }).toString(), users: 0, events: 0 }));
+  const buckets = new Map(daily.map(day => [day.date, day]));
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const undated = { users: 0, events: 0 };
+  for (const row of rows) {
+    const key = row.kind === 'users' ? 'users' : row.kind === 'events' ? 'events' : null;
+    if (!key) continue;
+    const stamp = typeof row.timestamp === 'string' && row.timestamp.trim() ? Date.parse(row.timestamp) : NaN;
+    if (!Number.isFinite(stamp)) { undated[key]++; continue; }
+    if (stamp > now) continue;
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(stamp)).map(p => [p.type, p.value]));
+    const bucket = buckets.get(`${parts.year}-${parts.month}-${parts.day}`);
+    if (bucket) bucket[key]++;
+  }
+  return { timezone: zone, days, daily, totals: daily.reduce((sum, day) => ({ users: sum.users + day.users, events: sum.events + day.events }), { users: 0, events: 0 }), undated };
 }
 
 export function adminOverview(rows) {

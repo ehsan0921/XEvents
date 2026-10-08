@@ -56,6 +56,20 @@ test('opening an event sends the event card directly without a placeholder messa
   assert.equal(f.calls.some(call=>call.text==='Use the event buttons below.'),false);
 });
 
+test('guest list and event card have refresh buttons and guest list refresh rechecks visibility',async()=>{
+  const f=fixture(),e=await f.create();e.guests[2]={name:'Example attendee',status:'yes',participants:1};
+  await f.cb(1,`v:${e.id}`);
+  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='↻ Refresh' && b.callback_data===`v:${e.id}`));
+  await f.cb(1,`g:${e.id}`);
+  const refresh=f.calls.at(-1).reply_markup.inline_keyboard.flat().find(b=>b.text==='↻ Refresh');
+  assert.equal(refresh.callback_data,`g:${e.id}`);
+  e.guests[2].name='Updated attendee';await f.cb(1,refresh.callback_data);
+  assert.match(f.calls.at(-1).text,/Updated attendee/);
+  e.permissions.guestList=false;await f.cb(2,refresh.callback_data);
+  assert.doesNotMatch(f.calls.at(-1).text,/Updated attendee/);
+  assert.match(f.calls.at(-1).text,/not enabled/);
+});
+
 test('native App menu stays available without duplicate App buttons or stale keyboard launchers',async()=>{
   const f=fixture();f.bot.appUrl='https://example.test/app';
   await f.msg(1,'/start');

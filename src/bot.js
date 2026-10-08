@@ -261,7 +261,7 @@ export class Bot {
     }
     if (owner) extras.push(button('Delete event', `delete:${e.id}`));
     rows.push(...paired(extras));
-    if(!rsvpOnly)rows.push([button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
+    if(!rsvpOnly)rows.push([button('↻ Refresh',`v:${e.id}`)],[button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
     const visibility = can(e, id, 'guestList') ? 'Guest names and RSVP comments can be seen in the guest list.' : 'The organiser has kept the guest list private. Your response and comment are shared with the organiser.';
     const location = canSeeLocation(e, id) ? e.location || 'Location to follow' : paidEvent(e) ? requiresApproval(e) ? 'Shared after approval and confirmed payment' : 'Shared after confirmed payment' : requiresApproval(e) ? 'Shared after organiser approval' : 'Shared after acceptance';
     let text = `🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n\n🗓 ${this.time(e, id)}\n📍 ${location}\n\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}\n\n${[e.inviteMessage,e.description].filter(Boolean).join('\n\n')}\n\n${host ? (owner ? 'You’re the organiser.\n\n' : 'You’re the co-host.\n\n') : mode==='named' ? 'Personal invitation for '+e.guests[id].name+'\n\n'+(accepted ? '✅ Accepted\n\n' : '') : mode==='tickets' ? (accepted ? '🎟 Ticket '+(confirmed(e,e.guests[id]) ? 'confirmed' : 'requested')+'\n\n' : '') : accepted ? '✅ Accepted\n\n' : ''}${closed ? '⏰ Responses closed — deadline passed.\n\n' : ''}${e.responseDeadline ? 'Response deadline: ' + eventTime({ startsAt: e.responseDeadline, timezone: e.deadlineTimezone || e.timezone || 'UTC' }, this.db.preferences[id]?.timezone) + '\n\n' : ''}${counts}${host && mode!=='named' ? '\n\n'+(mode==='tickets' ? 'Ticket link:' : 'Invite people:')+'\n' + this.link(e) : ''}\n\n${visibility} `;
@@ -653,7 +653,7 @@ export class Bot {
         const group = guests(e).filter(g => status === 'yes' ? confirmed(e, g) : status === 'pending' ? g.status === 'yes' && requiresApproval(e) && g.approval === 'pending' : g.status === status);
         text += group.length ? group.map(g => `• ${g.name}${g.status === 'yes' ? ' (' + participantCount(e, g) + ' people)' : ''}${g.comment ? ' — ' + g.comment : ''}`).join('\n') + '\n' : 'Nobody yet\n';
       }
-      return this.long(id, text, keyboard([button('Back to event', `v:${eid}`)]));
+      return this.long(id, text, keyboard([button('↻ Refresh', `g:${eid}`),button('Back to event', `v:${eid}`)]));
     }
     if (action === 'c') {
       return this.send(id, isManager(e,id) ? 'You’re an event host — no RSVP needed.' : 'Choose an RSVP to add or update your comment.');

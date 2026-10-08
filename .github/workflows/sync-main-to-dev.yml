@@ -91,8 +91,8 @@ jobs:
           PRODUCTION_CONFIG_JSON: ${{ secrets.PRODUCTION_CONFIG_JSON }}
         run: node scripts/refresh-development.mjs
 
-  check-development:
-    name: Start development checks and deployment
+  deploy-development:
+    name: Start development deployment
     needs: [sync-code, refresh-schema]
     if: >-
       always() && needs.sync-code.result == 'success' &&
@@ -105,7 +105,7 @@ jobs:
       contents: read
     steps:
       # A push made with GITHUB_TOKEN does not trigger another push workflow.
-      - name: Explicitly dispatch development checks
+      - name: Explicitly dispatch development deployment
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run check-and-deploy.yml --ref dev --repo "$GITHUB_REPOSITORY"

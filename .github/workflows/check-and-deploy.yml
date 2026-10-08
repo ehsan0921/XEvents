@@ -13,6 +13,8 @@ permissions:
 jobs:
   checks:
     name: Regression and Worker checks
+    # Validate releases, including dev -> main PRs. Dev stays fast for manual testing.
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -33,12 +35,14 @@ jobs:
         run: npm run test:worker
 
   deploy:
-    name: Deploy checked source
+    name: Deploy selected environment
     needs: checks
     if: >-
+      !cancelled() &&
       github.event_name != 'pull_request' &&
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') &&
-      vars.XEVENTS_DEPLOY_ENABLED == 'true'
+      vars.XEVENTS_DEPLOY_ENABLED == 'true' &&
+      ((github.ref == 'refs/heads/main' && needs.checks.result == 'success') ||
+      (github.ref == 'refs/heads/dev' && needs.checks.result == 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
@@ -48,7 +52,7 @@ jobs:
       group: ${{ github.ref_name == 'main' && 'xevents-production' || 'xevents-development' }}
       cancel-in-progress: false
     steps:
-      - name: Check out the tested commit
+      - name: Check out the selected commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }}
@@ -57,7 +61,7 @@ jobs:
         run: |
           REMOTE_COMMIT="$(git ls-remote origin "refs/heads/$GITHUB_REF_NAME" | cut -f1)"
           if [ "$REMOTE_COMMIT" != "$GITHUB_SHA" ]; then
-            echo 'Deployment superseded by a newer branch commit. Run checks for the latest commit.' >&2
+            echo 'Deployment superseded by a newer branch commit. Deploy the latest commit instead.' >&2
             exit 1
           fi
       - name: Set up Node.js

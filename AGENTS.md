@@ -45,18 +45,24 @@ existing invitations, and users' private event data when making changes.
 - Test with fictional events, mocked Telegram calls, and local database fixtures.
   Never send real notifications, make real payments, or use production guest data
   as a test fixture.
-- Run regression tests appropriate to the change and the project's required
-  checks. Invitation, visibility, or schema changes need coverage for existing
+- Maintain regression tests appropriate to the change and the project's required
+  production checks. Invitation, visibility, or schema changes need coverage for existing
   events, legacy modes, privacy, and stored response preservation.
-- Run Worker integration and static-import checks when changing Worker modules,
-  bindings, API behavior, or asset imports. Include every new imported asset in
+- Keep development deployments fast: automated test jobs run for PRs targeting
+  `main` and for `main` pushes/manual runs, not for `dev`. Local tests during
+  development are optional when useful; require the full regression and Worker
+  checks before production promotion and deployment. Keep development builds,
+  environment isolation validation and deployment health checks enabled.
+- Run Worker integration and static-import checks before production promotion
+  when changing Worker modules, bindings, API behavior, or asset imports.
+  Include every new imported asset in
   deployment and verify that it can load.
 - Check important Mini App flows on mobile when changing forms or navigation.
   Keep visible errors, keyboard access, and understandable button states working.
 
 ## Publishing and deployment
 
-- Work on `dev` and verify changes there before promoting them to `main`.
+- Work on `dev` and verify the affected flows there before promoting to `main`.
   `main` deploys production; `dev` deploys the separate development Worker and D1.
   Keep all bot credentials, app URLs and database bindings isolated by environment.
 - The production-to-dev workflow merges code without force-pushing. Optional D1

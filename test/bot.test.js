@@ -70,6 +70,23 @@ test('guest list and event card have refresh buttons and guest list refresh rech
   assert.match(f.calls.at(-1).text,/not enabled/);
 });
 
+test('refresh timestamps use the viewer timezone and remain visible on long banner cards',async(t)=>{
+  const f=fixture(),e=await f.create();
+  f.store.data.preferences[1]={timezone:'Australia/Sydney'};
+  t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-08T00:00:00Z')});
+  await f.cb(1,`g:${e.id}`);
+  assert.match(f.calls.at(-1).text,/Last updated: 8 Oct 2026, 11:00:00 am AEDT/);
+  t.mock.timers.tick(60000);
+  await f.cb(1,`g:${e.id}`);
+  assert.match(f.calls.at(-1).text,/Last updated: 8 Oct 2026, 11:01:00 am AEDT/);
+  e.banner='fictional-banner';e.description='Long description '.repeat(150);
+  await f.cb(1,`v:${e.id}`);
+  assert.match(f.calls.at(-1).caption,/Last updated: 8 Oct 2026, 11:01:00 am AEDT/);
+  assert.ok(f.calls.at(-1).caption.length<=1024);
+  f.store.data.preferences[1].timezone='UTC';
+  assert.match(f.bot.updatedAt(e,1),/8 Oct 2026, 12:01:00 am UTC/);
+});
+
 test('native App menu stays available without duplicate App buttons or stale keyboard launchers',async()=>{
   const f=fixture();f.bot.appUrl='https://example.test/app';
   await f.msg(1,'/start');

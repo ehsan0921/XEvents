@@ -88,6 +88,14 @@ export class Bot {
   link(e) { return `https://t.me/${this.username}?start=e_${e.id}`; }
   miniButton(text, params = '') { return { text, web_app: { url: this.appUrl + params } }; }
   time(e, id) { return eventTime(e, this.db.preferences[id]?.timezone); }
+  updatedAt(e, id, now = new Date()) {
+    const options = { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' };
+    const zone = this.db.preferences[id]?.timezone || e.timezone || 'UTC';
+    let formatted;
+    try { formatted = new Intl.DateTimeFormat('en-AU', { ...options, timeZone: zone }).format(now); }
+    catch { formatted = new Intl.DateTimeFormat('en-AU', { ...options, timeZone: 'UTC' }).format(now); }
+    return 'Last updated: ' + formatted;
+  }
   allowed(e, id) { return e && (isManager(e,id) || !!e.guests[id] && invitationAvailable(e,id)); }
   mediaAllowed(e, id) { return e && (this.allowed(e, id) || (this.db.preferences[id]?.mediaAccess?.[e.id] === e.uploadToken && !!uploadLink(e, this.username))); }
   async mediaCard(id, e) {
@@ -273,6 +281,10 @@ export class Bot {
       if(content)invitationEntities=content.entities.map(entity=>({...entity,offset:entity.offset+prefix.length}));
       const limit=e.banner && withBanner ? Math.max(0,1024-summary.length) : 1500;
       const description=[e.inviteMessage,e.description].filter(Boolean).join('\n\n');text=summary+(description.length>limit ? description.slice(0,Math.max(0,limit-1)).replace(/[\uD800-\uDBFF]$/,'')+'…' : description);
+    }
+    if (!rsvpOnly) {
+      const titleEnd = text.indexOf('\n');
+      text = text.slice(0, titleEnd) + '\n' + this.updatedAt(e, id) + text.slice(titleEnd);
     }
     if (e.banner && withBanner) {
       const captionContent = text.length <= 1024 ? text : text.slice(0, 940).replace(/[\uD800-\uDBFF]$/, '');
@@ -647,7 +659,7 @@ export class Bot {
       return this.prompt(id, arg === 'yes' ? `${requiresApproval(e) ? 'The organiser will send invitation details and your ticket after approving your response.\n\n' : ''}What name should the organiser see? Enter a custom name, or tap Use Telegram name.` : `Selected: ${labels[arg]}. Add a comment ${permissions(e).guestList ? 'visible in the guest list' : 'for the organiser only'}, or tap Skip to save your response.`);
     }
     if (action === 'g') {
-      let text = `👥 ${e.title}\n`;
+      let text = `👥 ${e.title}\n${this.updatedAt(e, id)}\n`;
       for (const [status, label] of [...Object.entries(labels), ['pending', '⏳ Awaiting approval']]) {
         text += `\n${label}\n`;
         const group = guests(e).filter(g => status === 'yes' ? confirmed(e, g) : status === 'pending' ? g.status === 'yes' && requiresApproval(e) && g.approval === 'pending' : g.status === status);

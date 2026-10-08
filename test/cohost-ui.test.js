@@ -847,6 +847,26 @@ test('guest roster opens manual additions and revokes the exact invitation mappe
   f.ids.get('invitation-links-close').onclick();await f.findButton('event-list','👥 Guest list').onclick();await f.ids.get('guest-list-add').onclick();assert.equal(f.ids.get('guest-list-dialog').open,false);assert.equal(f.ids.get('invitation-add').open,true);assert.equal(f.ids.get('invitation-single').open,true);assert.equal(f.ids.get('invitation-single-name').focused,true);
 });
 
+test('guest roster RSVP shortcut selects the exact guest and supports silent or notified changes',async()=>{
+  for(const notify of [false,true]){
+    const alex={id:18,name:'Alex',status:'yes',participants:2},sam={id:19,name:'Sam',status:'maybe',participants:0},invite=managedInvite('Team',11,[alex,sam]);
+    const f=await harness(managedEvent({isOwner:false,isManager:true,invitees:[invite],guestRoster:[sam]}));
+    await f.findButton('event-list','👥 Guest list').onclick();await f.findButton('guest-list-rows','↻ Change RSVP').onclick();
+    const row=invitationRow(f,'Team');assert.equal(f.ids.get('guest-list-dialog').open,false);assert.equal(rowPanel(f,row).dataset.kind,'response');assert.equal(rowField(f,row,'userId').value,'19');assert.equal(rowField(f,row,'status').value,'maybe');
+    rowField(f,row,'status').value='no';rowField(f,row,'status').onchange();rowField(f,row,'notify').checked=notify;
+    await rowAction(f,row,'Save response').onclick();const request=f.calls.find(call=>call.path.endsWith('/invitations/response'));
+    assert.equal(request.body.userId,19);assert.equal(request.body.token,invite.token);assert.equal(request.body.status,'no');assert.equal(request.body.notify,notify);assert.deepEqual(f.getEvent().invitees[0].responses[0],alex);
+  }
+});
+
+test('guest roster edit shortcut opens the invitation editor and unopened guests cannot change RSVP',async()=>{
+  const invite=managedInvite('Alex',11),f=await harness(managedEvent({invitees:[invite],guestRoster:[{id:null,name:'Alex',status:'unopened'}]}));
+  await f.findButton('event-list','👥 Guest list').onclick();assert.equal(f.findButton('guest-list-rows','↻ Change RSVP').disabled,true);
+  await f.findButton('guest-list-rows','✏️ Edit invite').onclick();assert.equal(rowPanel(f,invitationRow(f,'Alex')).dataset.kind,'edit');
+  f.ids.get('invitation-links-close').onclick();f.setEvent({...f.getEvent(),group:'Past events'});await f.findButton('event-list','👥 Guest list').onclick();
+  assert.equal(f.findButton('guest-list-rows','✏️ Edit invite').disabled,true);assert.equal(f.findButton('guest-list-rows','↻ Change RSVP').disabled,true);
+});
+
 test('ticket-booking guest rosters omit named-invite add and revoke controls',async()=>{
   const f=await harness(managedEvent({invitationMode:'tickets',invitees:[],guestRoster:[{id:19,name:'Alex',status:'yes',participants:1,confirmed:true}]}));await f.findButton('event-list','👥 Guest list').onclick();
   assert.equal(f.ids.get('guest-list-add').hidden,true);assert.equal(f.ids.get('guest-list-invitations').hidden,true);assert.equal(f.findButton('guest-list-rows','🚫 Revoke invitation'),undefined);assert.ok(f.ids.get('guest-list-manage').onclick);

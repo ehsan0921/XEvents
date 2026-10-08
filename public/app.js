@@ -167,7 +167,7 @@ async function openGuestList(id) {
       const status=g.status==='yes' ? g.confirmed?'yes':g.approval==='pending'?'pending':'payment' : g.status==='later' && g.responded===false?'unanswered':g.status,label={yes:'Accepted',pending:'Awaiting approval',payment:'Awaiting payment',no:'Declined',maybe:'Maybe',later:'Respond later',unanswered:'Awaiting response',unopened:'Not opened'}[status] || 'Awaiting response';
       const row=element('article','','admin-guest guest-roster-row');row.dataset.status=status;const heading=element('div','','guest-roster-heading');heading.append(element('strong',g.name));if(g.participants)heading.append(element('span',g.participants+' '+(g.participants===1?'person':'people'),'small'));const badge=element('span',label,'invitation-status');badge.dataset.status=status;row.append(heading,badge);
       const invite=named && invitationFor(g);
-      if(invite){const more=element('details','','event-more guest-roster-more'),toggle=element('summary','⋯');toggle.setAttribute('aria-label','Guest options for '+g.name);const controls=element('div','','event-more-panel');controls.append(action('✉️ Invitation',()=>showInvitations(invite)));const revoke=action('🚫 Revoke invitation',()=>showInvitations(invite,{revoke:true}),'secondary invitation-danger');revoke.disabled=readOnly;controls.append(revoke);more.append(toggle,controls);row.append(more);}rows.append(row);
+      if(invite){const more=element('details','','event-more guest-roster-more'),toggle=element('summary','⋯');toggle.setAttribute('aria-label','Guest options for '+g.name);const controls=element('div','','event-more-panel');controls.append(action('✉️ Invitation',()=>showInvitations(invite)));const edit=action('✏️ Edit invite',()=>showInvitations(invite,{edit:true})),response=action('↻ Change RSVP',()=>showInvitations(invite,{response:true,responseUserId:g.id}));edit.disabled=readOnly;response.disabled=readOnly || !Number.isSafeInteger(g.id) || !invite.responses?.some(reply=>reply.id===g.id);controls.append(edit,response);const revoke=action('🚫 Revoke invitation',()=>showInvitations(invite,{revoke:true}),'secondary invitation-danger');revoke.disabled=readOnly;controls.append(revoke);more.append(toggle,controls);row.append(more);}rows.append(row);
     }
     if(!visible.length)rows.append(element('p','No guests in this list.','muted'));
     for(const b of filters.children)b.setAttribute('aria-pressed',String(b.dataset.filter===filter));
@@ -540,6 +540,8 @@ async function openNamedLinks(event,selectedGuest,options={}){
       else menuAction('🗑 Delete invite','delete',false,true);
       menu.append(action('🕘 See history',()=>showPanel('history')));
       if(guest===selected && options.revoke && focusSelected && !guest.revoked)panelState={token:guest.token,kind:'revoke',focus:true};
+      if(guest===selected && options.edit && focusSelected && !guest.revoked)panelState={token:guest.token,kind:'edit',focus:true};
+      if(guest===selected && options.response && focusSelected && !guest.revoked)panelState={token:guest.token,kind:'response',focus:true,draft:{userId:String(options.responseUserId)}};
       if(panelState && panelState.token===guest.token && (guest.revoked && !['history','delete'].includes(panelState.kind) || panelState.kind==='response' && !editableReplies.length))panelState=null;
       if(panelState && panelState.token===guest.token){
         const kind=panelState.kind,draft=panelState.draft ||= {};panel.hidden=false;panel.dataset.kind=kind;

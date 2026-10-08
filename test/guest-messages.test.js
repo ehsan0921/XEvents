@@ -11,6 +11,15 @@ function fixture(){
   const msg=(id,text,extra={})=>bot.handle({message:{from:{id},chat:{id,type:'private'},message_id:99,text,...extra}});
   return {e,data,calls,bot,cb,msg};
 }
+test('empty message prompt keeps send and cancel controls available',async()=>{
+  const f=fixture();await f.cb(1,`bm:${f.e.id}`);const token=f.data.sessions[1].token;
+  await f.cb(1,`bm-send:${f.e.id}:${token}`);
+  const prompt=f.calls.at(-1);assert.equal(prompt.text,'Add a message or attachment first.');
+  assert.deepEqual(prompt.reply_markup.inline_keyboard[0].map(b=>b.callback_data),[`bm-send:${f.e.id}:${token}`,`bm-cancel:${f.e.id}:${token}`]);
+  await f.msg(1,'Example message');await f.cb(1,prompt.reply_markup.inline_keyboard[0][0].callback_data);
+  assert.equal(f.calls.filter(c=>c.method==='copyMessage').length,1);
+});
+
 test('messaging defaults to accepted and isolates each response group including unanswered',async()=>{
   const f=fixture();
   for(const [group,id] of [['yes',2],['no',3],['maybe',4],['later',5],['unanswered',6]])assert.deepEqual(broadcastRecipients(f.e,[group]),[id]);

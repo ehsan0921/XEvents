@@ -57,7 +57,7 @@ export function collectBroadcast(bot,id,e,m) {
 export async function sendBroadcast(bot,id,e) {
   const s=bot.db.sessions[id],recipients=broadcastRecipients(e,s.groups);
   if(!recipients.length)return bot.send(id,'No reachable guests selected. Choose another group.');
-  if(!s.items.length && !s.text)return bot.send(id,'Add a message or attachment first.');
+  if(!s.items.length && !s.text)return bot.send(id,'Add a message or attachment first.',markup([[button('📨 Send message',`bm-send:${e.id}:${s.token}`),button('✖ Cancel',`bm-cancel:${e.id}:${s.token}`)]]));
   const pref=bot.db.preferences[id] ||= {},records=pref.broadcasts ||= {};
   for(const [key,r] of Object.entries(records))if(r.undoUntil<Date.now()-86400000)delete records[key];
   const token=s.token;

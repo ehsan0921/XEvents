@@ -4,16 +4,22 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 
 const telegramCalls=[];
+const serveAssets = async request => {
+  const pathname=new URL(request.url).pathname;
+  const file=pathname==='/' ? 'index.html' : pathname.slice(1);
+  if(!['index.html','app.js','errors.js','gallery.js','event-actions.js','style.css'].includes(file))return new Response('Not found',{status:404});
+  const headers={'Content-Type':file.endsWith('.js') ? 'application/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html'};
+  if(file==='index.html') {
+    headers.ETag='"fixture-index"';headers['Last-Modified']='Thu, 01 Oct 2026 00:00:00 GMT';
+    if(request.headers.get('If-None-Match')===headers.ETag || request.headers.get('If-Modified-Since')===headers['Last-Modified'])return new Response(null,{status:304,headers});
+  }
+  return new Response(await readFile('public/'+file),{headers});
+};
 const mf = new Miniflare(convertV4MiniflareOptions({
   workers: [{ name: 'test',
   modules: true, scriptPath: '.wrangler/build/worker.js', compatibilityDate: '2026-10-05', compatibilityFlags: ['nodejs_compat'],
   d1Databases: ['DB'], bindings: { SUPER_ADMIN_ID: '999001', BOT_USERNAME: 'XEvents_bot', APP_URL: 'https://test/app', TELEGRAM_BOT_TOKEN: 'fake', TELEGRAM_WEBHOOK_SECRET: 'test-secret' },
-  serviceBindings: { ASSETS: async request => {
-    const pathname=new URL(request.url).pathname;
-    const file=pathname==='/' ? 'index.html' : pathname.slice(1);
-    if(!['index.html','app.js','errors.js','gallery.js','event-actions.js','style.css'].includes(file))return new Response('Not found',{status:404});
-    return new Response(await readFile('public/'+file),{headers:{'Content-Type':file.endsWith('.js') ? 'application/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html'}});
-  } },
+  serviceBindings: { ASSETS: serveAssets },
   outboundService: async request => {
     if(request.method==='POST' && request.headers.get('Content-Type')?.includes('application/json'))telegramCalls.push({method:new URL(request.url).pathname.split('/').at(-1),params:await request.clone().json()});
     if (request.url.includes('/file/bot')) return new Response(new Uint8Array([255,216,255]), { headers: { 'Content-Type':'image/jpeg' } });
@@ -30,7 +36,45 @@ try {
   await db.exec(await readFile('migrations/0003_mini_app.sql', 'utf8'));
   assert.equal((await mf.dispatchFetch('https://test/')).status, 200);
   const appPage=await mf.dispatchFetch('https://test/app');
-  assert.equal(appPage.status,200);assert.match(await appPage.text(),/id="event-end-dialog"/);
+  const appHtml=await appPage.text();
+  assert.equal(appPage.status,200);assert.match(appHtml,/id="event-end-dialog"/);
+  assert.match(appHtml,/id="telegram-bot-link"[^>]*href="https:\/\/t\.me\/XEvents_bot"/);
+  // A separate Worker must use its own bot even before Telegram authentication.
+  const development = new Miniflare(convertV4MiniflareOptions({ workers: [{
+    name:'development-links', modules:true, scriptPath:'.wrangler/build/worker.js', compatibilityDate:'2026-10-05', compatibilityFlags:['nodejs_compat'],
+    bindings:{BOT_USERNAME:'fictionalDevelopmentBot',APP_URL:'https://development.test/app'},
+    serviceBindings:{ASSETS:serveAssets},
+    outboundService:async()=>{throw new Error('Development link checks must not make outbound requests.');}
+  }] }));
+  try {
+    const validators={'If-None-Match':'"fixture-index"','If-Modified-Since':'Thu, 01 Oct 2026 00:00:00 GMT'};
+    assert.equal((await serveAssets(new Request('https://assets.test/',{headers:validators}))).status,304);
+    let developmentBotLink;
+    for(const path of ['/app','/app/']) {
+      const page=await development.dispatchFetch('https://development.test'+path,{headers:validators});
+      assert.equal(page.status,200);
+      assert.equal(page.headers.get('ETag'),null);assert.equal(page.headers.get('Last-Modified'),null);
+      for(const name of ['Content-Type','Cache-Control','X-Content-Type-Options','Referrer-Policy','Content-Security-Policy'])assert.equal(page.headers.get(name),appPage.headers.get(name));
+      const html=await page.text();
+      developmentBotLink=html.match(/id="telegram-bot-link"[^>]*href="([^"]+)"/)?.[1];
+      assert.equal(developmentBotLink,'https://t.me/fictionalDevelopmentBot');
+      assert.doesNotMatch(html,/https:\/\/t\.me\/XEvents_bot/);
+    }
+    const module=await development.dispatchFetch('https://development.test/app.js');
+    assert.equal(module.status,200);
+    const source=await module.text();
+    assert.doesNotMatch(source,/https:\/\/t\.me\/XEvents_bot/);
+    const fallback=source.match(/^if \(!initData\) \{\r?\n([\s\S]*?)\r?\n\} else \{/m)?.[1];
+    assert.ok(fallback,'The unauthenticated launcher must remain available.');
+    const launched=[],buttons=[],nodes=new Map();
+    const node=id=>{if(!nodes.has(id))nodes.set(id,{replaceChildren(){},getAttribute:()=>developmentBotLink});return nodes.get(id);};
+    const runFallback=new Function('$','notice','element','action','tg','window','options','deviceZone',fallback);
+    const launch=()=>runFallback(node,()=>{},()=>({append:button=>buttons.push(button)}),(label,onclick)=>({label,onclick}),{openTelegramLink:url=>launched.push(url)},{},()=>{},'UTC');
+    launch();assert.equal(buttons.length,1);assert.equal(buttons[0].label,'App');buttons[0].onclick();
+    assert.deepEqual(launched,['https://t.me/fictionalDevelopmentBot?start=app']);
+    developmentBotLink='https://t.me/';buttons.length=0;
+    launch();assert.equal(buttons.length,0,'The unconfigured static page must not send guests to another bot.');
+  } finally { await development.dispose(); }
   const appModule=await mf.dispatchFetch('https://test/app.js');
   assert.equal(appModule.status,200);
   const imports=[...(await appModule.text()).matchAll(/import\s+.*?from\s+['"]\.\/([^'"]+)['"]/g)].map(match=>match[1]);

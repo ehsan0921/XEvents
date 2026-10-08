@@ -82,14 +82,31 @@ export default {
     }
     if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/errors.js', '/gallery.js', '/event-actions.js', '/style.css'].includes(url.pathname))) {
       const target = new URL(request.url);
-      if (url.pathname === '/app' || url.pathname === '/app/') target.pathname = '/';
-      const asset = await env.ASSETS.fetch(new Request(target, request));
+      const appPage = url.pathname === '/app' || url.pathname === '/app/';
+      if (appPage) target.pathname = '/';
+      const assetRequest = new Request(target, request);
+      if (appPage) {
+        assetRequest.headers.delete('If-None-Match');
+        assetRequest.headers.delete('If-Modified-Since');
+      }
+      const asset = await env.ASSETS.fetch(assetRequest);
       const headers = new Headers(asset.headers);
+      if (appPage) {
+        headers.delete('ETag');
+        headers.delete('Last-Modified');
+      }
       headers.set('Cache-Control', 'no-cache');
       headers.set('X-Content-Type-Options', 'nosniff');
       headers.set('Referrer-Policy', 'no-referrer');
       headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; base-uri 'self'; object-src 'none'");
-      return new Response(asset.body, { status: asset.status, headers });
+      const response = new Response(asset.body, { status: asset.status, headers });
+      if (appPage && asset.ok && typeof env.BOT_USERNAME === 'string' && /^[A-Za-z0-9_]{5,32}$/.test(env.BOT_USERNAME)) {
+        const botUrl = `https://t.me/${env.BOT_USERNAME}`;
+        return new HTMLRewriter().on('#telegram-bot-link', {
+          element(element) { element.setAttribute('href', botUrl); }
+        }).transform(response);
+      }
+      return response;
     }
     if (request.method === 'GET' && url.pathname === '/') return Response.json({ service: 'XEvents', status: 'running' });
     if (url.pathname === '/setup' && request.method === 'POST') {

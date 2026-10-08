@@ -797,7 +797,8 @@ $('another-event').onclick = () => go('events');
 if (!initData) {
   notice('This launch did not include your Telegram login. Reopen using App in the bot menu or the App button in a message.');
   const empty=element('div','Your events are private. Use the authenticated App button to load them.','empty');
-  empty.append(action('App',()=>{const url='https://t.me/XEvents_bot?start=app';if(tg?.openTelegramLink)tg.openTelegramLink(url);else window.open(url,'_blank','noopener');}));
+  const botLink=$('telegram-bot-link')?.getAttribute('href') || '';
+  if(/^https:\/\/t\.me\/[A-Za-z0-9_]{5,32}$/.test(botLink))empty.append(action('App',()=>{const url=botLink+'?start=app';if(tg?.openTelegramLink)tg.openTelegramLink(url);else window.open(url,'_blank','noopener');}));
   $('event-list').replaceChildren(empty);
   $('home-view').hidden=true;$('events-view').hidden=false;
   $('save-event').disabled = true; $('save-zone').disabled = true; $('refresh').disabled = true;

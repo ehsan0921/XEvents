@@ -12,13 +12,15 @@ The development bot runs the same bot, Mini App and API code as production. Tele
 ## Day-to-day workflow
 
 1. Switch to `dev` and make a focused change. Short-lived feature branches can merge into `dev` when useful.
-2. Run `npm test` and `npm run test:worker`. Use fictional events and mocked payments in automated tests.
-3. Push `dev`. When deployment is enabled and its credentials are configured, GitHub checks and deploys the development environment.
+2. Push `dev`. When deployment is enabled and its credentials are configured, GitHub builds and deploys development without running the automated test suite. Dependency installation, configuration isolation, migrations and the service health check still apply.
+3. Run local tests when useful while developing; they are not required before every development push. Use fictional events and mocked payments in automated tests.
 4. Test the relevant Telegram and Mini App flows through the development bot.
-5. Open a pull request from `dev` to `main`. Merge after the checks and development testing pass. The `main` deployment uses production configuration and applies compatible production migrations.
+5. Open a pull request from `dev` to `main`. The required **Regression and Worker checks** job runs `npm test` and `npm run test:worker` on every PR targeting `main`, and again on `main` pushes or manual runs. Merge after those checks and development testing pass. Production deployment requires successful checks for that exact commit, uses production configuration and applies compatible production migrations.
 6. After a production-only fix, run **Sync production code to development** to bring `main` changes back into `dev`.
 
 Keep changes small so that `main` remains releasable. Do not treat development database contents as something to promote: promotion moves code and migrations, not test events or users.
+
+Automated test jobs are skipped for `dev` pushes, PRs targeting `dev`, and manual workflow runs on `dev`. Production checks include authentication, access and permission boundaries, invitation compatibility, payment/refund handling and local Worker/D1 integration. A failed, skipped or cancelled production check blocks production deployment; PRs never deploy either environment.
 
 ## Enable GitHub deployment
 
@@ -97,7 +99,7 @@ Stars payments use Telegram's real Bot API endpoints in the current application.
 
 ## Sync production to dev
 
-Run **Sync production code to development** manually from GitHub Actions on `main`. It merges production code into `dev` without resetting the branch or force-pushing. It preserves development work and stops if there is a merge conflict. Resolve that conflict in a normal checkout and push the reviewed result. After the merge, it explicitly starts development checks because a push using GitHub's workflow token does not start another push workflow.
+Run **Sync production code to development** manually from GitHub Actions on `main`. It merges production code into `dev` without resetting the branch or force-pushing. It preserves development work and stops if there is a merge conflict. Resolve that conflict in a normal checkout and push the reviewed result. After the merge, it explicitly starts the development deployment workflow because a push using GitHub's workflow token does not start another push workflow. That development run skips automated tests.
 
 The `copy_database_schema` input defaults to `false`. With that default, the workflow syncs code only and leaves the development database unchanged.
 

@@ -677,10 +677,21 @@ export class Bot {
       return this.prompt(id, arg === 'yes' ? `${requiresApproval(e) ? 'The organiser will send invitation details and your ticket after approving your response.\n\n' : ''}What name should the organiser see? Enter a custom name, or tap Use Telegram name.` : `Selected: ${labels[arg]}. Add a comment ${permissions(e).guestList ? 'visible in the guest list' : 'for the organiser only'}, or tap Skip to save your response.`);
     }
     if (action === 'g') {
-      let text = `👥 ${e.title}\n${this.updatedAt(e, id)}\n`;
-      for (const [status, label] of [...Object.entries(labels), ['pending', '⏳ Awaiting approval']]) {
-        text += `\n${label}\n`;
-        const group = guests(e).filter(g => status === 'yes' ? confirmed(e, g) : status === 'pending' ? g.status === 'yes' && requiresApproval(e) && g.approval === 'pending' : g.status === status);
+      const active=Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner && invitationAvailable(e,Number(uid))).map(([,g])=>g);
+      const unopened=Object.entries(e.invitees || {}).filter(([token])=>!active.some(g=>g.invitationToken===token)).map(([,g])=>g);
+      const accepted=active.filter(g=>confirmed(e,g));
+      const pending=active.filter(g=>g.status==='yes' && requiresApproval(e) && g.approval!=='approved');
+      const payment=active.filter(g=>g.status==='yes' && !confirmed(e,g) && !pending.includes(g));
+      const groups=[
+        ['✅ Accepted',accepted],['❌ Rejected',active.filter(g=>g.status==='no')],
+        ['🤔 Tentative',active.filter(g=>g.status==='maybe')],
+        ['⏳ Respond later',active.filter(g=>g.status==='later' && hasRecordedResponse(g))],
+        ['📭 Not responded',[...active.filter(g=>!hasRecordedResponse(g)),...unopened]],
+        ['⏳ Awaiting approval',pending],...(payment.length ? [['⭐ Awaiting payment',payment]] : [])
+      ];
+      let text = `👥 ${e.title}\n${this.updatedAt(e, id)}\n\nTotal invitations: ${active.length+unopened.length}\nPeople accepted: ${accepted.reduce((sum,g)=>sum+participantCount(e,g),0)}\n`;
+      for (const [label,group] of groups) {
+        text += `\n${label} (${group.length})\n`;
         text += group.length ? group.map(g => `• ${g.name}${g.status === 'yes' ? ' (' + participantCount(e, g) + ' people)' : ''}${g.comment ? ' — ' + g.comment : ''}`).join('\n') + '\n' : 'Nobody yet\n';
       }
       return this.long(id, text, keyboard([button('↻ Refresh', `g:${eid}`),button('Back to event', `v:${eid}`)]));

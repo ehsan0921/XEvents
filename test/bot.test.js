@@ -70,6 +70,34 @@ test('guest list and event card have refresh buttons and guest list refresh rech
   assert.match(f.calls.at(-1).text,/not enabled/);
 });
 
+test('guest list counts invitations, attendees and unanswered named links without merging later responses',async()=>{
+  const f=fixture(),e=await f.create();
+  e.invitationMode='named';e.oneTimeInvite=false;e.requireApproval=true;
+  e.invitees={a:{name:'Accepted',participants:2},b:{name:'Rejected'},c:{name:'Tentative'},d:{name:'Later'},f:{name:'Opened'},g:{name:'Unopened'},h:{name:'Pending',participants:3}};
+  e.guests={
+    1:{name:'Host',status:'yes'},2:{name:'Accepted',status:'yes',approval:'approved',participants:2,invitationToken:'a'},
+    3:{name:'Rejected',status:'no',invitationToken:'b'},4:{name:'Tentative',status:'maybe',invitationToken:'c'},
+    5:{name:'Later',status:'later',responseRecorded:true,invitationToken:'d'},6:{name:'Opened',status:'later',invitationToken:'f'},
+    7:{name:'Pending',status:'yes',approval:'pending',participants:3,invitationToken:'h'},
+    8:{name:'Revoked',status:'yes',invitationToken:'removed'}
+  };
+  await f.cb(1,`g:${e.id}`);let text=f.calls.at(-1).text;
+  assert.match(text,/Total invitations: 7\nPeople accepted: 5/);
+  assert.match(text,/Accepted \(2\)/);assert.match(text,/Awaiting approval \(0\)/);
+  for(const label of ['Rejected','Tentative','Respond later'])assert.ok(text.includes(label+' (1)'));
+  assert.match(text,/Not responded \(2\)\n• Opened\n• Unopened/);assert.doesNotMatch(text,/Revoked|• Host/);
+  e.guests[6]={...e.guests[6],status:'no',responseRecorded:true};await f.cb(1,`g:${e.id}`);
+  text=f.calls.at(-1).text;assert.match(text,/Rejected \(2\)/);assert.match(text,/Not responded \(1\)/);
+});
+
+test('guest list keeps pending approvals and payments out of confirmed acceptance counts',async()=>{
+  const f=fixture(),e=await f.create();e.requireApproval=true;e.starPrice=10;e.askParticipantCount=true;
+  e.guests={2:{name:'Confirmed',status:'yes',approval:'approved',participants:2,payment:{status:'paid'}},3:{name:'Pending',status:'yes'},4:{name:'Unpaid',status:'yes',approval:'approved'}};
+  await f.cb(1,`g:${e.id}`);const text=f.calls.at(-1).text;
+  assert.match(text,/Total invitations: 3\nPeople accepted: 2/);
+  for(const label of ['Accepted','Awaiting approval','Awaiting payment'])assert.ok(text.includes(label+' (1)'));
+});
+
 test('event card offers cancellation before optional deletion and keeps records by default',async()=>{
   const f=fixture(),e=await f.create();
   await f.cb(1,`v:${e.id}`);

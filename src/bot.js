@@ -2,6 +2,7 @@ import {paymentMethod,paidEvent} from './event-payment.js';
 import {invitationMode,claimInvitation,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
 import {isManager,cohostEntries,cohostIds,cohostGuard,cohostLink,createCohostInvite,revokeCohost,claimCohost} from './cohosts.js';
 import {invitationLinksCard,invitationCopyCard} from './invitation-links.js';
+import {appendInvitationHistory} from './invitation-history.js';
 import {startChatCreation,chatCreationMessage,chatCreationCallback} from './chat-creation.js';
 import {manualInstructions,manualReport,manualConfirm} from './manual-payment.js';
 import { priceText } from './pricing.js';
@@ -19,6 +20,7 @@ const paired = buttons => Array.from({ length: Math.ceil(buttons.length / 2) }, 
 const name = u => [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || 'Guest';
 const clean = (s, max = 1000) => typeof s === 'string' ? s.trim().slice(0, max) : '';
 const changeCountLabel = count => `${count} ${count===1?'person':'people'} · Change`;
+const hasRecordedResponse = guest => typeof guest?.responseRecorded==='boolean' ? guest.responseRecorded : guest?.responseVersion>0 || ['yes','no','maybe'].includes(guest?.status);
 const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name', app: 'App', picker: '🗓 Pick date & time', pending: '⏳ Pending invitations' };
 const reply = (...rows) => ({ keyboard: rows.map(row => row.map(text => typeof text === 'string' ? { text } : text)), resize_keyboard: true, is_persistent: true });
 // The authenticated App launcher lives in Telegram's built-in chat menu.
@@ -72,7 +74,9 @@ export class Bot {
     if(s.countOnly){
       if(s.response.participants===participantCount(e,e.guests[id])){this.session(id);return this.card(id,e);}
       if(s.response.status==='yes')return this.saveResponse(id,e,s.response);
-      e.guests[id]={...e.guests[id],participants:s.response.participants,responseVersion:(e.guests[id].responseVersion || 0)+1};
+      const previous=e.guests[id];
+      e.guests[id]={...previous,participants:s.response.participants,responseVersion:(previous.responseVersion || 0)+1};
+      appendInvitationHistory(e,previous.invitationToken,hasRecordedResponse(previous)?'changed':'edited',{actorRole:'guest',actorId:id,userId:id,name:previous.name,...(hasRecordedResponse(previous)?{status:previous.status,previousStatus:previous.status}:{}),participants:s.response.participants,previousParticipants:participantCount(e,previous)});
       this.session(id);return this.card(id,e);
     }
     return this.afterIdentity(id,e,s);
@@ -190,17 +194,19 @@ export class Bot {
     if(e.guests[id]?.payment?.status==='reported')return this.send(id,'The organiser is reviewing your payment. Ask them to resolve or clear the report before changing your response.');
     if (['paid','processing','refund_pending','refund_failed'].includes(e.guests[id]?.payment?.status)) return this.send(id,'Your paid or processing booking cannot be changed. Contact /paysupport to request a refund first.');
     if (responsesClosed(e)) { this.session(id); await this.home(id, 'The response deadline has passed. Your unfinished response was not saved.'); return this.card(id, e); }
-    const previous=e.guests[id];
+    const previous=e.guests[id],hadResponse=hasRecordedResponse(previous);
     if(e.checkIns?.[previous?.ticket]){this.session(id);return this.send(id,'You are already checked in. Contact the organiser to change your invitation.',keyboard([button('Back to event',`v:${e.id}`)]));}
     if(previous?.status===response.status && response.status==='yes' && previous.approval==='approved' && JSON.stringify(previous.answers || [])===JSON.stringify(response.answers || []) && previous.name===response.name && previous.phone===response.phone && previous.comment===response.comment && participantCount(e,previous)===participantCount(e,response)){this.session(id);return this.card(id,e);}
     consumeInvitation(e,id,response,this.db.sessions);
     response.responseVersion=(previous?.responseVersion || 0)+1;
+    response.responseRecorded=true;
     if (response.status === 'yes') {
       response.participants = participantCount(e, response);
       response.approval = requiresApproval(e) ? 'pending' : 'approved';
       if (requiresApproval(e) || paidEvent(e)) delete response.ticket; else response.ticket = randomBytes(6).toString('hex').toUpperCase();
     } else { delete response.approval; delete response.ticket; }
     e.guests[id] = response; this.session(id);
+    appendInvitationHistory(e,response.invitationToken,hadResponse?'changed':'responded',{actorRole:'guest',actorId:id,userId:id,name:response.name,status:response.status,...(hadResponse?{previousStatus:previous.status,previousParticipants:participantCount(e,previous)}:{}),participants:participantCount(e,response)});
     if (response.status === 'yes') applyDefaultReminder(e, id);
     await this.home(id, invitationMode(e)==='tickets' ? requiresApproval(e) ? 'Your ticket request is saved. The organiser will send your ticket after approval and any required payment.' : paidEvent(e) ? 'Booking saved. Complete payment to receive your ticket.' : 'Your ticket is booked.' : response.status === 'yes' && requiresApproval(e) ? '✅ Your acceptance request is saved. The organiser will send your invitation details and ticket after approving your response.' : paidEvent(e) && response.status === 'yes' ? 'Acceptance saved. Complete payment to confirm your ticket.' : '✅ Response saved.');
     await this.notifyManagers(e, `${e.title}\n${response.name}: ${response.approval === 'pending' ? '⏳ Awaiting approval' : labels[response.status]}${response.status === 'yes' ? '\nPeople: ' + participantCount(e, response) : ''}${response.comment ? '\nComment: ' + response.comment : ''}`, response.approval === 'pending' ? keyboard([button('✅ Approve', `approve:${e.id}:${id}:${response.responseVersion || 0}`), button('❌ Reject', `reject:${e.id}:${id}:${response.responseVersion || 0}`)]) : undefined);
@@ -619,11 +625,13 @@ export class Bot {
       await this.clearButtons(id,q.message);
       if(version!==undefined && version!==String(e.guests[id]?.responseVersion || 0))return this.send(id,'This RSVP message is out of date. Open the event in My events for your current response.',keyboard([button('Open event',`v:${e.id}`)]));
       if (responsesClosed(e)) return this.card(id, e);
-      if(arg===e.guests[id]?.status && !(this.db.sessions[id]?.step==='responseChoice' && this.db.sessions[id]?.event===eid))return arg==='later' ? this.pendingInvitations(id) : this.card(id,e);
+      if(arg===e.guests[id]?.status && !(this.db.sessions[id]?.step==='responseChoice' && this.db.sessions[id]?.event===eid) && !(arg==='later' && !hasRecordedResponse(e.guests[id])))return arg==='later' ? this.pendingInvitations(id) : this.card(id,e);
       if (arg === 'later') {
         if(e.checkIns?.[e.guests[id]?.ticket]){this.session(id);return this.send(id,'You are already checked in. Contact the organiser to change your invitation.');}
+        const previous=e.guests[id],hadResponse=hasRecordedResponse(previous);
         consumeInvitation(e,id,{...e.guests[id],status:'later'},this.db.sessions);
-        e.guests[id] = { ...e.guests[id], status: 'later',responseVersion:(e.guests[id]?.responseVersion || 0)+1 }; delete e.guests[id].approval; delete e.guests[id].ticket; this.session(id);
+        e.guests[id] = { ...e.guests[id], status: 'later',responseRecorded:true,responseVersion:(e.guests[id]?.responseVersion || 0)+1 }; delete e.guests[id].approval; delete e.guests[id].ticket; this.session(id);
+        appendInvitationHistory(e,previous.invitationToken,hadResponse?'changed':'responded',{actorRole:'guest',actorId:id,userId:id,name:previous.name,status:'later',...(hadResponse?{previousStatus:previous.status}:{}),participants:participantCount(e,e.guests[id])});
         return this.pendingInvitations(id);
       }
       if(arg==='yes' && invitationMode(e)==='named')return this.beginAcceptance(id,e,q.from);

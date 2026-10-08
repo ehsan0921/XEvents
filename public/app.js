@@ -423,28 +423,31 @@ async function openNamedLinks(event,selectedGuest,options={}){
   try{
     let {event:e}=await api(`events/${event.id}`);
     if(generation!==invitationLinksGeneration)return;
-    if(!isManager(e))throw Error('Only event managers can see invitation links.');
+    if(!isManager(e)){$('invitation-links-list').replaceChildren();if($('invitation-links-dialog').open)$('invitation-links-dialog').close();throw Error('Only event managers can see invitation links.');}
     const search=$('invitation-links-search'),filter=$('invitation-links-filter'),status=$('invitation-links-status');
     search.value='';search.hidden=false;filter.value='all';status.textContent='';
     $('invitation-add').open=options.add===true;$('invitation-add-names').value='';$('invitation-single').open=options.add===true;$('invitation-bulk').open=false;
-    let busy=false,mutationButtons=[],addRequest,singleRequest,focusSelected=true,singleEditor;
+    let busy=false,mutationButtons=[],mutationInputs=[],addRequest,singleRequest,focusSelected=true,singleEditor,panelState=null;
+    const mutationRequests=new Map();
     const current=()=>generation===invitationLinksGeneration;
     const readOnly=()=>e.cancelled || e.group==='Past events';
     const responses=guest=>Array.isArray(guest.responses) ? guest.responses : ['yes','no','maybe','later'].includes(guest.status) ? [{name:guest.name,status:guest.status,participants:guest.participants || 1}] : [];
-    const matches=(guest,value)=>value==='all' || (value==='unanswered' ? !responses(guest).length || responses(guest).some(g=>g.status==='later') : responses(guest).some(g=>g.status===value));
-    const setBusy=value=>{busy=value;$('invitation-add-submit').disabled=value || readOnly();$('invitation-add-names').disabled=value || readOnly();singleEditor?.setDisabled(value || readOnly());for(const b of mutationButtons)b.disabled=value || readOnly() || b.dataset.unavailable==='true';};
+    const matches=(guest,value)=>value==='all' || (value==='revoked' ? guest.revoked===true : !guest.revoked && (value==='unanswered' ? !responses(guest).length || responses(guest).some(g=>g.status==='later') : responses(guest).some(g=>g.status===value && (value!=='later' || g.responded!==false))));
+    const setBusy=value=>{busy=value;$('invitation-add-submit').disabled=value || readOnly();$('invitation-add-names').disabled=value || readOnly();singleEditor?.setDisabled(value || readOnly());for(const b of [...mutationButtons,...mutationInputs])b.disabled=value || readOnly() || b.dataset.unavailable==='true';};
     const updateEvent=value=>{e=value;const index=state.events.findIndex(item=>item.id===e.id);if(index>=0)state.events[index]=e;renderEvents();renderHome();};
-    const refreshList=async()=>{const result=await api(`events/${e.id}`);if(!current())return;if(!isManager(result.event))throw Error('Your event management access has changed.');updateEvent(result.event);render();};
+    const refreshList=async()=>{const result=await api(`events/${e.id}`);if(!current())return;if(!isManager(result.event)){$('invitation-links-list').replaceChildren();$('invitation-links-dialog').close();notice('Your event management access has changed.');return;}updateEvent(result.event);render();};
+    const mutationRequest=(operation,payload)=>{const key=operation+':'+payload.token,value=JSON.stringify(payload),previous=mutationRequests.get(key);if(previous?.value===value)return {...payload,requestId:previous.id};const id=crypto.randomUUID();mutationRequests.set(key,{value,id});return {...payload,requestId:id};};
     const mutate=async(operation,payload,guestName='Guest',source='bulk')=>{
       if(busy || !current())return;
       setBusy(true);status.textContent='Saving…';
       try{
         const result=await api(`events/${e.id}/invitations/${operation}`,{...payload,version:e.invitationsVersion});
         if(!current())return;
-        updateEvent(result.event);
+        updateEvent(result.event);panelState=null;
         if(operation==='add'){if(source==='bulk'){$('invitation-add-names').value='';$('invitation-add').open=false;addRequest=null;}else singleRequest=null;}
         render();
-        status.textContent=operation==='add' ? 'Guests added. Their links are ready to share.' : result.alreadyRemoved ? guestName+'’s invitation was already removed.' : payload.notify ? result.notifyCount ? guestName+'’s invitation removed. Guest notified.' : guestName+'’s invitation removed. No Telegram account was available to notify.' : guestName+'’s invitation removed silently.';
+        const done={edit:'Invitation updated.',response:'Response updated.',revoke:'Invitation revoked. Its link and ticket are disabled.',delete:'Invitation deleted.'};
+        status.textContent=operation==='add' ? 'Guests added. Their links are ready to share.' : (done[operation] || 'Invitation updated.')+(payload.notify ? result.notifyCount ? ' Guest notified.' : ' No Telegram notification was sent.' : ['response','revoke'].includes(operation) ? ' Guest not notified.' : '');
         return true;
       }catch(error){
         if(!current())return;
@@ -457,46 +460,96 @@ async function openNamedLinks(event,selectedGuest,options={}){
     const render=()=>{
       if(!current())return;
       $('invitation-links-note').textContent=oneTimeInviteEnabled(e) ? 'Send each link only to its named guest. Accept, Decline or Maybe locks it to that guest; Respond later does not. The same guest can change their RSVP.' : 'These links can be used by more than one guest. Each response is shown below.';
-      const list=$('invitation-links-list');list.replaceChildren();mutationButtons=[];
-      const guests=[...(e.invitees || [])],selected=selectedGuest && guests.find(guest=>guest.token===selectedGuest || (()=>{try{return new URL(guest.url).searchParams.get('start')==='i_'+e.id+'_'+selectedGuest;}catch{return false;}})());
+      const list=$('invitation-links-list');list.replaceChildren();mutationButtons=[];mutationInputs=[];
+      const guests=[...(e.invitees || []),...(e.revokedInvitees || []).map(guest=>({...guest,revoked:true}))],selected=selectedGuest && guests.find(guest=>guest.token===selectedGuest || (()=>{try{return new URL(guest.url).searchParams.get('start')==='i_'+e.id+'_'+selectedGuest;}catch{return false;}})());
       if(selected){guests.splice(guests.indexOf(selected),1);guests.unshift(selected);}
       else if(selectedGuest)status.textContent='That invitation is unavailable. Choose a guest below.';
-      const replies=guests.flatMap(responses),finalReplies=replies.filter(g=>['yes','no','maybe'].includes(g.status));
-      $('invitation-links-summary').textContent=`${guests.length} invitations · ${finalReplies.length} responses · ${replies.filter(g=>g.status==='yes').reduce((sum,g)=>sum+(g.participants || 1),0)} people accepted`;
+      const activeGuests=guests.filter(guest=>!guest.revoked),replies=activeGuests.flatMap(responses),finalReplies=replies.filter(g=>['yes','no','maybe'].includes(g.status)),revokedCount=guests.length-activeGuests.length;
+      $('invitation-links-summary').textContent=`${activeGuests.length} invitations · ${finalReplies.length} responses · ${replies.filter(g=>g.status==='yes').reduce((sum,g)=>sum+(g.participants || 1),0)} people accepted${revokedCount?' · '+revokedCount+' revoked':''}`;
       const selection=filter.value || 'all';filter.replaceChildren();
-      for(const [value,label] of [['all','All'],['yes','Accepted'],['no','Declined'],['maybe','Maybe'],['later','Later'],['unanswered','Unanswered']]){const option=document.createElement('option');option.value=value;option.textContent=label+' ('+guests.filter(guest=>matches(guest,value)).length+')';filter.append(option);}filter.value=selection;
-      const rows=[];let selectedButton;
+      for(const [value,label] of [['all','All'],['yes','Accepted'],['no','Declined'],['maybe','Maybe'],['later','Later'],['unanswered','Unanswered'],['revoked','Revoked']]){const option=document.createElement('option');option.value=value;option.textContent=label+' ('+guests.filter(guest=>matches(guest,value)).length+')';filter.append(option);}filter.value=selection;
+      const rows=[];let selectedButton,panelFocus;
       for(const guest of guests){
       const count=guest.participants || 1,askCount=guest.participantMode==='ask' || (!guest.participants && e.askParticipantCount),countLabel=askCount ? 'Guest chooses attendee count' : count+' '+(count===1?'attendee':'attendees'),countRule=!askCount && guest.participants ? guest.participantMode==='confirm' ? ' · Confirm count on acceptance' : guest.participantMode==='fixed' ? ' · Fixed count' : ' · Guest can change count' : '';
-      const replyList=responses(guest),responseLabel=replyList.length>1 ? replyList.length+' responses' : {yes:'Accepted',no:'Declined',maybe:'Maybe',later:'Awaiting RSVP'}[replyList[0]?.status] || 'Not opened';
-      const linkLabel=oneTimeInviteEnabled(e) ? guest.claimed ? 'Locked to one guest' : 'One-time link' : 'Reusable link';
-      const text=inviteText(e,guest)+'\n\n'+guest.url,row=element('article','','panel invitation-entry'+(guest===selected?' invitation-selected':''));
+      const replyList=responses(guest),responseStates=[...new Set(replyList.map(reply=>reply.responded===false?'unanswered':reply.status))],responseLabel=guest.revoked ? 'Revoked' : responseStates.length>1 ? 'Mixed responses' : {yes:'Accepted',no:'Declined',maybe:'Maybe',later:'Respond later',unanswered:'Awaiting response'}[responseStates[0]] || 'Not opened';
+      const linkLabel=guest.revoked ? 'Link disabled' : oneTimeInviteEnabled(e) ? guest.claimed ? 'Locked to one guest' : 'One-time link' : 'Reusable link';
+      const text=inviteText(e,guest)+'\n\n'+guest.url,row=element('article','','panel invitation-entry'+(guest===selected?' invitation-selected':'')+(guest.revoked?' invitation-revoked':''));row.dataset.token=guest.token || '';
       const preview=element('details','','invitation-preview'),fullText=document.createElement('textarea'),linkText=document.createElement('input');fullText.value=text;fullText.readOnly=true;fullText.rows=9;fullText.setAttribute('aria-label','Full invitation for '+guest.name);linkText.value=guest.url;linkText.readOnly=true;linkText.setAttribute('aria-label','Personal link for '+guest.name);preview.append(element('summary','Preview invitation'),fullText,linkText);
       const copyInvite=async()=>{try{await navigator.clipboard.writeText(text);if(generation===invitationLinksGeneration)$('invitation-links-status').textContent='Invitation copied for '+guest.name+'.';}catch{if(generation!==invitationLinksGeneration)return;preview.open=true;fullText.focus();fullText.select();$('invitation-links-status').textContent='Could not copy. Select and copy the full invitation shown for '+guest.name+'.';}};
       const copyLink=async()=>{try{await navigator.clipboard.writeText(guest.url);if(generation===invitationLinksGeneration)$('invitation-links-status').textContent='Link copied for '+guest.name+'.';}catch{if(generation!==invitationLinksGeneration)return;preview.open=true;linkText.focus();linkText.select();$('invitation-links-status').textContent='Could not copy. Select and copy the personal link shown for '+guest.name+'.';}};
-      const copy=action(guest.name,copyInvite,'primary invitation-copy');copy.setAttribute('aria-label','Copy invitation for '+guest.name);
-      const actions=element('div','','event-actions invitation-actions');actions.append(action('Share invite',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(guest.url)}&text=${encodeURIComponent(inviteText(e,guest))}`)),action('Copy invite',copyInvite),action('Copy link',copyLink));
-      const invitationState=element('p','','small muted');invitationState.append(element(askCount?'span':'strong',countLabel),element('span',countRule+' · '+responseLabel+' · '+linkLabel));row.append(copy,invitationState);
+      const copy=action(guest.name,copyInvite,'primary invitation-copy');copy.setAttribute('aria-label',guest.revoked ? guest.name+' · invitation revoked' : 'Copy invitation for '+guest.name);copy.disabled=guest.revoked===true;
+      const actions=element('div','','event-actions invitation-actions');const copyInviteButton=action('Copy invite',copyInvite),copyLinkButton=action('Copy link',copyLink);copyInviteButton.disabled=copyLinkButton.disabled=guest.revoked===true;if(!guest.revoked)actions.append(copyInviteButton,copyLinkButton);
+      const invitationState=element('p','','small muted');invitationState.append(element(askCount?'span':'strong',countLabel),element('span',countRule+' · '+linkLabel));
+      const currentStatus=element('div','','invitation-current-status'),statusBadge=element('strong',responseLabel+(replyList.length>1?' · '+replyList.length+' guests':''),'invitation-status');statusBadge.dataset.status=guest.revoked?'revoked':responseStates.length>1?'mixed':responseStates[0] || 'unopened';statusBadge.setAttribute('aria-label','Current response: '+statusBadge.textContent);currentStatus.append(element('span','Current response','small muted'),statusBadge);
+      const responseDates=[...(guest.history || []).filter(entry=>['responded','changed'].includes(entry.type)).map(entry=>entry.at),...replyList.map(reply=>reply.respondedAt)].filter(value=>typeof value==='string' && Number.isFinite(new Date(value).getTime())).sort((a,b)=>new Date(a)-new Date(b));
+      if(responseDates.length){const instant=new Date(responseDates.at(-1)),time=element('time','Last response: '+new Intl.DateTimeFormat(undefined,{timeZone:selectedZone(),dateStyle:'medium',timeStyle:'short'}).format(instant),'small muted invitation-last-response');time.setAttribute('datetime',instant.toISOString());currentStatus.append(time);}row.append(copy,currentStatus,invitationState);
       if(replyList.length){
         const replyDetails=element('details','','invitation-responses');replyDetails.open=replyList.length===1;
         replyDetails.append(element('summary',replyList.length>1 ? 'View '+replyList.length+' responses' : 'Response details'));
-        for(const g of replyList){const label={yes:'Accepted',no:'Declined',maybe:'Maybe',later:'Later'}[g.status] || g.status;replyDetails.append(element('p',`${g.name || guest.name}: ${label}${g.status==='yes'?' · '+(g.participants || 1)+' '+((g.participants || 1)===1?'person':'people'):''}${g.status==='yes' && g.paymentStatus && g.paymentStatus!=='paid'?' · Awaiting payment':''}${g.comment?'\n'+g.comment:''}`,'small invitation-response'));}
+        for(const g of replyList){const label=g.responded===false?'Awaiting response':{yes:'Accepted',no:'Declined',maybe:'Maybe',later:'Respond later'}[g.status] || g.status,line=element('p',`${g.name || guest.name}: ${label}${g.status==='yes'?' · '+(g.participants || 1)+' '+((g.participants || 1)===1?'person':'people'):''}${g.status==='yes' && g.paymentStatus && g.paymentStatus!=='paid'?' · Awaiting payment':''}${g.comment?'\n'+g.comment:''}`,'small invitation-response');if(typeof g.respondedAt==='string' && Number.isFinite(new Date(g.respondedAt).getTime())){const instant=new Date(g.respondedAt),time=element('time','Last response: '+new Intl.DateTimeFormat(undefined,{timeZone:selectedZone(),dateStyle:'medium',timeStyle:'short'}).format(instant),'small muted');time.setAttribute('datetime',instant.toISOString());line.append(time);}replyDetails.append(line);}
         row.append(replyDetails);
       }
-      const removePanel=element('div','','invitation-remove');removePanel.hidden=true;
-      const notify=action('Notify guest',()=>mutate('remove',{token:guest.token,notify:true,confirm:true},guest.name));notify.dataset.unavailable=String(guest.canNotify===false);
-      const silent=action('Remove silently',()=>mutate('remove',{token:guest.token,notify:false,confirm:true},guest.name));
-      const keep=action('Keep invite',()=>{removePanel.hidden=true;});
-      const remove=action('Remove invite',()=>{if(busy)return;for(const item of rows)item.removePanel.hidden=true;removePanel.hidden=false;keep.focus();},'text-button invitation-remove-button');
-      remove.setAttribute('aria-label','Remove invite for '+guest.name);
-      if(guest===selected && options.revoke && focusSelected)removePanel.hidden=false;
-      const removalActions=element('div','','event-actions');removalActions.append(notify,silent,keep);
-      removePanel.append(element('p',`Remove ${guest.name}’s invite? Its link and ticket will stop working.${replyList.length>1?' All responses using this link will be removed.':''}${guest.hasPayments?' Payment records remain; handle refunds separately in Payments.':''}${guest.canNotify===false?' No Telegram account is available to notify yet.':''}`,'small'),removalActions);
-      mutationButtons.push(remove,notify,silent,keep);row.append(actions,preview,remove,removePanel);list.append(row);rows.push({row,guest,removePanel,name:[guest.name,...replyList.map(g=>g.name || '')].join(' ').toLocaleLowerCase()});if(guest===selected)selectedButton=options.revoke?keep:copy;
+      const more=element('details','','event-more invitation-more'),toggle=element('summary','⋯');toggle.setAttribute('aria-label','More options for '+guest.name);const menu=element('div','','event-more-panel');more.append(toggle,menu);
+      const panel=element('section','','invitation-management');panel.hidden=true;panel.setAttribute('aria-label','Manage invitation for '+guest.name);
+      const showPanel=kind=>{if(busy)return;panelState={token:guest.token,kind,focus:true};render();};
+      const menuAction=(label,kind,unavailable=false,danger=false)=>{const button=action(label,()=>showPanel(kind),danger?'secondary invitation-danger':'secondary');button.dataset.unavailable=String(unavailable);mutationButtons.push(button);menu.append(button);return button;};
+      const editableReplies=replyList.filter(reply=>Number.isSafeInteger(reply.id) && reply.id>0);
+      if(!guest.revoked){menu.append(action('📤 Share invite',()=>{more.open=false;openTelegram(`https://t.me/share/url?url=${encodeURIComponent(guest.url)}&text=${encodeURIComponent(inviteText(e,guest))}`);}));menuAction('✏️ Edit invite','edit');menuAction('↻ Change response','response',!editableReplies.length);if(!editableReplies.length)menu.append(element('p','The guest must open their invitation first.','small muted invitation-menu-note'));menuAction('🚫 Revoke invite','revoke',false,true);}
+      else menuAction('🗑 Delete invite','delete',false,true);
+      menu.append(action('🕘 See history',()=>showPanel('history')));
+      if(guest===selected && options.revoke && focusSelected && !guest.revoked)panelState={token:guest.token,kind:'revoke',focus:true};
+      if(panelState && panelState.token===guest.token && (guest.revoked && !['history','delete'].includes(panelState.kind) || panelState.kind==='response' && !editableReplies.length))panelState=null;
+      if(panelState && panelState.token===guest.token){
+        const kind=panelState.kind,draft=panelState.draft ||= {};panel.hidden=false;panel.dataset.kind=kind;
+        const close=action('Back',()=>{panelState=null;render();});
+        const title={edit:'Edit invite',response:'Change response',revoke:'Revoke invitation?',delete:'Delete invitation?',history:'Invitation history'}[kind] || 'Invitation',heading=element('h3',title);heading.tabIndex=-1;panel.append(heading);
+        const field=(label,type,key,value)=>{const input=document.createElement(type==='select'?'select':'input');if(type!=='select')input.type=type;input.dataset.field=key;input.value=draft[key] ?? value;const wrapper=element('label',label);wrapper.append(input);panel.append(wrapper);mutationInputs.push(input);return {input,wrapper};};
+        const selectValues=(input,values,initial)=>{for(const [value,label] of values){const option=element('option',label);option.value=String(value);input.append(option);}input.value=String(initial);};
+        const checkbox=(label,key,description='',unavailable=false)=>{const input=document.createElement('input');input.type='checkbox';input.dataset.field=key;input.checked=draft[key]===true;input.dataset.unavailable=String(unavailable);const wrapper=element('label','','check-option'),caption=element('span',label);if(description)caption.append(element('span',description,'check-note'));wrapper.append(input,caption);panel.append(wrapper);mutationInputs.push(input);input.onchange=()=>{draft[key]=input.checked;};return input;};
+        const footer=element('div','','event-actions invitation-panel-actions');
+        if(kind==='edit'){
+          const {input:name}=field('Guest name','text','name',guest.name);name.maxLength=100;name.autocomplete='off';name.oninput=()=>{draft.name=name.value;};
+          const modeValue=guest.participantMode==='ask'?'ask':['confirm','fixed'].includes(guest.participantMode)?guest.participantMode:guest.participants?'editable':'one';
+          const {input:mode}=field('Attendee setting','select','mode',modeValue);selectValues(mode,[['one','One person'],['editable','Set a count · guest can change'],['ask','Ask guest how many'],['confirm','Ask guest to confirm count'],['fixed','Fixed count · no changes']],draft.mode ?? modeValue);
+          const {input:count,wrapper:countField}=field('Number of people','select','count',guest.participants || 1);selectValues(count,Array.from({length:10},(_,i)=>[i+1,String(i+1)]),draft.count ?? guest.participants ?? 1);
+          const update=()=>{draft.mode=mode.value;draft.count=count.value;countField.hidden=!['editable','confirm','fixed'].includes(mode.value);};mode.onchange=count.onchange=update;update();
+          if(guest.hasPayments)panel.append(element('p','Paid tickets may prevent attendee changes. Manage refunds in Payments.','small muted'));
+          const save=action('Save invite',async()=>{const value=name.value.trim();if(!value || value.length>100 || /[=\r\n]/.test(value)){status.textContent='Enter a name of up to 100 characters, without = or line breaks.';name.focus();return;}if((e.invitees || []).some(invite=>invite.token!==guest.token && invite.name.toLocaleLowerCase()===value.toLocaleLowerCase())){status.textContent='That name is already in the list.';name.focus();return;}const participantMode={one:'default',editable:'preset',ask:'ask',confirm:'confirm',fixed:'fixed'}[mode.value],participants=['one','ask'].includes(mode.value)?null:Number(count.value);if(!participantMode || participants!==null && (!Number.isInteger(participants) || participants<1 || participants>10)){status.textContent='Choose a count from 1 to 10.';return;}draft.name=name.value;await mutate('edit',mutationRequest('edit',{token:guest.token,name:value,participants,participantMode}),guest.name);},'primary');mutationButtons.push(save);footer.append(save,close);panelFocus=name;
+        }else if(kind==='response'){
+          const initial=editableReplies.length===1?editableReplies[0].id:'';
+          const {input:person}=field('Guest response','select','userId',initial);selectValues(person,[['','Choose a guest'],...editableReplies.map(reply=>[reply.id,reply.name || guest.name])],draft.userId ?? initial);
+          const responseValue=draft.status || editableReplies.find(reply=>String(reply.id)===person.value)?.status || 'yes';
+          const {input:answer}=field('Response','select','status',responseValue);selectValues(answer,[['yes','Accepted'],['no','Declined'],['maybe','Maybe'],['later','Respond later']],responseValue);
+          const selectedReply=editableReplies.find(reply=>String(reply.id)===person.value),responseCount=draft.count || selectedReply?.selectedParticipants || selectedReply?.participants || guest.participants || 1;
+          const {input:count,wrapper:countField}=field('Number of people','select','count',responseCount);selectValues(count,Array.from({length:10},(_,i)=>[i+1,String(i+1)]),responseCount);count.dataset.unavailable=String(guest.participantMode==='fixed' || !guest.participants && !guest.participantMode);
+          const update=()=>{draft.userId=person.value;draft.status=answer.value;draft.count=count.value;countField.hidden=answer.value!=='yes';};
+          person.onchange=()=>{const reply=editableReplies.find(item=>String(item.id)===person.value);answer.value=reply?.status || 'yes';count.value=String(reply?.selectedParticipants || reply?.participants || guest.participants || 1);update();};answer.onchange=count.onchange=update;update();
+          if(guest.participantMode==='fixed')panel.append(element('p','The invitation’s attendee count is fixed.','small muted'));else if(!guest.participants && !guest.participantMode)panel.append(element('p','This invitation is for one person. Edit its attendee setting to change that.','small muted'));
+          if(guest.hasPayments)panel.append(element('p','Payment or check-in records may prevent this response change. Manage refunds in Payments.','small muted'));
+          const notify=checkbox('Notify guest','notify','Send the updated response to their Telegram chat.',guest.canNotify===false);
+          const save=action('Save response',async()=>{const reply=editableReplies.find(item=>String(item.id)===person.value),participants=Number(count.value);if(!reply){status.textContent='Choose the guest whose response you want to change.';person.focus();return;}if(answer.value==='yes' && (!Number.isInteger(participants) || participants<1 || participants>10)){status.textContent='Choose a count from 1 to 10.';return;}await mutate('response',mutationRequest('response',{token:guest.token,userId:reply.id,status:answer.value,...(answer.value==='yes'?{participants}:{}),notify:notify.checked && guest.canNotify!==false}),guest.name);},'primary');mutationButtons.push(save);footer.append(save,close);panelFocus=person;
+        }else if(kind==='revoke'){
+          panel.append(element('p',`Revoke ${guest.name}’s invitation? Its link and ticket will stop working.${replyList.length>1?' This affects every response using this link.':''} You can still see its history in Revoked invitations.`,'small'));
+          const notify=checkbox('Notify guest','notify',guest.canNotify===false?'No Telegram account is available to notify yet.':'Send a revocation message in Telegram.',guest.canNotify===false),remove=checkbox('Delete after revoking','deleteAfter','Remove it from the invitation list. Audit records are retained. You’ll confirm next.');
+          if(guest.hasPayments)panel.append(element('p','Payment records remain. Handle refunds separately in Payments.','small muted'));
+          const revoke=action('Revoke invite',async()=>{const deleteAfter=remove.checked,done=await mutate('revoke',mutationRequest('revoke',{token:guest.token,notify:notify.checked && guest.canNotify!==false,confirm:true}),guest.name);if(done && deleteAfter && current()){panelState={token:guest.token,kind:'delete',focus:true};filter.value='revoked';render();status.textContent='Invitation revoked. Confirm deletion below.';}},'danger-button');mutationButtons.push(revoke);footer.append(revoke,close);panelFocus=close;
+        }else if(kind==='delete'){
+          panel.append(element('p',`Delete ${guest.name}’s revoked invitation from this list? This cannot be undone here. Its link stays disabled; audit records are retained.`,'small'));
+          const remove=action('Delete permanently',()=>mutate('delete',mutationRequest('delete',{token:guest.token,confirm:true}),guest.name),'danger-button');mutationButtons.push(remove);footer.append(remove,close);panelFocus=close;
+        }else if(kind==='history'){
+          const history=Array.isArray(guest.history)?guest.history:[],labels={created:'Invite created',opened:'Invitation opened',responded:'Response received',changed:'Response changed',edited:'Invite edited',revoked:'Invitation revoked',deleted:'Invitation deleted'},statuses={yes:'Accepted',no:'Declined',maybe:'Maybe',later:'Respond later'},modes={default:'One person',preset:'Guest can change count',ask:'Guest chooses count',confirm:'Guest confirms count',fixed:'Fixed count'};
+          panel.append(element('p','Times shown in '+selectedZone()+'.','small muted'));
+          if(!history.some(entry=>entry.type==='created'))panel.append(element('p',history.length?'Earlier activity may not be recorded. History tracking starts with this update.':'No recorded history yet. Earlier activity isn’t available.','small muted'));
+          const timeline=element('ol','','invitation-history');
+          for(const entry of history){const item=element('li'),title=labels[entry.type] || 'Invitation updated',details=[];if(entry.name)details.push(entry.previousName && entry.previousName!==entry.name?entry.previousName+' → '+entry.name:entry.name);if(entry.status)details.push(entry.previousStatus && entry.previousStatus!==entry.status?(statuses[entry.previousStatus] || entry.previousStatus)+' → '+(statuses[entry.status] || entry.status):statuses[entry.status] || entry.status);if(entry.participants)details.push((entry.previousParticipants && entry.previousParticipants!==entry.participants?entry.previousParticipants+' → ':'')+entry.participants+' '+(entry.participants===1?'person':'people'));if(entry.participantMode)details.push(entry.previousParticipantMode && entry.previousParticipantMode!==entry.participantMode?(modes[entry.previousParticipantMode] || 'Previous attendee setting')+' → '+(modes[entry.participantMode] || 'Attendee setting updated'):modes[entry.participantMode] || 'Attendee setting updated');if(entry.actorRole==='organiser')details.push('By organiser');if(entry.notify===true)details.push('Notification requested');else if(entry.notify===false)details.push('Guest not notified');item.append(element('strong',title));if(details.length)item.append(element('p',details.join(' · '),'small'));const instant=new Date(typeof entry.at==='string'?entry.at:NaN),time=element('time',Number.isFinite(instant.getTime())?new Intl.DateTimeFormat(undefined,{timeZone:selectedZone(),dateStyle:'medium',timeStyle:'short'}).format(instant):'Date unavailable','small muted');if(Number.isFinite(instant.getTime()))time.setAttribute('datetime',instant.toISOString());item.append(time);timeline.append(item);}panel.append(timeline);footer.append(close);panelFocus=heading;
+        }
+        panel.append(footer);if(!panelState.focus)panelFocus=null;panelState.focus=false;
+      }
+      row.append(more,actions,...(guest.revoked?[]:[preview]),panel);list.append(row);rows.push({row,guest,name:[guest.name,...replyList.map(g=>g.name || '')].join(' ').toLocaleLowerCase()});if(guest===selected)selectedButton=copy;
       }
       const applyFilter=()=>{const term=search.value.trim().toLocaleLowerCase();for(const item of rows)item.row.hidden=!item.name.includes(term) || !matches(item.guest,filter.value);$('invitation-links-empty').hidden=rows.some(item=>!item.row.hidden);};
       search.oninput=applyFilter;filter.onchange=applyFilter;applyFilter();setBusy(busy);
-      if(focusSelected && selectedButton && !rows.find(item=>item.guest===selected)?.row.hidden){selectedButton.focus();selectedButton.scrollIntoView?.({block:'nearest'});}focusSelected=false;
+      if(panelFocus){panelFocus.focus();panelFocus.scrollIntoView?.({block:'nearest'});}else if(focusSelected && selectedButton && !rows.find(item=>item.guest===selected)?.row.hidden){selectedButton.focus();selectedButton.scrollIntoView?.({block:'nearest'});}focusSelected=false;
     };
     singleEditor=setupGuestEditor('invitation-single',async guest=>{
       validateGuestAddition(guest.name,(e.invitees || []).map(invite=>invite.name));

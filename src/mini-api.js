@@ -1,9 +1,9 @@
-import {parseEventPayment,paymentMethod} from './event-payment.js';
+import {parseEventPayment,paymentMethod,paidEvent} from './event-payment.js';
 import {issueTicket,verifyTicket} from './tickets.js';
 import {profileFields,profilePreference,profilePhotoApi} from './profile.js';
 import {readOnlinePricing} from './exchange.js';
 import {invitationMode,invitationSettings,oneTimeInvites,invitationAvailable,reconcileInvitationClaims} from './invitations.js';
-import {managedInvitations,invitationsVersion,addInvitations,removeInvitation} from './invitation-management.js';
+import {managedInvitations,revokedInvitations,invitationsVersion,addInvitations,removeInvitation,editInvitation,changeInvitationResponse,revokeInvitation,deleteInvitation} from './invitation-management.js';
 import {isManager,cohostEntries,cohostLink,cohostVersion,createCohostInvite,revokeCohost} from './cohosts.js';
 import { authenticate } from './mini-auth.js';
 import { mayUseTestApp, testAccessMessage, TestAccessError, whitelistStatus, applyWhitelistChange } from './test-access.js';
@@ -88,7 +88,7 @@ export function publicEvent(e, id, username) {
     askPhone:asksPhone(e),askComments:asksComments(e),
     ...(manager ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,approval:g.status==='yes' ? requiresApproval(e) ? g.approval || 'pending' : 'approved' : null,confirmed:confirmed(e,g),participants:g.status==='yes'?participantCount(e,g):0,paymentStatus:g.payment?.status || null})),...Object.entries(e.invitees || {}).filter(([token])=>!Object.values(e.guests).some(g=>g.invitationToken===token)).map(([,g])=>({id:null,name:g.name,status:'unopened',participants:0,confirmed:false}))]} : {}),
     inviteMessage:e.inviteMessage || '',qrEnabled:e.qrEnabled!==false,oneTimeInvite:oneTimeInvites(e),
-    ...(manager ? {invitees:managedInvitations(e,username),invitationsVersion:invitationsVersion(e),cohosts,cohost:cohosts[0] || null} : {}),
+    ...(manager ? {invitees:managedInvitations(e,username),revokedInvitees:revokedInvitations(e,username),invitationsVersion:invitationsVersion(e),cohosts,cohost:cohosts[0] || null} : {}),
     ...(owner ? {cohostLinks:entries.map(entry=>({id:entry.id,label:entry.label,status:entry.status,createdAt:entry.createdAt,cohost:entry.cohost,url:cohostLink(e,username,entry.id),...(entry.revokedAt ? {revokedAt:entry.revokedAt}:{})})),cohostInviteUrl:cohostLink(e,username),cohostVersion:cohostVersion(e)} : {}),
     id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
@@ -249,11 +249,18 @@ async function miniApiForUser(request, env, user) {
     if (path === '/api/preview') return respond(schedule(input));
     const value = await mutateState(env, async (data, bot) => {
       const id = user.id;
-      const invitationMatch=path.match(/^\/api\/events\/([a-f0-9]{16})\/invitations\/(add|remove)$/);
+      const invitationMatch=path.match(/^\/api\/events\/([a-f0-9]{16})\/invitations\/(add|remove|edit|response|revoke|delete)$/);
       if(invitationMatch){
-        const e=data.events[invitationMatch[1]];
-        const result=invitationMatch[2]==='add' ? addInvitations(e,id,input) : removeInvitation(e,id,input,data.sessions);
-        for(const uid of result.recipients || [])await bot.send(uid,`Your invitation to ${e.title} has been removed by the organiser.`);
+        const e=data.events[invitationMatch[1]],action=invitationMatch[2];
+        const result=action==='add' ? addInvitations(e,id,input) : action==='remove' ? removeInvitation(e,id,input,data.sessions) : action==='edit' ? editInvitation(e,id,input,data.sessions) : action==='response' ? changeInvitationResponse(e,id,input,data.sessions) : action==='revoke' ? revokeInvitation(e,id,input,data.sessions) : deleteInvitation(e,id,input);
+        const labels={yes:'Accepted',no:'Declined',maybe:'Maybe',later:'Respond later'};
+        for(const uid of result.recipients || []){
+          if(action==='response'){
+            const count=participantCount(e,e.guests[uid]);
+            const attendance=result.status==='yes'?`\n${count} ${count===1?'person':'people'}${paidEvent(e)&&!confirmed(e,e.guests[uid])?' · Payment required to confirm your place.':''}`:'';
+            await bot.send(uid,`${e.title}\nThe organiser recorded your response: ${labels[result.status]}.${attendance}`,{inline_keyboard:[[{text:'Open event',callback_data:`v:${e.id}`}]]});
+          }else await bot.send(uid,`Your invitation to ${e.title} has been ${action==='remove'?'removed':'revoked'} by the organiser.`);
+        }
         const {recipients,...publicResult}=result;
         return {...publicResult,event:publicEvent(e,id,env.BOT_USERNAME)};
       }
@@ -354,7 +361,7 @@ async function miniApiForUser(request, env, user) {
         if (!isManager(e,id) || e.cancelled) throw new InputError('Only an organiser can change an active event.');
         if(e.owner!==id)cohostSettings(input,e);
         if(input.guestNames!==undefined && input.invitationsVersion!==undefined && input.invitationsVersion!==invitationsVersion(e))throw new InputError('Invitations or responses have changed. Refresh the event before editing the guest list.');
-        const inviteSettings=invitationSettings(input,e);
+        const inviteSettings=invitationSettings(input,e,Date.now(),id);
         if(input.title!==undefined)e.title=field(input.title,'Event name',100,true);
         if(input.location!==undefined)e.location=field(input.location,'Location',300);
         if(input.description!==undefined)e.description=field(input.description,'Description',1500);

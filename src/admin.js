@@ -17,6 +17,11 @@ export async function rememberUser(env, user) {
   await env.DB.prepare("INSERT INTO records(kind,id,data) VALUES ('users',?,?) ON CONFLICT(kind,id) DO UPDATE SET data=json_set(excluded.data,'$.firstSeen',coalesce(json_extract(records.data,'$.firstSeen'),json_extract(excluded.data,'$.firstSeen')))").bind(String(user.id), JSON.stringify(profile)).run();
 }
 
+// Match the admin directory, including users from before first-seen tracking.
+export function adminUserCount(rows) {
+  return new Set(rows.map(row => Number(row.id)).filter(id => Number.isSafeInteger(id) && id > 0)).size;
+}
+
 // Read-only counts: never infer a registration date from a guest's RSVP or last visit.
 export function adminAnalytics(rows, { days = '30', zone = 'UTC', now = Date.now() } = {}) {
   days = Number(days);

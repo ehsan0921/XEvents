@@ -73,6 +73,7 @@ async function checkTestAccess() {
     assert.equal(analyticsResponse.status,200);assert.equal(analyticsResponse.headers.get('Cache-Control'),'no-store');
     const analytics=await analyticsResponse.json();
     assert.equal(analytics.daily.length,7);assert.equal(analytics.totals.users,2);
+    assert.equal(analytics.totalUsers,2);
     assert.doesNotMatch(JSON.stringify(analytics),/Access tester|firstName|username|phone|"id"/);
     // Hold delivery so command retries can be checked against the exact durable outbox.
     await db.prepare("INSERT INTO delivery_lease(id,owner,expires) VALUES (1,'access-fixture',unixepoch()+3600)").run();
@@ -80,6 +81,10 @@ async function checkTestAccess() {
     const event={id:eventId,owner:admin,title:'Private access fixture',when:'Future test event',startsAt:'2099-12-05T18:00:00Z',timezone:'UTC',location:'Fictional venue',description:'',invitationMode:'named',oneTimeInvite:true,guests:{[blockedUser]:{name:'Existing tester',status:'yes',invitationToken:inviteToken}},invitees:{[inviteToken]:{name:'Named tester',participants:1,participantMode:'preset'}},permissions:{guestList:true,uploadMedia:true,viewMedia:true},banner:'access-banner',media:[{id:mediaId,fileId:'access-image',type:'photo',name:'fictional.jpg',user:blockedUser}],cohostLinks:[{id:'7100000000000002',token:cohostToken,label:'Test co-host',status:'pending',cohost:null,createdAt:'2026-01-01T00:00:00Z'}]};
     await db.prepare("INSERT INTO records(kind,id,data) VALUES ('events',?,?)").bind(eventId,JSON.stringify(event)).run();
     await db.prepare("INSERT INTO records(kind,id,data) VALUES ('preferences',?,?)").bind(String(blockedUser),JSON.stringify({profilePhoto:'access-profile',timezone:'UTC'})).run();
+    const beforeAnalytics=await records();
+    const totalsByRange=await Promise.all([7,30,90].map(async days=>(await (await api('admin/analytics?days='+days,admin)).json()).totalUsers));
+    assert.deepEqual(totalsByRange,[3,3,3],'All-time total includes legacy owners/guests and is independent of date range.');
+    assert.deepEqual(await records(),beforeAnalytics,'Analytics must not mutate user/event records.');
     const beforeDenied=await records(),beforeCalls=calls.length;
     for(const [path,method,input] of [
       ['bootstrap','GET'],['explore?timezone=UTC','GET'],['profile/photo','GET'],['profile/photo','DELETE'],['profile/photo','POST',{}],['branding/icon','GET'],

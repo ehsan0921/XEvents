@@ -778,6 +778,7 @@ async function loadAdminAnalytics() {
   try {
     const data = await api('admin/analytics?days=' + encodeURIComponent($('analytics-range').value) + '&timezone=' + encodeURIComponent(zone));
     if (sequence !== analyticsSequence) return;
+    $('analytics-total-users').textContent = new Intl.NumberFormat().format(data.totalUsers);
     $('analytics-summary').textContent = `${data.totals.users} new users · ${data.totals.events} events created · ${data.days} days`;
     renderActivityChart($('analytics-users-chart'), data.daily, 'users', 'New users');
     renderActivityChart($('analytics-events-chart'), data.daily, 'events', 'Events created');

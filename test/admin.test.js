@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adminOverview, isSuperAdmin, adminAnalytics } from '../src/admin.js';
+import { adminOverview, isSuperAdmin, adminAnalytics, adminUserCount } from '../src/admin.js';
 
 test('super admin is identified by verified numeric Telegram ID only',()=>{
   assert.equal(isSuperAdmin({id:999001},{SUPER_ADMIN_ID:'999001\n'}),true);
@@ -54,4 +54,9 @@ test('analytics validates bounded ranges and timezone and returns aggregate data
   assert.equal(data.daily.length,90);assert.equal(data.totals.users,1);
   assert.doesNotMatch(JSON.stringify(data),/Private name|private-phone|"id"/);
   assert.equal(adminAnalytics([]).daily.length,30);
+});
+
+test('total users includes legacy users, deduplicates sources and ignores non-user settings', () => {
+  assert.equal(adminUserCount([{id:1},{id:'1'},{id:'2'},{id:'3'},{id:'_pricing'},{id:null},{id:0},{id:-1},{id:'bad'},{id:'9999999999999999999999'}]),3);
+  assert.equal(adminUserCount([]),0);
 });

@@ -108,6 +108,7 @@ function format(e, zone = selectedZone()) {
   return text;
 }
 function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener'); }
+let guestListBaseline='';
 function invitationGuestLine(guest){return guest.name+(guest.participantMode==='ask' ? ' = ?' : guest.participants ? ' = '+guest.participants+(guest.participantMode==='confirm' ? '!' : guest.participantMode==='fixed' ? '*' : '') : '');}
 function guestNamesIn(text){return text.split('\n').map(line=>line.split('=')[0].trim()).filter(Boolean);}
 function validateGuestAddition(name,names){
@@ -639,7 +640,7 @@ function setupForm(event = null) {
   updateEnding();
   const scheduleOnly = compactPicker;
   $('title').value=event?.title || '';$('location').value=event?.location || '';$('description').value=event?.description || '';$('invite-message').value=event?.inviteMessage || '';
-  $('invitation-mode-panel').hidden=compactPicker;$('legacy-invitation-mode').hidden=event?.invitationMode!=='legacy';$('invitation-mode').value=event?.invitationMode!=='named' && event?.isPublic ? 'public' : event?.invitationMode || 'tickets';$('guest-names').value=(event?.invitees || []).map(invitationGuestLine).join('\n');
+  $('invitation-mode-panel').hidden=compactPicker;$('legacy-invitation-mode').hidden=event?.invitationMode!=='legacy';$('invitation-mode').value=event?.invitationMode!=='named' && event?.isPublic ? 'public' : event?.invitationMode || 'tickets';$('guest-names').value=event?.initialGuestNames ?? (event?.invitees || []).map(invitationGuestLine).join('\n');guestListBaseline=$('guest-names').value;
   const lockedMode=event && !event.isOwner ? event.invitationMode : null;
   for(const [id,mode] of [['tickets-invitation-mode','tickets'],['named-invitation-mode','named'],['public-invitation-mode',event?.invitationMode==='legacy'?'legacy':'tickets'],['legacy-invitation-mode','legacy']])$(id).disabled=!!lockedMode && lockedMode!==mode;
   $('guest-single').open=false;
@@ -919,7 +920,19 @@ $('owner-pricing-form').onsubmit=async event=>{
     await refresh();adminData.pricing=state.pricing;renderEvents();$('owner-pricing-status').textContent='Saved. New events use this default; current event prices are unchanged.';
   }catch(error){$('owner-pricing-status').textContent=error.message;}finally{$('save-owner-pricing').disabled=false;}
 };
-for (const b of document.querySelectorAll('[data-tab]')) b.onclick = () => { notice(''); b.dataset.tab === 'create' && (!formReady || $('event-form').hidden) ? setupForm() : go(b.dataset.tab); };
+async function refreshEditGuestList(){
+  if(!activeEvent || activeEvent.invitationMode!=='named' || $('guest-names').value!==guestListBaseline)return;
+  const id=activeEvent.id,baseline=guestListBaseline,navigation=pageNavigationGeneration;
+  try{
+    const {event:latest}=await api('events/'+id);
+    if(activeEvent?.id!==id || navigation!==pageNavigationGeneration || $('guest-names').value!==baseline)return;
+    if(latest.cancelled || latest.invitationMode!=='named'){notice('This event has changed. Reopen it from My events.');return;}
+    const list=latest.initialGuestNames ?? (latest.invitees || []).map(invitationGuestLine).join('\n');
+    $('guest-names').value=list;guestListBaseline=list;
+    activeEvent={...activeEvent,invitees:latest.invitees,invitationsVersion:latest.invitationsVersion,initialGuestNames:list};
+  }catch(error){notice(error.message);}
+}
+for (const b of document.querySelectorAll('[data-tab]')) b.onclick = async () => { notice(''); if(b.dataset.tab==='create' && (!formReady || $('event-form').hidden))setupForm();else {go(b.dataset.tab);if(b.dataset.tab==='create')await refreshEditGuestList();} };
 $('home-brand').onclick=event=>{event.preventDefault();go('home');};
 $('app-close').onclick=()=>{if(formSaving)return;pageNavigationGeneration++;dismissPendingMedia?.();dismissTicket();if((compactPicker || currentView==='home') && initData && typeof tg?.close==='function'){try{tg.close();}catch(error){notice(error.message);}}else if(compactPicker)notice('Close this window to return to Telegram.');else go('home');};updateAppClose();
 $('hero-create').onclick = () => setupForm();

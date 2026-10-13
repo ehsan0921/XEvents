@@ -4,7 +4,7 @@ import {issueTicket,verifyTicket} from './tickets.js';
 import {profileFields,profilePreference,profilePhotoApi} from './profile.js';
 import {readOnlinePricing} from './exchange.js';
 import {invitationMode,invitationSettings,oneTimeInvites,invitationAvailable,reconcileInvitationClaims} from './invitations.js';
-import {managedInvitations,revokedInvitations,invitationsVersion,addInvitations,removeInvitation,editInvitation,changeInvitationResponse,revokeInvitation,deleteInvitation,hasRecordedResponse} from './invitation-management.js';
+import {initialGuestNames,managedInvitations,revokedInvitations,invitationsVersion,addInvitations,removeInvitation,editInvitation,changeInvitationResponse,revokeInvitation,deleteInvitation,hasRecordedResponse} from './invitation-management.js';
 import {invitationHistory} from './invitation-history.js';
 import {isManager,cohostEntries,cohostLink,cohostVersion,createCohostInvite,revokeCohost} from './cohosts.js';
 import { authenticate } from './mini-auth.js';
@@ -90,7 +90,7 @@ export function publicEvent(e, id, username) {
     askPhone:asksPhone(e),askComments:asksComments(e),
     ...(manager ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,responded:hasRecordedResponse(g,invitationHistory(e,g.invitationToken),Number(uid)),approval:g.status==='yes' ? requiresApproval(e) ? g.approval || 'pending' : 'approved' : null,confirmed:confirmed(e,g),participants:participantCount(e,g),paymentStatus:g.payment?.status || null})),...Object.entries(e.invitees || {}).filter(([token])=>!Object.values(e.guests).some(g=>g.invitationToken===token)).map(([token,g])=>({id:null,name:g.name,status:'unopened',responded:false,participants:participantCount(e,{...g,invitationToken:token}),confirmed:false}))]} : {}),
     inviteMessage:e.inviteMessage || '',qrEnabled:e.qrEnabled!==false,oneTimeInvite:oneTimeInvites(e),
-    ...(manager ? {invitees:managedInvitations(e,username),revokedInvitees:revokedInvitations(e,username),invitationsVersion:invitationsVersion(e),cohosts,cohost:cohosts[0] || null} : {}),
+    ...(manager ? {initialGuestNames:initialGuestNames(e),invitees:managedInvitations(e,username),revokedInvitees:revokedInvitations(e,username),invitationsVersion:invitationsVersion(e),cohosts,cohost:cohosts[0] || null} : {}),
     ...(owner ? {cohostLinks:entries.map(entry=>({id:entry.id,label:entry.label,status:entry.status,createdAt:entry.createdAt,cohost:entry.cohost,url:cohostLink(e,username,entry.id),...(entry.revokedAt ? {revokedAt:entry.revokedAt}:{})})),cohostInviteUrl:cohostLink(e,username),cohostVersion:cohostVersion(e)} : {}),
     id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,

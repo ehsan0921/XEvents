@@ -510,7 +510,7 @@ try {
   assert.equal((await api('admin/pricing',{...ownerPricing,defaultStarPrice:-1},999001)).status,400);
   assert.equal((await api('admin/pricing',ownerPricing,999001)).status,200);
   assert.equal((await api('admin/overview',null,999001)).data.pricing.defaultStarPrice,50);
-  await db.prepare("INSERT INTO app_settings(key,value) VALUES ('online-currency-rates',?)").bind(JSON.stringify({rates:{AUD:0.0195},dates:{AUD:'2026-10-05'},retrievedAt:new Date().toISOString(),basis:'organiser-reward'})).run();
+  await db.prepare("INSERT INTO app_settings(key,value) VALUES ('online-currency-rates',?)").bind(JSON.stringify({rates:{AUD:0.0195},dates:{AUD:new Date().toISOString().slice(0,10)},retrievedAt:new Date().toISOString(),basis:'organiser-reward'})).run();
   const pricedBootstrap=(await api('bootstrap')).data;
   assert.equal(pricedBootstrap.pricing.rates.AUD,0.0195);
   assert.equal(pricedBootstrap.pricing.basis,'organiser-reward');
